@@ -29,6 +29,22 @@ services:
       timeout: 5s
       retries: 10
 
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # 7880: HTTP API + WebSocket signalling (what LIVEKIT_URL points at).
+      - "7880:7880"
+      # 7881: TCP ICE/TURN fallback, for networks that block UDP.
+      - "7881:7881"
+      # The actual RTP media path — WITHOUT this range, signalling succeeds
+      # and the room reports "connected" while carrying no audio at all, the
+      # single easiest mistake to make wiring up a LiveKit dev server.
+      - "51000-51100:51000-51100/udp"
+
 volumes:
   cosmos_postgres_data:
   cosmos_redis_data:

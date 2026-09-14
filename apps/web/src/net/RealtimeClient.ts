@@ -11,6 +11,7 @@ import {
 } from "@cosmos/shared";
 import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
+import { proximityStore } from "@/store/proximityStore";
 
 export interface RoomEndpoint {
   instanceId: string;
@@ -20,7 +21,6 @@ export interface RoomEndpoint {
 export interface RealtimeClientCallbacks {
   /** Server rejected our last move; snap the local avatar to this position. */
   onMoveCorrection: (position: { x: number; y: number }) => void;
-  onProximityUpdate?: (update: { peerId: string; audioGain: number; videoSubscribed: boolean }) => void;
 }
 
 const RECONNECT_BASE_DELAY_MS = 500;
@@ -114,12 +114,20 @@ export class RealtimeClient {
       const parsed = PeersSnapshotEventSchema.safeParse(raw);
       if (!parsed.success || parsed.data.roomId !== this.roomId) return;
       peersStore.getState().applySnapshot(this.localUserId, parsed.data.peers);
+      // A snapshot is a wholesale roster replacement — any cached desired-
+      // audio state for a userId no longer present must be dropped too, or
+      // it survives a reload/resync under a reused userId. Same rule,
+      // applied to the audio side of the same event.
+      proximityStore.getState().pruneToRoster(new Set(parsed.data.peers.map((p) => p.userId)));
     });
 
     socket.on(ServerEvents.PeersDelta, (raw) => {
       const parsed = PeersDeltaEventSchema.safeParse(raw);
       if (!parsed.success || parsed.data.roomId !== this.roomId) return;
       peersStore.getState().applyDelta(parsed.data.updates, parsed.data.left);
+      for (const userId of parsed.data.left) {
+        proximityStore.getState().removePeer(userId);
+      }
     });
 
     socket.on(ServerEvents.MoveCorrection, (raw) => {
@@ -128,10 +136,18 @@ export class RealtimeClient {
       this.callbacks.onMoveCorrection(parsed.data.position);
     });
 
+    // Written straight into proximityStore, exactly as peers:snapshot/delta
+    // are written straight into peersStore above — PixiStage stays purely
+    // visual and unaware of audio; SpatialAudioController is the only
+    // reader, via getState()/subscribe(), never a React hook (see the
+    // approved LiveKit plan's no-rerender rule for the audio-store split).
     socket.on(ServerEvents.ProximityUpdate, (raw) => {
       const parsed = ProximityUpdateEventSchema.safeParse(raw);
       if (!parsed.success) return;
-      this.callbacks.onProximityUpdate?.(parsed.data);
+      proximityStore.getState().setPeerProximity(parsed.data.peerId, {
+        audioSubscribed: parsed.data.audioSubscribed,
+        audioGain: parsed.data.audioGain,
+      });
     });
 
     // The instance we're connected to is no longer authoritative for this

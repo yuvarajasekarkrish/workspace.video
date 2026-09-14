@@ -1,15 +1,26 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Point } from "@cosmos/shared";
 import { PixiStage } from "@/canvas/PixiStage";
+import { SpatialAudioController } from "@/audio/SpatialAudioController";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { RoomHud } from "./RoomHud";
+import { AudioControls } from "./AudioControls";
 
 export interface RoomCanvasProps {
   roomId: string;
   localUserId: string;
   initialLocalPosition: Point;
+}
+
+async function fetchLiveKitToken(roomId: string) {
+  const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/livekit-token`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ?? `LiveKit token request failed (${res.status}).`);
+  }
+  return res.json();
 }
 
 /**
@@ -25,9 +36,15 @@ export interface RoomCanvasProps {
  * the Pixi Application itself). The cancellation flag below additionally
  * guards the case where StrictMode's cleanup runs while `PixiStage.create`
  * is still awaiting `app.init()`.
+ *
+ * SpatialAudioController is mounted as a SIBLING of PixiStage, in its own
+ * effect with its own cleanup, per the approved LiveKit plan — canvas and
+ * audio fail and dispose independently, and audio has no dependency on the
+ * Pixi Application existing at all.
  */
 export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const audioControllerRef = useRef<SpatialAudioController | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -53,11 +70,31 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition is intentionally a one-shot seed, not a reactive dependency
   }, [roomId, localUserId]);
 
+  useEffect(() => {
+    const controller = new SpatialAudioController(roomId, localUserId, () => fetchLiveKitToken(roomId));
+    audioControllerRef.current = controller;
+    void controller.connect();
+
+    return () => {
+      audioControllerRef.current = null;
+      void controller.dispose();
+    };
+  }, [roomId, localUserId]);
+
+  const handleEnableAudio = useCallback(() => {
+    void audioControllerRef.current?.enableAudio();
+  }, []);
+
+  const handleToggleMute = useCallback((muted: boolean) => {
+    void audioControllerRef.current?.setMuted(muted);
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       <ConnectionBadge />
       <RoomHud />
+      <AudioControls onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} />
     </div>
   );
 }

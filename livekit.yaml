@@ -1,0 +1,28 @@
+# Dev-only LiveKit server config. Key/secret here MUST match
+# LIVEKIT_API_KEY/LIVEKIT_API_SECRET's dev defaults in apps/web/src/lib/env.ts
+# and apps/realtime, so `docker compose up -d` needs no extra setup —
+# mirroring how the Postgres/Redis dev credentials already work. Change both
+# together, and use real secrets outside development.
+keys:
+  devkey: dev-livekit-secret-change-me-32chars-min
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  # Narrowed explicitly rather than accepting LiveKit's much wider default —
+  # Docker Desktop publishes a UDP port range one port at a time, and a
+  # multi-thousand-port range makes container startup crawl or fail outright
+  # on Windows. 100 ports is comfortable for a handful of concurrent dev
+  # sessions; widen it if local testing needs more simultaneous rooms.
+  port_range_start: 51000
+  port_range_end: 51100
+  # On Docker Desktop the container cannot discover a real external IP, and
+  # leaving this on produces ICE candidates the host browser can't reach —
+  # the classic "room connects, but no audio ever flows" failure. If media
+  # still doesn't flow after this, rtc.node_ip pinned to a host-reachable
+  # address is the next thing to try.
+  use_external_ip: false
+
+logging:
+  level: info

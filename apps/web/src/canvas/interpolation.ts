@@ -23,6 +23,25 @@ export type Vec2 = Point;
 export const DEFAULT_INTERPOLATION_TAU_SECONDS = 0.1;
 
 /**
+ * Scalar form of the same exponential-smoothing step, shared by anything that
+ * needs frame-rate-independent convergence toward a target — position here,
+ * and audio gain in apps/web/src/audio/spatialAudio.ts. Keeping one
+ * implementation means both call sites are covered by the same
+ * telescoping-property test in interpolation.test.ts.
+ */
+export function stepScalarToward(
+  current: number,
+  target: number,
+  dtSeconds: number,
+  tauSeconds: number = DEFAULT_INTERPOLATION_TAU_SECONDS,
+): number {
+  if (dtSeconds <= 0) return current;
+  // 1 - e^(-dt/tau): fraction of the remaining distance closed this step.
+  const alpha = 1 - Math.exp(-dtSeconds / tauSeconds);
+  return current + (target - current) * alpha;
+}
+
+/**
  * Advances `render` toward `target` by one time step of `dtSeconds`.
  * Pure — returns a new point, does not mutate its inputs.
  */
@@ -33,11 +52,9 @@ export function stepToward(
   tauSeconds: number = DEFAULT_INTERPOLATION_TAU_SECONDS,
 ): Vec2 {
   if (dtSeconds <= 0) return render;
-  // 1 - e^(-dt/tau): fraction of the remaining distance closed this step.
-  const alpha = 1 - Math.exp(-dtSeconds / tauSeconds);
   return {
-    x: render.x + (target.x - render.x) * alpha,
-    y: render.y + (target.y - render.y) * alpha,
+    x: stepScalarToward(render.x, target.x, dtSeconds, tauSeconds),
+    y: stepScalarToward(render.y, target.y, dtSeconds, tauSeconds),
   };
 }
 

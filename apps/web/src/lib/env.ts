@@ -24,4 +24,14 @@ export const env = {
   databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
   roomLeaseTtlSeconds: 30,
   instanceHeartbeatTtlSeconds: 30,
+  // LiveKit media server. Read purely from env (not hardcoded anywhere else)
+  // so pointing at LiveKit Cloud later is a config change, not a code
+  // change. Defaults match the dev keypair in the repo's livekit.yaml /
+  // docker-compose.yml service, so `docker compose up -d` needs no extra
+  // setup, mirroring how Postgres/Redis already work. LIVEKIT_API_SECRET is
+  // intentionally a DISTINCT secret from AUTH_SECRET — no repeat of the
+  // temporary realtime-token secret-reuse documented above.
+  livekitUrl: required("LIVEKIT_URL", "ws://localhost:7880"),
+  livekitApiKey: required("LIVEKIT_API_KEY", "devkey"),
+  livekitApiSecret: required("LIVEKIT_API_SECRET", "dev-livekit-secret-change-me-32chars-min"),
 };

@@ -100,6 +100,20 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return;
     room.peers.delete(userId);
+
+    // Prune every cached pair-proximity state involving the departing peer.
+    // Without this, a rejoining user with the same userId (e.g. after a
+    // reload) recomputes an IDENTICAL proximity state against a peer who
+    // never left, so tickProximity's change-detection sees no diff and never
+    // re-emits proximity:update — the rejoining client silently never learns
+    // to subscribe to that peer's audio. Also a straight memory leak: this
+    // map otherwise only grows for the lifetime of the room.
+    for (const key of room.proximityStates.keys()) {
+      if (key.startsWith(`${userId}:`) || key.endsWith(`:${userId}`)) {
+        room.proximityStates.delete(key);
+      }
+    }
+
     this.broadcaster.to(roomId).emit(ServerEvents.PeersDelta, { roomId, updates: [], left: [userId] });
 
     if (room.peers.size === 0) {

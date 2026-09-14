@@ -119,6 +119,31 @@ describe("RoomManager", () => {
     expect(proximityToS2?.payload).toMatchObject({ peerId: "u1", videoSubscribed: true });
   });
 
+  it("re-emits proximity:update for a peer who rejoins at the same distance after leaving", () => {
+    // Regression test: without pruning proximityStates on removePeer, a
+    // rejoining peer recomputes an identical state against the peer who
+    // stayed, tickProximity's diff sees no change, and no fresh
+    // proximity:update is ever sent to the rejoining peer's new socket.
+    const { broadcaster, emitted } = fakeBroadcaster();
+    const rm = createManager(broadcaster, fakeLease(), "instance-a");
+    rm.ensureRoom("room1");
+    rm.addPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } });
+    rm.addPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: { x: 10, y: 0 } });
+    rm.runTickForTest("room1"); // establishes the cached pair state
+
+    rm.removePeer("room1", "u2");
+    // u2 rejoins with a new socket id but the exact same position relative to u1.
+    rm.addPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2-new", position: { x: 10, y: 0 } });
+    emitted.length = 0;
+
+    rm.runTickForTest("room1");
+
+    const proximityToNewSocket = emitted.find(
+      (e) => e.target === "s2-new" && e.event === "proximity:update",
+    );
+    expect(proximityToNewSocket?.payload).toMatchObject({ peerId: "u1", videoSubscribed: true });
+  });
+
   it("removePeer emits a left-list delta and evicts the room once empty", () => {
     const { broadcaster, emitted } = fakeBroadcaster();
     const rm = createManager(broadcaster, fakeLease(), "instance-a");

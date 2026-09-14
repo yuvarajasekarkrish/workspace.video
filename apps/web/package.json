@@ -11,30 +11,32 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cosmos/shared": "workspace:*",
-    "@cosmos/proximity": "workspace:*",
     "@cosmos/db": "workspace:*",
+    "@cosmos/proximity": "workspace:*",
     "@cosmos/realtime-core": "workspace:*",
+    "@cosmos/shared": "workspace:*",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "livekit-client": "^2.22.3",
+    "livekit-server-sdk": "^2.19.0",
     "next": "16.3.5",
+    "pixi.js": "^8.20.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "pixi.js": "^8.20.1",
-    "zustand": "^5.0.15",
-    "socket.io-client": "^4.8.3",
-    "jsonwebtoken": "^9.0.2",
     "server-only": "^0.0.1",
-    "ioredis": "^5.4.2"
+    "socket.io-client": "^4.8.3",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.5",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "@types/node": "^22.10.5",
-    "@types/jsonwebtoken": "^9.0.7",
-    "typescript": "^5.7.3",
+    "jsdom": "^25.0.1",
     "tailwindcss": "^4.3.3",
-    "@tailwindcss/postcss": "^4.3.3",
-    "vitest": "^2.1.8",
-    "@testing-library/react": "^16.1.0",
-    "jsdom": "^25.0.1"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
   }
 }
