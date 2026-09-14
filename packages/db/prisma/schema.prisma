@@ -1,0 +1,174 @@
+// Prisma schema for the Cosmos-like spatial workspace.
+// See D:\Workspace\packages\db\README.md and the project plan for the object
+// model rationale (versioned last-write-wins for CanvasObject, etc).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships    WorkspaceMember[]
+  createdObjects CanvasObject[]    @relation("CreatedObjects")
+  accounts       Account[]
+  sessions       Session[]
+
+  @@map("users")
+}
+
+// --- NextAuth (Auth.js) adapter models -------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// --- Workspace / room domain -------------------------------------------------
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members WorkspaceMember[]
+  rooms   Room[]
+  invites Invite[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(member)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+model Invite {
+  id          String        @id @default(cuid())
+  token       String        @unique
+  workspaceId String
+  role        WorkspaceRole @default(member)
+  expiresAt   DateTime
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("invites")
+}
+
+model Room {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  // Free-form background/config (image url, dimensions, spawn point, etc).
+  config      Json     @default("{}")
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  objects   CanvasObject[]
+
+  @@index([workspaceId])
+  @@map("rooms")
+}
+
+enum CanvasObjectType {
+  note
+  image
+  link
+  embed
+  shape
+  zone
+}
+
+// Object edits are optimistic on the client and resolved server-side with a
+// server-assigned `version`: a write against a stale version is rejected and
+// the server replies with authoritative state (see packages/shared events.ts
+// ObjectSyncEvent). This is deliberately not a CRDT — sufficient because
+// objects are edited by one person at a time in v1.
+model CanvasObject {
+  id           String           @id @default(cuid())
+  roomId       String
+  type         CanvasObjectType
+  x            Float
+  y            Float
+  width        Float
+  height       Float
+  rotation     Float            @default(0)
+  z            Int              @default(0)
+  data         Json             @default("{}")
+  version      Int              @default(0)
+  createdById  String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  room      Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CreatedObjects", fields: [createdById], references: [id])
+
+  @@index([roomId])
+  @@map("canvas_objects")
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@cosmos/realtime",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cosmos/db": "workspace:*",
+    "@cosmos/proximity": "workspace:*",
+    "@cosmos/realtime-core": "workspace:*",
+    "@cosmos/shared": "workspace:*",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "fastify": "^5.2.0",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.0.9",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
