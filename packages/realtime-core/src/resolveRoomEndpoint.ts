@@ -1,5 +1,5 @@
-import type { InstanceRegistry } from "./instanceRegistry.js";
-import type { RoomLease } from "./roomLease.js";
+import type { InstanceRegistry } from "./instanceRegistry";
+import type { RoomLease } from "./roomLease";
 
 export class NoLiveInstanceError extends Error {
   constructor() {

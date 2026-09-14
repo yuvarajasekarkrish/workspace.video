@@ -1,3 +1,3 @@
-export * from "./geometry.js";
-export * from "./events.js";
-export * from "./proximity-config.js";
+export * from "./geometry";
+export * from "./events";
+export * from "./proximity-config";

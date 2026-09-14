@@ -1,0 +1,40 @@
+{
+  "name": "@cosmos/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cosmos/shared": "workspace:*",
+    "@cosmos/proximity": "workspace:*",
+    "@cosmos/db": "workspace:*",
+    "@cosmos/realtime-core": "workspace:*",
+    "next": "16.3.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "pixi.js": "^8.20.1",
+    "zustand": "^5.0.15",
+    "socket.io-client": "^4.8.3",
+    "jsonwebtoken": "^9.0.2",
+    "server-only": "^0.0.1",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/node": "^22.10.5",
+    "@types/jsonwebtoken": "^9.0.7",
+    "typescript": "^5.7.3",
+    "tailwindcss": "^4.3.3",
+    "@tailwindcss/postcss": "^4.3.3",
+    "vitest": "^2.1.8",
+    "@testing-library/react": "^16.1.0",
+    "jsdom": "^25.0.1"
+  }
+}

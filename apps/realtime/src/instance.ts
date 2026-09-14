@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { Redis } from "ioredis";
 import { InstanceRegistry, RoomLease } from "@cosmos/realtime-core";
-import { env } from "./env.js";
+import { env } from "./env";
 
 export const instanceId = `realtime-${nanoid(10)}`;
 

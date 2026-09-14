@@ -1,3 +1,3 @@
-export * from "./instanceRegistry.js";
-export * from "./roomLease.js";
-export * from "./resolveRoomEndpoint.js";
+export * from "./instanceRegistry";
+export * from "./roomLease";
+export * from "./resolveRoomEndpoint";

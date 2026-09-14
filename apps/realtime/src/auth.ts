@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
-import { prisma } from "@cosmos/db";
+
+export { assertRoomMembership } from "@cosmos/db";
 
 export interface AuthenticatedUser {
   userId: string;
@@ -20,33 +21,4 @@ export function verifySessionToken(token: string, secret: string): Authenticated
     throw new Error("Session token missing required claims (sub, email).");
   }
   return { userId, email };
-}
-
-/**
- * Confirms the authenticated user is actually a member of the workspace that
- * owns `roomId`, and returns the room's workspace id. Called on `join_room` —
- * roomId itself is client-supplied and must never be trusted for authorization
- * without this check.
- */
-export async function assertRoomMembership(
-  userId: string,
-  roomId: string,
-): Promise<{ workspaceId: string }> {
-  const room = await prisma.room.findUnique({
-    where: { id: roomId },
-    select: { workspaceId: true },
-  });
-  if (!room) {
-    throw new Error("Room not found.");
-  }
-
-  const membership = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId: room.workspaceId, userId } },
-    select: { userId: true },
-  });
-  if (!membership) {
-    throw new Error("User is not a member of this room's workspace.");
-  }
-
-  return { workspaceId: room.workspaceId };
 }

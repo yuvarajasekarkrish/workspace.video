@@ -1,3 +1,4 @@
-export * from "./spatial-index.js";
-export * from "./proximity.js";
-export * from "./movement.js";
+export * from "./spatial-index";
+export * from "./proximity";
+export * from "./movement";
+export * from "./spawn";

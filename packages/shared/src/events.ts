@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PointSchema } from "./geometry.js";
+import { PointSchema } from "./geometry";
 
 /**
  * Single source of truth for the Socket.IO protocol between apps/web and apps/realtime.

@@ -9,10 +9,11 @@ import {
   MoveEventSchema,
   type PeersSnapshotEvent,
 } from "@cosmos/shared";
-import { env } from "./env.js";
-import { instanceId, redisPub, redisSub, roomLease, instanceRegistry, startHeartbeat, stopHeartbeat } from "./instance.js";
-import { verifySessionToken, assertRoomMembership } from "./auth.js";
-import { RoomManager, broadcasterFromSocketServer } from "./roomManager.js";
+import { env } from "./env";
+import { instanceId, redisPub, redisSub, roomLease, instanceRegistry, startHeartbeat, stopHeartbeat } from "./instance";
+import { verifySessionToken, assertRoomMembership } from "./auth";
+import { RoomManager, broadcasterFromSocketServer } from "./roomManager";
+import { spawnPositionForUser } from "@cosmos/proximity";
 
 const app = Fastify({ logger: true });
 
@@ -95,13 +96,19 @@ io.on("connection", (socket) => {
       avatarUrl: null,
       socketId: socket.id,
       // TODO(phase 7): use the room's configured spawn point instead of a
-      // fixed default once Room.config is read here.
-      position: { x: 100, y: 100 },
+      // fixed default once Room.config is read here. Deterministic per-user
+      // ring offset so multiple avatars don't render exactly on top of each
+      // other (see packages/proximity/src/spawn.ts).
+      position: spawnPositionForUser(user.userId, { x: 100, y: 100 }),
     });
     socket.data.roomId = roomId;
 
+    // Broadcast to the whole room, not just this socket: existing peers
+    // otherwise only ever learn of a newcomer via peers:delta, which carries
+    // no name/avatar, so they'd render the newcomer permanently unnamed.
+    // This also doubles as the client's clean-resync primitive on reconnect.
     const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId) };
-    socket.emit(ServerEvents.PeersSnapshot, snapshot);
+    io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot);
     ack?.({ ok: true });
   });
 
@@ -131,6 +138,7 @@ startHeartbeat();
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
+    roomManager.disposeAll(); // clear every room's tick/lease-refresh interval before exiting
     await stopHeartbeat();
     await app.close();
     process.exit(0);

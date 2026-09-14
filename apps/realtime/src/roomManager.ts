@@ -221,4 +221,20 @@ export class RoomManager {
   isOwnedLocally(roomId: string): boolean {
     return this.rooms.has(roomId);
   }
+
+  /** Clears every room's tickTimer and leaseRefreshTimer without the
+   *  owner-changed side effects `evictRoom` performs (no point notifying
+   *  clients or releasing the lease mid-process-shutdown — the lease's own
+   *  TTL expiry already covers that). Call this on process shutdown
+   *  (SIGINT/SIGTERM — see server.ts) and in test teardown: leaving these
+   *  intervals running keeps the event loop alive for no reason after the
+   *  RoomManager itself is no longer reachable. */
+  disposeAll(): void {
+    for (const room of this.rooms.values()) {
+      clearInterval(room.tickTimer);
+      clearInterval(room.leaseRefreshTimer);
+    }
+    this.rooms.clear();
+    this.lastEmittedPositions.clear();
+  }
 }
