@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import type { Point } from "@cosmos/shared";
+import type { Point, CanvasObjectType } from "@cosmos/shared";
 import { PixiStage } from "@/canvas/PixiStage";
 import { SpatialAudioController } from "@/audio/SpatialAudioController";
 import { ConnectionBadge } from "./ConnectionBadge";
 import { RoomHud } from "./RoomHud";
 import { AudioControls } from "./AudioControls";
+import { ObjectToolbar } from "./ObjectToolbar";
 
 export interface RoomCanvasProps {
   roomId: string;
@@ -45,6 +46,7 @@ async function fetchLiveKitToken(roomId: string) {
 export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioControllerRef = useRef<SpatialAudioController | null>(null);
+  const stageRef = useRef<PixiStage | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -60,11 +62,13 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
           return;
         }
         stage = created;
+        stageRef.current = created;
       },
     );
 
     return () => {
       cancelled = true;
+      stageRef.current = null;
       stage?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition is intentionally a one-shot seed, not a reactive dependency
@@ -89,12 +93,21 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
     void audioControllerRef.current?.setMuted(muted);
   }, []);
 
+  const handleCreateObject = useCallback((type: CanvasObjectType, data: Record<string, unknown>) => {
+    stageRef.current?.createObjectAtViewCenter(type, data);
+  }, []);
+
+  const handleDeleteSelected = useCallback(() => {
+    stageRef.current?.deleteSelectedObject();
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       <ConnectionBadge />
       <RoomHud />
       <AudioControls onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} />
+      <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
     </div>
   );
 }

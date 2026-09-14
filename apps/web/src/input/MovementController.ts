@@ -47,8 +47,15 @@ export class MovementController {
     this.position = initialPosition;
   }
 
-  attachKeyboard(target: EventTarget = window): () => void {
+  /** `shouldIgnore`, when it returns true, suppresses WASD/arrow handling
+   *  entirely for that event — added for Phase 7's note text editor: an
+   *  HTML `<textarea>` overlaid on the canvas needs to receive "w"/"a"/"s"/
+   *  "d" as ordinary text input, not have them walk the avatar out from
+   *  under the user while they're typing. Defaults to never-ignore so every
+   *  existing call site (which never passed this) is unaffected. */
+  attachKeyboard(target: EventTarget = window, shouldIgnore: () => boolean = () => false): () => void {
     const onKeyDown = (e: Event) => {
+      if (shouldIgnore()) return;
       const code = (e as KeyboardEvent).code;
       if (code in KEY_TO_DIRECTION) {
         this.heldKeys.add(code);

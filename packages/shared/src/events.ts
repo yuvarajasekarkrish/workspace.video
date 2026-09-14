@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { PointSchema } from "./geometry";
+import { CanvasObjectTypeSchema, validateObjectData } from "./objectData";
+
+// CanvasObjectTypeSchema/CanvasObjectType now live in objectData.ts (to avoid
+// an import cycle with its per-type data validation) and are re-exported to
+// package consumers via index.ts's `export * from "./objectData"` — not
+// re-exported here too, since two `export *` sources for the same name
+// would make it ambiguous (and silently absent) from "@cosmos/shared".
 
 /**
  * Single source of truth for the Socket.IO protocol between apps/web and apps/realtime.
@@ -29,32 +36,32 @@ export const JoinRoomEventSchema = z.object({
 });
 export type JoinRoomEvent = z.infer<typeof JoinRoomEventSchema>;
 
-export const CanvasObjectTypeSchema = z.enum([
-  "note",
-  "image",
-  "link",
-  "embed",
-  "shape",
-  "zone",
-]);
-export type CanvasObjectType = z.infer<typeof CanvasObjectTypeSchema>;
-
 /** Optimistic object mutation from a client. `version` is the version the client
- *  last saw; the server rejects the write if it doesn't match current state (LWW). */
-export const ObjectUpsertEventSchema = z.object({
-  objectId: z.string().min(1),
-  roomId: z.string().min(1),
-  type: CanvasObjectTypeSchema,
-  x: z.number().finite(),
-  y: z.number().finite(),
-  width: z.number().finite().positive(),
-  height: z.number().finite().positive(),
-  rotation: z.number().finite().default(0),
-  z: z.number().int().default(0),
-  data: z.record(z.unknown()).default({}),
-  /** Version the client is basing this write on. 0 for a brand-new object. */
-  baseVersion: z.number().int().nonnegative(),
-});
+ *  last saw; the server rejects the write if it doesn't match current state (LWW).
+ *  `data`'s shape depends on `type` (see objectData.ts) — validated here via
+ *  superRefine rather than a discriminated union, since `type` and `data` are
+ *  sibling fields alongside x/y/width/height/etc, not a tagged-union shape. */
+export const ObjectUpsertEventSchema = z
+  .object({
+    objectId: z.string().min(1),
+    roomId: z.string().min(1),
+    type: CanvasObjectTypeSchema,
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().positive(),
+    height: z.number().finite().positive(),
+    rotation: z.number().finite().default(0),
+    z: z.number().int().default(0),
+    data: z.record(z.unknown()).default({}),
+    /** Version the client is basing this write on. 0 for a brand-new object. */
+    baseVersion: z.number().int().nonnegative(),
+  })
+  .superRefine((val, ctx) => {
+    const result = validateObjectData(val.type, val.data);
+    if (!result.valid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["data"], message: result.message });
+    }
+  });
 export type ObjectUpsertEvent = z.infer<typeof ObjectUpsertEventSchema>;
 
 export const ObjectDeleteEventSchema = z.object({
@@ -148,6 +155,17 @@ export const ObjectRemovedEventSchema = z.object({
 });
 export type ObjectRemovedEvent = z.infer<typeof ObjectRemovedEventSchema>;
 
+/** Full room object list, sent on join and after any resync — the exact same
+ *  wholesale-replacement role peers:snapshot plays for the roster, and for
+ *  the identical reason: a stream of individual object:sync events cannot
+ *  express "these are all the objects that exist, forget anything else",
+ *  which is what a reconnecting client needs to avoid stale/ghost objects. */
+export const ObjectsSnapshotEventSchema = z.object({
+  roomId: z.string().min(1),
+  objects: z.array(ObjectStateSchema),
+});
+export type ObjectsSnapshotEvent = z.infer<typeof ObjectsSnapshotEventSchema>;
+
 /** Sent when this instance is no longer (or never was) authoritative for the room
  *  the client asked to join — e.g. a lease changed hands mid-connection. The client
  *  must re-resolve the room endpoint from scratch rather than retry this socket. */
@@ -172,6 +190,7 @@ export const ServerEvents = {
   PeersDelta: "peers:delta",
   MoveCorrection: "move:correction",
   ProximityUpdate: "proximity:update",
+  ObjectsSnapshot: "objects:snapshot",
   ObjectSync: "object:sync",
   ObjectRemoved: "object:removed",
   OwnerChanged: "owner:changed",

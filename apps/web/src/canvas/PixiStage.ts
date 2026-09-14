@@ -1,12 +1,17 @@
 import { Application, Container } from "pixi.js";
 import type { Point } from "@cosmos/shared";
 import { peersStore, type PeersState } from "@/store/peersStore";
+import { objectsStore, type ObjectsState } from "@/store/objectsStore";
 import { createBackground } from "./Background";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
-import { stepToward, hasConverged } from "./interpolation";
+import { stepToward, hasConverged, stepScalarToward } from "./interpolation";
 import { MovementController } from "@/input/MovementController";
 import { RealtimeClient } from "@/net/RealtimeClient";
+import { ObjectView } from "./objects/ObjectView";
+import { ObjectInteractionController } from "./objects/ObjectInteractionController";
+import { NoteEditor } from "./objects/NoteEditor";
+import { hitTestObjects } from "./objects/objectHitTest";
 
 export interface PixiStageOptions {
   canvasContainer: HTMLDivElement;
@@ -18,27 +23,37 @@ export interface PixiStageOptions {
 /**
  * Owns every imperative object for one room: the Pixi Application, the
  * layer graph, the render ticker, the RealtimeClient socket, the
- * MovementController, and the Viewport. Nothing here is React state —
- * this class exists precisely so RoomCanvas.tsx's effect can construct one
- * of these and later call `dispose()` on unmount, per the plan's rule that
- * Socket.IO/Pixi/other imperative SDK objects live in dedicated
- * controllers, never in normal React state.
+ * MovementController, the Viewport, and (Phase 7) canvas-object rendering
+ * and interaction. Nothing here is React state — this class exists
+ * precisely so RoomCanvas.tsx's effect can construct one of these and later
+ * call `dispose()` on unmount, per the plan's rule that Socket.IO/Pixi/
+ * other imperative SDK instances live in dedicated controllers, never in
+ * normal React state.
  *
- * THE HARD RULE lives here: the ticker callback reads `peersStore.getState()`
- * directly (a plain object read, not a React hook) and mutates Pixi display
- * objects — it never touches React, so no amount of position traffic can
- * cause a React re-render.
+ * THE HARD RULE lives here: the ticker callback reads `peersStore`/
+ * `objectsStore.getState()` directly (a plain object read, not a React
+ * hook) and mutates Pixi display objects — it never touches React, so no
+ * amount of position/drag traffic can cause a React re-render.
  */
 export class PixiStage {
   private readonly app = new Application();
   private readonly world = new Container();
+  private readonly objectLayer = new Container();
   private readonly avatarLayer = new Container();
   private readonly avatars = new Map<string, Avatar>();
+  private readonly objectViews = new Map<string, ObjectView>();
   private viewport!: Viewport;
   private movementController!: MovementController;
   private realtimeClient!: RealtimeClient;
+  private objectInteraction!: ObjectInteractionController;
+  private readonly noteEditor = new NoteEditor();
   private unsubscribeSnapshotWatch: (() => void) | null = null;
+  private unsubscribeObjectsWatch: (() => void) | null = null;
   private detachKeyboard: (() => void) | null = null;
+  private detachObjectKeyboard: (() => void) | null = null;
+  private detachDblClick: (() => void) | null = null;
+  private roomId!: string;
+  private localUserId!: string;
   private disposed = false;
 
   static async create(options: PixiStageOptions): Promise<PixiStage> {
@@ -48,6 +63,9 @@ export class PixiStage {
   }
 
   private async init(options: PixiStageOptions): Promise<void> {
+    this.roomId = options.roomId;
+    this.localUserId = options.localUserId;
+
     await this.app.init({
       resizeTo: options.canvasContainer,
       background: "#0b0d12",
@@ -61,15 +79,26 @@ export class PixiStage {
     }
     options.canvasContainer.appendChild(this.app.canvas);
 
+    this.objectInteraction = new ObjectInteractionController(options.localUserId, options.roomId, {
+      onSendUpsert: (event) => this.realtimeClient.sendObjectUpsert(event),
+      onSendDelete: (event) => this.realtimeClient.sendObjectDelete(event),
+      getScale: () => this.viewport.getScale(),
+    });
+
     // world carries the pan/zoom transform; overlay (added later, outside
-    // world) would not scale with it. background -> objects placeholder ->
-    // avatars, per the plan's layer ordering.
+    // world) would not scale with it. background -> objects -> avatars,
+    // per the plan's layer ordering (objectLayer replaces the anonymous
+    // placeholder container reserved here through Phase 6).
     this.viewport = new Viewport(this.app.canvas as HTMLCanvasElement, {
       onClickToWalk: (worldPoint) => this.movementController.setWalkTarget(worldPoint),
+      onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
+      onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
+      onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
     });
     this.world.addChild(this.viewport.world);
     this.viewport.world.addChild(createBackground());
-    this.viewport.world.addChild(new Container()); // objects placeholder (phase 7)
+    this.objectLayer.sortableChildren = true;
+    this.viewport.world.addChild(this.objectLayer);
     this.viewport.world.addChild(this.avatarLayer);
     this.app.stage.addChild(this.world);
 
@@ -77,7 +106,11 @@ export class PixiStage {
       onLocalPositionChanged: (position) => peersStore.getState().setLocalPosition(position),
       onSendMove: (position) => this.realtimeClient.sendMove({ position, clientTs: Date.now() }),
     });
-    this.detachKeyboard = this.movementController.attachKeyboard(window);
+    // The note text editor is an HTML <textarea> overlaid on the canvas
+    // (see NoteEditor.ts) — without this guard, typing "w"/"a"/"s"/"d"
+    // while editing a note would also walk the avatar out from under the
+    // user, since attachKeyboard listens on `window`.
+    this.detachKeyboard = this.movementController.attachKeyboard(window, () => this.noteEditor.isOpen());
 
     this.realtimeClient = new RealtimeClient(options.roomId, options.localUserId, {
       onMoveCorrection: (position) => this.movementController.applyCorrection(position),
@@ -92,6 +125,19 @@ export class PixiStage {
       () => this.reconcileAvatars(peersStore.getState()),
     );
     this.reconcileAvatars(peersStore.getState());
+
+    // Same pattern for objects: reconcile ObjectView instances only when
+    // the SET of object ids changes (create/delete), never on every
+    // drag/resize frame — that traffic is handled entirely in renderFrame
+    // below, reading render rects directly with no store subscription at all.
+    this.unsubscribeObjectsWatch = objectsStore.subscribe(
+      (state) => Array.from(state.objects.keys()).sort().join(","),
+      () => this.reconcileObjectViews(objectsStore.getState()),
+    );
+    this.reconcileObjectViews(objectsStore.getState());
+
+    this.detachObjectKeyboard = this.attachObjectKeyboard(window);
+    this.detachDblClick = this.attachDoubleClick(this.app.canvas as HTMLCanvasElement);
 
     this.app.ticker.add((ticker) => {
       const dtSeconds = ticker.deltaMS / 1000;
@@ -125,14 +171,35 @@ export class PixiStage {
     }
   }
 
-  /** Runs every ticker frame. Reads the store directly via getState() —
-   *  never via a React hook — and mutates Pixi display objects in place.
-   *  This is the loop the "React must never re-render on movement" rule
-   *  protects: nothing here can trigger a component render. */
-  private renderFrame(dtSeconds: number): void {
-    const state = peersStore.getState();
+  /** Creates/destroys ObjectView instances to match the current object set.
+   *  Cheap and infrequent (create/delete only) — never called from the
+   *  ticker; per-frame position/size updates happen in renderFrame via
+   *  each view's own update(), not by recreating views. */
+  private reconcileObjectViews(state: ObjectsState): void {
+    for (const [objectId] of state.objects) {
+      if (!this.objectViews.has(objectId)) {
+        const view = new ObjectView(objectId);
+        this.objectViews.set(objectId, view);
+        this.objectLayer.addChild(view.container);
+      }
+    }
 
-    for (const [userId, peer] of state.peers) {
+    for (const [objectId, view] of this.objectViews) {
+      if (!state.objects.has(objectId)) {
+        view.destroy();
+        this.objectViews.delete(objectId);
+      }
+    }
+  }
+
+  /** Runs every ticker frame. Reads the stores directly via getState() —
+   *  never via a React hook — and mutates Pixi display objects in place.
+   *  This is the loop the "React must never re-render on movement/drag"
+   *  rule protects: nothing here can trigger a component render. */
+  private renderFrame(dtSeconds: number): void {
+    const peers = peersStore.getState();
+
+    for (const [userId, peer] of peers.peers) {
       const avatar = this.avatars.get(userId);
       if (!avatar) continue;
 
@@ -154,16 +221,168 @@ export class PixiStage {
       }
       avatar.setPosition(peer.renderPosition.x, peer.renderPosition.y);
     }
+
+    const objects = objectsStore.getState();
+    for (const [objectId, record] of objects.objects) {
+      const view = this.objectViews.get(objectId);
+      if (!view) continue;
+
+      // The object WE are actively dragging/resizing tracks the pointer
+      // immediately (applyLocalEdit already wrote the exact rect) — no
+      // smoothing, same local/remote split renderFrame uses for avatars.
+      // Everything else converges toward its authoritative rect.
+      if (!record.locallyDirty) {
+        const target = { x: record.state.x, y: record.state.y, width: record.state.width, height: record.state.height };
+        if (
+          Math.abs(record.render.x - target.x) > 0.05 ||
+          Math.abs(record.render.y - target.y) > 0.05 ||
+          Math.abs(record.render.width - target.width) > 0.05 ||
+          Math.abs(record.render.height - target.height) > 0.05
+        ) {
+          record.render.x = stepScalarToward(record.render.x, target.x, dtSeconds);
+          record.render.y = stepScalarToward(record.render.y, target.y, dtSeconds);
+          record.render.width = stepScalarToward(record.render.width, target.width, dtSeconds);
+          record.render.height = stepScalarToward(record.render.height, target.height, dtSeconds);
+        }
+      }
+
+      view.update(
+        record.state,
+        record.render,
+        objects.selectedId === objectId,
+      );
+    }
+  }
+
+  /** Delete/Backspace deletes the current selection; Escape deselects.
+   *  Skipped entirely while the note editor is open — the editor has its
+   *  own Escape handling (cancel the edit) and Delete/Backspace must type
+   *  normally into the textarea, not delete the object out from under it. */
+  private attachObjectKeyboard(target: EventTarget): () => void {
+    const onKeyDown = (e: Event) => {
+      if (this.noteEditor.isOpen()) return;
+      const key = (e as KeyboardEvent).key;
+      if (key === "Delete" || key === "Backspace") {
+        if (objectsStore.getState().selectedId) {
+          e.preventDefault();
+          this.objectInteraction.deleteSelected();
+        }
+      } else if (key === "Escape") {
+        this.objectInteraction.deselect();
+      }
+    };
+    target.addEventListener("keydown", onKeyDown);
+    return () => target.removeEventListener("keydown", onKeyDown);
+  }
+
+  /** Double-click a note opens its text editor. A separate native listener
+   *  rather than routing through Viewport's pan/click-to-walk arbitration —
+   *  double-click is an independent gesture, not a member of that table. */
+  private attachDoubleClick(canvas: HTMLCanvasElement): () => void {
+    const onDblClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const worldPoint = this.viewport.screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      const state = objectsStore.getState();
+
+      const candidates = Array.from(state.objects.values()).map((r) => ({
+        objectId: r.state.objectId,
+        ...r.render,
+        z: r.state.z,
+      }));
+      const hitId = hitTestObjects(candidates, worldPoint);
+      if (!hitId) return;
+
+      const record = state.objects.get(hitId);
+      if (!record || record.state.type !== "note") return;
+
+      this.openNoteEditor(record.state.objectId);
+    };
+    canvas.addEventListener("dblclick", onDblClick);
+    return () => canvas.removeEventListener("dblclick", onDblClick);
+  }
+
+  private openNoteEditor(objectId: string): void {
+    const record = objectsStore.getState().objects.get(objectId);
+    if (!record) return;
+
+    const topLeftScreen = this.worldToScreen({ x: record.render.x, y: record.render.y });
+    const scale = this.viewport.getScale();
+    const initialText = typeof record.state.data.text === "string" ? record.state.data.text : "";
+
+    this.noteEditor.open(
+      this.app.canvas.parentElement ?? document.body,
+      {
+        x: topLeftScreen.x,
+        y: topLeftScreen.y,
+        width: record.render.width * scale,
+        height: record.render.height * scale,
+      },
+      initialText,
+      (text) => {
+        const current = objectsStore.getState().objects.get(objectId);
+        if (!current) return;
+        const nextData = { ...current.state.data, text };
+        objectsStore.getState().applyLocalEdit(objectId, current.render);
+        this.realtimeClient.sendObjectUpsert({
+          objectId,
+          roomId: this.roomId,
+          type: current.state.type,
+          x: current.state.x,
+          y: current.state.y,
+          width: current.state.width,
+          height: current.state.height,
+          rotation: current.state.rotation,
+          z: current.state.z,
+          data: nextData,
+          baseVersion: current.state.version,
+        });
+      },
+    );
+  }
+
+  private worldToScreen(world: Point): Point {
+    const scale = this.viewport.getScale();
+    return {
+      x: this.viewport.world.position.x + world.x * scale,
+      y: this.viewport.world.position.y + world.y * scale,
+    };
+  }
+
+  /** Creates a new object centered in the current viewport, for the
+   *  toolbar UI (see components/ObjectToolbar.tsx) — kept here rather than
+   *  exposing the interaction controller directly, matching how RoomCanvas
+   *  never exposes PixiStage/RealtimeClient internals to React either. */
+  createObjectAtViewCenter(type: Parameters<ObjectInteractionController["createObject"]>[0], data: Record<string, unknown>): void {
+    const screenCenter = {
+      x: this.app.canvas.width / (this.app.renderer.resolution * 2),
+      y: this.app.canvas.height / (this.app.renderer.resolution * 2),
+    };
+    const worldPoint = this.viewport.screenToWorld(screenCenter);
+    this.objectInteraction.createObject(type, worldPoint, data);
+  }
+
+  /** Deletes the current selection — the toolbar UI's Delete button calls
+   *  this rather than reaching into the interaction controller directly,
+   *  same "React never touches the imperative object" pattern as
+   *  createObjectAtViewCenter above. */
+  deleteSelectedObject(): void {
+    this.objectInteraction.deleteSelected();
   }
 
   dispose(): void {
     this.disposed = true;
     this.detachKeyboard?.();
+    this.detachObjectKeyboard?.();
+    this.detachDblClick?.();
+    this.noteEditor.dispose();
     this.unsubscribeSnapshotWatch?.();
+    this.unsubscribeObjectsWatch?.();
     this.realtimeClient?.dispose();
     this.viewport?.dispose();
     for (const avatar of this.avatars.values()) avatar.destroy();
     this.avatars.clear();
+    for (const view of this.objectViews.values()) view.destroy();
+    this.objectViews.clear();
     // app.canvas may not exist yet if disposed mid-init; app.destroy handles
     // removing ticker callbacks and the renderer regardless.
     this.app.destroy(true, { children: true });

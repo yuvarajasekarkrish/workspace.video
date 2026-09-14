@@ -7,11 +7,17 @@ import {
   MoveCorrectionEventSchema,
   ProximityUpdateEventSchema,
   OwnerChangedEventSchema,
+  ObjectsSnapshotEventSchema,
+  ObjectSyncEventSchema,
+  ObjectRemovedEventSchema,
   type MoveEvent,
+  type ObjectUpsertEvent,
+  type ObjectDeleteEvent,
 } from "@cosmos/shared";
 import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
 import { proximityStore } from "@/store/proximityStore";
+import { objectsStore } from "@/store/objectsStore";
 
 export interface RoomEndpoint {
   instanceId: string;
@@ -70,6 +76,18 @@ export class RealtimeClient {
    *  input/movement.ts already decides *when* to call this). */
   sendMove(event: MoveEvent): void {
     this.socket?.emit(ClientEvents.Move, event);
+  }
+
+  /** Sends an object create/edit. Fire-and-forget, like sendMove — the
+   *  server's reconciliation (object:sync, broadcast to the whole room
+   *  including the sender) is what the client actually reacts to, not the
+   *  ack, so no ack callback is registered here. */
+  sendObjectUpsert(event: ObjectUpsertEvent): void {
+    this.socket?.emit(ClientEvents.ObjectUpsert, event);
+  }
+
+  sendObjectDelete(event: ObjectDeleteEvent): void {
+    this.socket?.emit(ClientEvents.ObjectDelete, event);
   }
 
   dispose(): void {
@@ -148,6 +166,32 @@ export class RealtimeClient {
         audioSubscribed: parsed.data.audioSubscribed,
         audioGain: parsed.data.audioGain,
       });
+    });
+
+    // Wholesale replacement, exactly like peers:snapshot — sent only to
+    // the joining/reconnecting socket (see server.ts), never broadcast to
+    // the whole room, since an existing peer's knowledge of the room's
+    // objects doesn't change just because someone else joined.
+    socket.on(ServerEvents.ObjectsSnapshot, (raw) => {
+      const parsed = ObjectsSnapshotEventSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.roomId !== this.roomId) return;
+      objectsStore.getState().applySnapshot(parsed.data.objects);
+    });
+
+    // Broadcast to the whole room (including the sender) on every accepted
+    // upsert, and sent to the rejecting socket alone on a stale/rejected
+    // one — objectsStore.applySync's accepted flag is what tells a
+    // currently-dragging client not to let this yank its in-flight render.
+    socket.on(ServerEvents.ObjectSync, (raw) => {
+      const parsed = ObjectSyncEventSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.object.roomId !== this.roomId) return;
+      objectsStore.getState().applySync(parsed.data.object, parsed.data.accepted);
+    });
+
+    socket.on(ServerEvents.ObjectRemoved, (raw) => {
+      const parsed = ObjectRemovedEventSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.roomId !== this.roomId) return;
+      objectsStore.getState().applyRemoved(parsed.data.objectId);
     });
 
     // The instance we're connected to is no longer authoritative for this

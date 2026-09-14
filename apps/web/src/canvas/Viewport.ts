@@ -9,6 +9,19 @@ import {
 export interface ViewportCallbacks {
   /** Fired on a left click that never exceeded the drag threshold. */
   onClickToWalk: (worldPoint: Point) => void;
+  /** Consulted first on every left-button press (unless space is held,
+   *  which always forces panning regardless of what's under the cursor —
+   *  the deliberate escape hatch to pan over objects), given the
+   *  world-space point under the cursor. Returning true CLAIMS the gesture
+   *  for object interaction (select/drag/resize): Viewport will not pan,
+   *  and the eventual release will not be treated as a click-to-walk.
+   *  Returning false/omitting the callback falls through to the existing
+   *  pan/click-to-walk arbitration, unchanged. */
+  onObjectGestureStart?: (worldPoint: Point) => boolean;
+  /** Called on every pointermove while an object gesture is claimed. */
+  onObjectGestureMove?: (worldPoint: Point) => void;
+  /** Called once when a claimed object gesture ends (pointerup). */
+  onObjectGestureEnd?: () => void;
 }
 
 /**
@@ -35,6 +48,7 @@ export class Viewport {
   private spaceHeld = false;
   private activePointerId: number | null = null;
   private isPanning = false;
+  private objectGestureClaimed = false;
   private pressStart: Point = { x: 0, y: 0 };
   private panOriginScreen: Point = { x: 0, y: 0 };
   private panOriginWorld: Point = { x: 0, y: 0 };
@@ -69,6 +83,13 @@ export class Viewport {
     return pureScreenToWorld(screen, { x: this.world.position.x, y: this.world.position.y }, this.world.scale.x);
   }
 
+  /** Current zoom scale — needed by object interaction's resize-handle
+   *  hit-testing so a handle's hit area stays a constant size on screen
+   *  regardless of zoom (see objectHitTest.ts's hitTestResizeHandle). */
+  getScale(): number {
+    return this.world.scale.x;
+  }
+
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === "Space") {
       this.spaceHeld = true;
@@ -93,14 +114,27 @@ export class Viewport {
     this.pressStart = { x: e.clientX, y: e.clientY };
     this.panOriginScreen = { x: e.clientX, y: e.clientY };
     this.panOriginWorld = { x: this.world.position.x, y: this.world.position.y };
+
+    // Space-held always forces panning regardless of what's under the
+    // cursor — the deliberate escape hatch to pan over objects — so object
+    // hit-testing is skipped entirely in that case.
+    this.objectGestureClaimed =
+      isLeft && !this.spaceHeld && (this.callbacks.onObjectGestureStart?.(this.pointerWorldPoint(e)) ?? false);
+
     // Middle-button and space-held left-button always pan, regardless of
     // how far the pointer ends up moving; a plain left press stays
-    // ambiguous until onPointerMove sees it cross the drag threshold.
-    this.isPanning = isMiddle || (isLeft && this.spaceHeld);
+    // ambiguous until onPointerMove sees it cross the drag threshold —
+    // unless an object gesture just claimed it, which pre-empts both.
+    this.isPanning = !this.objectGestureClaimed && (isMiddle || (isLeft && this.spaceHeld));
   };
 
   private onPointerMove = (e: PointerEvent): void => {
     if (this.activePointerId === null || e.pointerId !== this.activePointerId) return;
+
+    if (this.objectGestureClaimed) {
+      this.callbacks.onObjectGestureMove?.(this.pointerWorldPoint(e));
+      return;
+    }
 
     if (!this.isPanning && exceedsDragThreshold(this.pressStart, { x: e.clientX, y: e.clientY })) {
       this.isPanning = true;
@@ -119,17 +153,30 @@ export class Viewport {
 
     const wasPanning = this.isPanning;
     const wasLeftButton = this.pointerButton === 0;
+    const wasObjectGesture = this.objectGestureClaimed;
     this.activePointerId = null;
     this.isPanning = false;
+    this.objectGestureClaimed = false;
+
+    if (wasObjectGesture) {
+      this.callbacks.onObjectGestureEnd?.();
+      return;
+    }
 
     // A left press that never exceeded the drag threshold (and wasn't
-    // forced into panning by space) is a click-to-walk.
+    // forced into panning by space, and didn't claim an object) is a
+    // click-to-walk.
     if (!wasPanning && wasLeftButton) {
       const rect = this.canvas.getBoundingClientRect();
       const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       this.callbacks.onClickToWalk(this.screenToWorld(screen));
     }
   };
+
+  private pointerWorldPoint(e: PointerEvent): Point {
+    const rect = this.canvas.getBoundingClientRect();
+    return this.screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();

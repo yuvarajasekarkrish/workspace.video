@@ -1,6 +1,55 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { RoomLease } from "@cosmos/realtime-core";
+import type { ObjectState } from "@cosmos/shared";
 import { RoomManager, type RoomBroadcaster } from "../roomManager.js";
+import type { ObjectRepository } from "../objectPersistence.js";
+
+/** In-memory fake standing in for @cosmos/db's real object functions, so
+ *  these tests never touch Postgres — matching fakeBroadcaster/fakeLease's
+ *  role for their respective dependencies. */
+function fakeObjectRepository(seed: ObjectState[] = []): ObjectRepository & {
+  rows: Map<string, ObjectState>;
+  upsertCalls: ObjectState[];
+  deleteCalls: string[];
+} {
+  const rows = new Map(seed.map((o) => [o.objectId, o]));
+  const upsertCalls: ObjectState[] = [];
+  const deleteCalls: string[] = [];
+  return {
+    rows,
+    upsertCalls,
+    deleteCalls,
+    loadRoomObjects: vi.fn(async (roomId: string) =>
+      Array.from(rows.values()).filter((o) => o.roomId === roomId),
+    ),
+    upsertObject: vi.fn(async (state: ObjectState) => {
+      upsertCalls.push(state);
+      rows.set(state.objectId, state);
+    }),
+    deleteObject: vi.fn(async (objectId: string) => {
+      deleteCalls.push(objectId);
+      rows.delete(objectId);
+    }),
+  };
+}
+
+function makeObject(overrides: Partial<ObjectState> = {}): ObjectState {
+  return {
+    objectId: "obj1",
+    roomId: "room1",
+    type: "note",
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    rotation: 0,
+    z: 0,
+    data: {},
+    version: 1,
+    createdById: "creator1",
+    ...overrides,
+  };
+}
 
 /** Records every emit so tests can assert on exactly what was broadcast,
  *  without spinning up a real Socket.IO server. */
@@ -32,8 +81,8 @@ describe("RoomManager", () => {
   // rather than being cleaned up by the test that created them.
   let activeManager: RoomManager | undefined;
 
-  afterEach(() => {
-    activeManager?.disposeAll();
+  afterEach(async () => {
+    await activeManager?.disposeAll();
     activeManager = undefined;
   });
 
@@ -119,7 +168,7 @@ describe("RoomManager", () => {
     expect(proximityToS2?.payload).toMatchObject({ peerId: "u1", videoSubscribed: true });
   });
 
-  it("re-emits proximity:update for a peer who rejoins at the same distance after leaving", () => {
+  it("re-emits proximity:update for a peer who rejoins at the same distance after leaving", async () => {
     // Regression test: without pruning proximityStates on removePeer, a
     // rejoining peer recomputes an identical state against the peer who
     // stayed, tickProximity's diff sees no change, and no fresh
@@ -131,7 +180,7 @@ describe("RoomManager", () => {
     rm.addPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: { x: 10, y: 0 } });
     rm.runTickForTest("room1"); // establishes the cached pair state
 
-    rm.removePeer("room1", "u2");
+    await rm.removePeer("room1", "u2");
     // u2 rejoins with a new socket id but the exact same position relative to u1.
     rm.addPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2-new", position: { x: 10, y: 0 } });
     emitted.length = 0;
@@ -144,13 +193,13 @@ describe("RoomManager", () => {
     expect(proximityToNewSocket?.payload).toMatchObject({ peerId: "u1", videoSubscribed: true });
   });
 
-  it("removePeer emits a left-list delta and evicts the room once empty", () => {
+  it("removePeer emits a left-list delta and evicts the room once empty", async () => {
     const { broadcaster, emitted } = fakeBroadcaster();
     const rm = createManager(broadcaster, fakeLease(), "instance-a");
     rm.ensureRoom("room1");
     rm.addPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } });
 
-    rm.removePeer("room1", "u1");
+    await rm.removePeer("room1", "u1");
 
     expect(emitted).toContainEqual({
       target: "room1",
@@ -198,7 +247,7 @@ describe("RoomManager", () => {
     expect(rm.snapshot("room1")).toHaveLength(1);
   });
 
-  it("disposeAll clears every room's timers so no interval outlives the manager", () => {
+  it("disposeAll clears every room's timers so no interval outlives the manager", async () => {
     const { broadcaster } = fakeBroadcaster();
     const rm = createManager(broadcaster, fakeLease(), "instance-a");
     rm.ensureRoom("room1");
@@ -206,9 +255,203 @@ describe("RoomManager", () => {
     expect(rm.isOwnedLocally("room1")).toBe(true);
     expect(rm.isOwnedLocally("room2")).toBe(true);
 
-    rm.disposeAll();
+    await rm.disposeAll();
 
     expect(rm.isOwnedLocally("room1")).toBe(false);
     expect(rm.isOwnedLocally("room2")).toBe(false);
+  });
+
+  describe("canvas objects", () => {
+    it("hydrateObjects loads persisted objects into the room's in-memory state", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const persisted = makeObject();
+      const repo = fakeObjectRepository([persisted]);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+
+      await rm.hydrateObjects("room1");
+
+      expect(rm.objectsSnapshot("room1")).toEqual([persisted]);
+    });
+
+    it("concurrent hydrateObjects calls for the same room share one load", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository([makeObject()]);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+
+      await Promise.all([
+        rm.hydrateObjects("room1"),
+        rm.hydrateObjects("room1"),
+        rm.hydrateObjects("room1"),
+      ]);
+
+      expect(repo.loadRoomObjects).toHaveBeenCalledTimes(1);
+    });
+
+    it("applyObjectUpsert accepts a create (baseVersion 0) and assigns version 1", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+      await rm.hydrateObjects("room1");
+
+      const result = rm.applyObjectUpsert("room1", "u1", {
+        objectId: "obj1",
+        roomId: "room1",
+        type: "note",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        z: 0,
+        data: {},
+        baseVersion: 0,
+      });
+
+      expect(result?.accepted).toBe(true);
+      if (result?.accepted) {
+        expect(result.next.version).toBe(1);
+        expect(result.next.createdById).toBe("u1");
+      }
+      expect(rm.objectsSnapshot("room1")).toHaveLength(1);
+    });
+
+    it("applyObjectUpsert increments version on a matching-baseVersion edit", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository([makeObject({ version: 1 })]);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+      await rm.hydrateObjects("room1");
+
+      const result = rm.applyObjectUpsert("room1", "u1", {
+        objectId: "obj1",
+        roomId: "room1",
+        type: "note",
+        x: 50,
+        y: 50,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        z: 0,
+        data: {},
+        baseVersion: 1,
+      });
+
+      expect(result?.accepted).toBe(true);
+      if (result?.accepted) expect(result.next.version).toBe(2);
+    });
+
+    it("applyObjectUpsert rejects a stale baseVersion and returns the authoritative state", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository([makeObject({ version: 5 })]);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+      await rm.hydrateObjects("room1");
+
+      const result = rm.applyObjectUpsert("room1", "u1", {
+        objectId: "obj1",
+        roomId: "room1",
+        type: "note",
+        x: 1,
+        y: 1,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        z: 0,
+        data: {},
+        baseVersion: 3, // stale
+      });
+
+      expect(result?.accepted).toBe(false);
+      if (!result?.accepted) {
+        expect(result?.reason).toBe("stale_version");
+        expect(result?.authoritative?.version).toBe(5);
+      }
+      // The rejected write must not have mutated room state.
+      expect(rm.objectsSnapshot("room1")[0]?.version).toBe(5);
+    });
+
+    it("applyObjectDelete succeeds for the creator and fails for a different user", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository([makeObject({ createdById: "creator1", version: 1 })]);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+      await rm.hydrateObjects("room1");
+
+      const deniedForNonCreator = rm.applyObjectDelete("room1", "someone-else", "obj1", 1);
+      expect(deniedForNonCreator?.outcome).toBe("rejected");
+      expect(rm.objectsSnapshot("room1")).toHaveLength(1); // still present
+
+      const allowedForCreator = rm.applyObjectDelete("room1", "creator1", "obj1", 1);
+      expect(allowedForCreator?.outcome).toBe("deleted");
+      expect(rm.objectsSnapshot("room1")).toHaveLength(0);
+    });
+
+    it("hydration completes before a mutation is applied, so a create doesn't get clobbered by a slow load", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository();
+      // Make the load resolve on a later tick, simulating real async latency —
+      // a mutation handler that didn't await hydrateObjects() first could
+      // apply against an empty map and then have the load silently overwrite it.
+      let resolveLoad!: () => void;
+      repo.loadRoomObjects = vi.fn(
+        () => new Promise<ObjectState[]>((resolve) => (resolveLoad = () => resolve([]))),
+      );
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+
+      const hydration = rm.hydrateObjects("room1");
+      resolveLoad();
+      await hydration;
+
+      const result = rm.applyObjectUpsert("room1", "u1", {
+        objectId: "obj1",
+        roomId: "room1",
+        type: "note",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        z: 0,
+        data: {},
+        baseVersion: 0,
+      });
+
+      expect(result?.accepted).toBe(true);
+      expect(rm.objectsSnapshot("room1")).toHaveLength(1);
+    });
+
+    it("evicting a room flushes pending object writes before dropping state", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const repo = fakeObjectRepository();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, repo);
+      rm.ensureRoom("room1");
+      await rm.hydrateObjects("room1");
+      rm.addPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } });
+
+      rm.applyObjectUpsert("room1", "u1", {
+        objectId: "obj1",
+        roomId: "room1",
+        type: "note",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        z: 0,
+        data: {},
+        baseVersion: 0,
+      });
+
+      // Last peer leaves — this evicts the room, which must flush the
+      // just-created object to the repository before the eviction resolves.
+      await rm.removePeer("room1", "u1");
+
+      expect(repo.upsertCalls).toHaveLength(1);
+      expect(repo.upsertCalls[0]!.objectId).toBe("obj1");
+    });
   });
 });

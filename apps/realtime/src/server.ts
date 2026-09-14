@@ -7,8 +7,12 @@ import {
   ServerEvents,
   JoinRoomEventSchema,
   MoveEventSchema,
+  ObjectUpsertEventSchema,
+  ObjectDeleteEventSchema,
   type PeersSnapshotEvent,
+  type ObjectsSnapshotEvent,
 } from "@cosmos/shared";
+import { loadRoomObjects, upsertObject, deleteObject } from "@cosmos/db";
 import { env } from "./env";
 import { instanceId, redisPub, redisSub, roomLease, instanceRegistry, startHeartbeat, stopHeartbeat } from "./instance";
 import { verifySessionToken, assertRoomMembership } from "./auth";
@@ -48,7 +52,11 @@ const io = new SocketIOServer(app.server, {
   adapter: createAdapter(redisPub, redisSub),
 });
 
-const roomManager = new RoomManager(broadcasterFromSocketServer(io), roomLease, instanceId);
+const roomManager = new RoomManager(broadcasterFromSocketServer(io), roomLease, instanceId, 10_000, {
+  loadRoomObjects,
+  upsertObject,
+  deleteObject,
+});
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token as string | undefined;
@@ -88,6 +96,12 @@ io.on("connection", (socket) => {
     }
 
     roomManager.ensureRoom(roomId);
+    // Must complete before any object read/mutation for this room, including
+    // this very join's objects:snapshot below — otherwise a joining client
+    // could be sent an incomplete (still-loading) object list. Concurrent
+    // joins for the same room all await the same in-flight load rather than
+    // racing separate ones (see RoomManager.hydrateObjects's docs).
+    await roomManager.hydrateObjects(roomId);
     await socket.join(roomId);
 
     roomManager.addPeer(roomId, {
@@ -95,7 +109,7 @@ io.on("connection", (socket) => {
       name: user.email, // placeholder until profile data is wired up in phase 2
       avatarUrl: null,
       socketId: socket.id,
-      // TODO(phase 7): use the room's configured spawn point instead of a
+      // TODO(phase 8): use the room's configured spawn point instead of a
       // fixed default once Room.config is read here. Deterministic per-user
       // ring offset so multiple avatars don't render exactly on top of each
       // other (see packages/proximity/src/spawn.ts).
@@ -109,6 +123,15 @@ io.on("connection", (socket) => {
     // This also doubles as the client's clean-resync primitive on reconnect.
     const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId) };
     io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot);
+
+    // Objects:snapshot goes to the JOINING socket only, unlike peers:snapshot
+    // — an existing peer's knowledge of the room's objects doesn't change
+    // just because someone else joined (nothing about the peer itself
+    // changed), whereas peers:snapshot also doubles as how existing peers
+    // learn the newcomer's identity.
+    const objectsSnapshot: ObjectsSnapshotEvent = { roomId, objects: roomManager.objectsSnapshot(roomId) };
+    socket.emit(ServerEvents.ObjectsSnapshot, objectsSnapshot);
+
     ack?.({ ok: true });
   });
 
@@ -128,9 +151,88 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on(ClientEvents.ObjectUpsert, async (raw, ack?: (res: unknown) => void) => {
+    const roomId = socket.data.roomId as string | undefined;
+    if (!roomId) return ack?.({ error: "not_in_room" });
+
+    const parsed = ObjectUpsertEventSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ error: "invalid_payload" });
+
+    // Room membership/auth was already proven at join_room; object handlers
+    // derive the room from socket.data.roomId (never the payload's roomId)
+    // for the same reason the move handler does — a client cannot address
+    // another room by simply putting a different id in the payload.
+    await roomManager.hydrateObjects(roomId);
+
+    const result = roomManager.applyObjectUpsert(roomId, user.userId, {
+      objectId: parsed.data.objectId,
+      roomId,
+      type: parsed.data.type,
+      x: parsed.data.x,
+      y: parsed.data.y,
+      width: parsed.data.width,
+      height: parsed.data.height,
+      rotation: parsed.data.rotation,
+      z: parsed.data.z,
+      data: parsed.data.data,
+      baseVersion: parsed.data.baseVersion,
+    });
+
+    if (!result) return ack?.({ error: "room_not_found" });
+
+    if (result.accepted) {
+      io.to(roomId).emit(ServerEvents.ObjectSync, { object: result.next, accepted: true });
+      return ack?.({ ok: true });
+    }
+
+    if (result.reason === "not_found") {
+      // The object was deleted by someone else since this client last saw
+      // it — nothing to sync it TO (ObjectSyncEventSchema requires a
+      // non-null object), so just tell the writer it's gone.
+      socket.emit(ServerEvents.ObjectRemoved, { objectId: parsed.data.objectId, roomId });
+      return ack?.({ error: "not_found" });
+    }
+
+    // "room_full" | "id_collision" | "stale_version" — the first has no
+    // authoritative object to send (nothing was ever created), the other
+    // two do.
+    if (result.authoritative) {
+      socket.emit(ServerEvents.ObjectSync, { object: result.authoritative, accepted: false });
+    }
+    ack?.({ error: result.reason });
+  });
+
+  socket.on(ClientEvents.ObjectDelete, async (raw, ack?: (res: unknown) => void) => {
+    const roomId = socket.data.roomId as string | undefined;
+    if (!roomId) return ack?.({ error: "not_in_room" });
+
+    const parsed = ObjectDeleteEventSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ error: "invalid_payload" });
+
+    await roomManager.hydrateObjects(roomId);
+
+    const outcome = roomManager.applyObjectDelete(roomId, user.userId, parsed.data.objectId, parsed.data.baseVersion);
+    if (!outcome) return ack?.({ error: "room_not_found" });
+
+    if (outcome.outcome === "deleted" || outcome.outcome === "already_gone") {
+      io.to(roomId).emit(ServerEvents.ObjectRemoved, { objectId: parsed.data.objectId, roomId });
+      return ack?.({ ok: true });
+    }
+
+    // rejected: "stale_version" | "not_creator" — authoritative is always
+    // present here since the object must exist for either rejection reason.
+    socket.emit(ServerEvents.ObjectSync, { object: outcome.authoritative, accepted: false });
+    ack?.({ error: outcome.reason });
+  });
+
   socket.on("disconnect", () => {
     const roomId = socket.data.roomId as string | undefined;
-    if (roomId) roomManager.removePeer(roomId, user.userId);
+    // Fire-and-forget: removePeer is async since it may flush pending object
+    // writes on eviction, but a disconnecting socket has nothing left to
+    // wait on the result for. A crash between now and flush completion can
+    // still lose at most one debounce window of edits — the same documented
+    // limitation as the debounce itself (see objectPersistence.ts).
+    if (roomId) void roomManager.removePeer(roomId, user.userId);
   });
 });
 
@@ -138,7 +240,10 @@ startHeartbeat();
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
-    roomManager.disposeAll(); // clear every room's tick/lease-refresh interval before exiting
+    // Clears every room's tick/lease-refresh interval and flushes any
+    // pending object writes before exiting — awaited so a debounce window
+    // in progress at shutdown doesn't silently lose edits.
+    await roomManager.disposeAll();
     await stopHeartbeat();
     await app.close();
     process.exit(0);

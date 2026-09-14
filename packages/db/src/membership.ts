@@ -14,8 +14,11 @@ import { Prisma } from "@prisma/client";
  *  container can stall the container networking path for multiple seconds
  *  on a resource-constrained host — reproduced consistently (curl alone
  *  never triggered it; a live Chromium instance rendering the canvas
- *  always did) — so a sub-second retry budget was not enough headroom. */
-async function withTransientRetry<T>(fn: () => Promise<T>, attempts = 5, delayMs = 300): Promise<T> {
+ *  always did) — so a sub-second retry budget was not enough headroom.
+ *
+ *  Exported so other repository modules (e.g. objects.ts) can wrap their
+ *  own Prisma calls in the same retry policy rather than re-rolling it. */
+export async function withTransientRetry<T>(fn: () => Promise<T>, attempts = 5, delayMs = 300): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {

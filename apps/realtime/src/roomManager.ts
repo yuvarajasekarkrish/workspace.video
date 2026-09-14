@@ -1,13 +1,25 @@
 import type { Server as SocketIOServer } from "socket.io";
-import type { Point } from "@cosmos/shared";
+import type { Point, ObjectState } from "@cosmos/shared";
 import { ServerEvents, DEFAULT_MOVEMENT_CONFIG, DEFAULT_PROXIMITY_CONFIG } from "@cosmos/shared";
 import type { RoomLease } from "@cosmos/realtime-core";
 import {
   validateMove,
   tickProximity,
   pairKey,
+  resolveObjectWrite,
+  resolveObjectDelete,
   type ProximityState,
+  type ProposedObjectWrite,
+  type ObjectWriteResult,
+  type ObjectDeleteOutcome,
 } from "@cosmos/proximity";
+import { ObjectPersistence, noopObjectRepository, type ObjectRepository } from "./objectPersistence";
+
+/** Hard cap on objects per room, checked before accepting a create — bounds
+ *  the worst case for both realtime-process memory and the objects table. */
+const MAX_OBJECTS_PER_ROOM = 2000;
+
+export type ObjectUpsertOutcome = ObjectWriteResult | { accepted: false; reason: "room_full"; authoritative: null };
 
 /** Minimal emitter surface RoomManager needs from Socket.IO — narrowed so
  *  unit tests can pass a lightweight fake instead of a real server. */
@@ -49,20 +61,42 @@ export class RoomManager {
     {
       peers: Map<string, PeerState>; // keyed by userId
       proximityStates: Map<string, ProximityState>; // keyed by pairKey(a,b)
+      objects: Map<string, ObjectState>; // keyed by objectId
+      /** Memoized load-from-Postgres promise, set the first time
+       *  hydrateObjects() is called for this room and never cleared —
+       *  concurrent joins all await the SAME promise instead of triggering
+       *  a duplicate load, and later joins get the already-resolved one
+       *  back instantly. See hydrateObjects() below. */
+      objectsHydration: Promise<void> | null;
       tickTimer: NodeJS.Timeout;
       leaseRefreshTimer: NodeJS.Timeout;
     }
   >();
+
+  private readonly objectPersistence: ObjectPersistence;
 
   constructor(
     private readonly broadcaster: RoomBroadcaster,
     private readonly lease: RoomLease,
     private readonly instanceId: string,
     private readonly leaseRefreshIntervalMs = 10_000,
-  ) {}
+    objectRepository: ObjectRepository = noopObjectRepository,
+  ) {
+    // Owned internally (not injected as a whole) because it needs a
+    // `getObject` closure over this.rooms — constructing it here, rather
+    // than requiring a caller to somehow close over a not-yet-constructed
+    // RoomManager, is what breaks that circularity. Only the DB-facing
+    // repository is injected, which is also all a test needs to fake.
+    this.objectPersistence = new ObjectPersistence(
+      objectRepository,
+      (roomId, objectId) => this.rooms.get(roomId)?.objects.get(objectId),
+    );
+  }
 
   /** Called once this instance has confirmed (via the lease) that it owns
-   *  `roomId`. Idempotent — safe to call on every join. */
+   *  `roomId`. Idempotent — safe to call on every join. Deliberately
+   *  synchronous: it only allocates in-memory room state. Loading
+   *  persisted objects is a separate async step — see hydrateObjects(). */
   ensureRoom(roomId: string): void {
     if (this.rooms.has(roomId)) return;
 
@@ -78,16 +112,39 @@ export class RoomManager {
     const leaseRefreshTimer = setInterval(async () => {
       const stillOwner = await this.lease.refresh(this.instanceId, roomId);
       if (!stillOwner) {
-        this.evictRoom(roomId, { notifyOwnerChanged: true });
+        await this.evictRoom(roomId, { notifyOwnerChanged: true });
       }
     }, this.leaseRefreshIntervalMs);
 
     this.rooms.set(roomId, {
       peers: new Map(),
       proximityStates: new Map(),
+      objects: new Map(),
+      objectsHydration: null,
       tickTimer,
       leaseRefreshTimer,
     });
+  }
+
+  /** Loads this room's persisted objects from Postgres into memory, exactly
+   *  once per room's lifetime (until eviction). Must be awaited by the
+   *  caller (server.ts) before processing ANY object read/mutation for the
+   *  room — including the very join that triggers it, since the joining
+   *  client needs the loaded objects for its objects:snapshot. Concurrent
+   *  joins for the same room all await the same in-flight promise rather
+   *  than racing separate loads. */
+  async hydrateObjects(roomId: string): Promise<void> {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    if (room.objectsHydration) return room.objectsHydration;
+
+    room.objectsHydration = (async () => {
+      const persisted = await this.objectPersistence.loadRoomObjects(roomId);
+      for (const obj of persisted) {
+        room.objects.set(obj.objectId, obj);
+      }
+    })();
+    return room.objectsHydration;
   }
 
   addPeer(roomId: string, peer: Omit<PeerState, "acceptedAtMs">): void {
@@ -96,7 +153,11 @@ export class RoomManager {
     room.peers.set(peer.userId, { ...peer, acceptedAtMs: Date.now() });
   }
 
-  removePeer(roomId: string, userId: string): void {
+  /** Returns a Promise (rather than being fire-and-forget) so callers that
+   *  care about eviction actually completing — including a pending object
+   *  flush — can await it; server.ts's disconnect handler does not need to
+   *  and does not. */
+  async removePeer(roomId: string, userId: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
     room.peers.delete(userId);
@@ -117,7 +178,7 @@ export class RoomManager {
     this.broadcaster.to(roomId).emit(ServerEvents.PeersDelta, { roomId, updates: [], left: [userId] });
 
     if (room.peers.size === 0) {
-      this.evictRoom(roomId, { notifyOwnerChanged: false });
+      await this.evictRoom(roomId, { notifyOwnerChanged: false });
     }
   }
 
@@ -156,6 +217,66 @@ export class RoomManager {
     }
 
     return result;
+  }
+
+  /** Every object currently held for a room, sent to a joining/reconnecting
+   *  client as objects:snapshot. Unlike peers:snapshot, this is never
+   *  broadcast to the whole room on a join — an existing peer's knowledge
+   *  of the room's objects doesn't change just because someone else joined,
+   *  whereas peers:snapshot also doubles as how existing peers learn the
+   *  newcomer's identity. Requires hydrateObjects() to have been awaited
+   *  first, or this simply returns whatever (possibly nothing) has loaded
+   *  so far — server.ts always awaits hydration before calling this. */
+  objectsSnapshot(roomId: string): ObjectState[] {
+    const room = this.rooms.get(roomId);
+    if (!room) return [];
+    return Array.from(room.objects.values());
+  }
+
+  /** Applies a client's proposed object create/edit. Delegates the actual
+   *  accept/reject decision to the pure resolveObjectWrite (LWW by
+   *  version), after first enforcing the per-room object cap — a cap
+   *  concern belongs at the room level, not in the pure version-resolution
+   *  logic, so it's checked here rather than folded into objectLww.ts. */
+  applyObjectUpsert(
+    roomId: string,
+    actorUserId: string,
+    proposed: ProposedObjectWrite,
+  ): ObjectUpsertOutcome | undefined {
+    const room = this.rooms.get(roomId);
+    if (!room) return undefined;
+
+    const current = room.objects.get(proposed.objectId);
+    if (!current && room.objects.size >= MAX_OBJECTS_PER_ROOM) {
+      return { accepted: false, reason: "room_full", authoritative: null };
+    }
+
+    const result = resolveObjectWrite(proposed, current, actorUserId);
+    if (result.accepted) {
+      room.objects.set(proposed.objectId, result.next);
+      this.objectPersistence.markDirty(roomId, proposed.objectId);
+    }
+    return result;
+  }
+
+  /** Applies a client's proposed object delete. Creator-only, enforced by
+   *  resolveObjectDelete — the server is the boundary, not just the UI. */
+  applyObjectDelete(
+    roomId: string,
+    actorUserId: string,
+    objectId: string,
+    baseVersion: number,
+  ): ObjectDeleteOutcome | undefined {
+    const room = this.rooms.get(roomId);
+    if (!room) return undefined;
+
+    const current = room.objects.get(objectId);
+    const outcome = resolveObjectDelete(objectId, baseVersion, current, actorUserId);
+    if (outcome.outcome === "deleted") {
+      room.objects.delete(objectId);
+      this.objectPersistence.markDeleted(roomId, objectId);
+    }
+    return outcome;
   }
 
   private lastEmittedPositions = new Map<string, Map<string, Point>>();
@@ -213,13 +334,21 @@ export class RoomManager {
     }
   }
 
-  private evictRoom(roomId: string, opts: { notifyOwnerChanged: boolean }): void {
+  private async evictRoom(roomId: string, opts: { notifyOwnerChanged: boolean }): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
 
     clearInterval(room.tickTimer);
     clearInterval(room.leaseRefreshTimer);
     this.lastEmittedPositions.delete(roomId);
+
+    // Flush any pending object writes BEFORE dropping the room from
+    // `this.rooms` — flushAndClear's writes read fresh values via the
+    // objectPersistence's getObject closure, which resolves through
+    // `this.rooms.get(roomId)`; deleting the entry first would make every
+    // pending write silently no-op, losing the last edit made just before
+    // everyone left the room.
+    await this.objectPersistence.flushAndClear(roomId);
 
     if (opts.notifyOwnerChanged) {
       // Tell every socket in the room to re-resolve its endpoint rather than
@@ -242,12 +371,17 @@ export class RoomManager {
    *  TTL expiry already covers that). Call this on process shutdown
    *  (SIGINT/SIGTERM — see server.ts) and in test teardown: leaving these
    *  intervals running keeps the event loop alive for no reason after the
-   *  RoomManager itself is no longer reachable. */
-  disposeAll(): void {
+   *  RoomManager itself is no longer reachable.
+   *
+   *  Async since Phase 7: flushes every room's pending object writes before
+   *  clearing state, so a debounce window in progress at the moment of
+   *  shutdown doesn't silently lose edits. */
+  async disposeAll(): Promise<void> {
     for (const room of this.rooms.values()) {
       clearInterval(room.tickTimer);
       clearInterval(room.leaseRefreshTimer);
     }
+    await this.objectPersistence.flushAllAndDispose();
     this.rooms.clear();
     this.lastEmittedPositions.clear();
   }

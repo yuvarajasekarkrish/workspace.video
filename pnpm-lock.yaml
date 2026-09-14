@@ -148,6 +148,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@cosmos/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@prisma/client':
         specifier: ^6.2.1
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -161,6 +164,9 @@ importers:
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.2)(jsdom@25.0.1)(lightningcss@1.32.0)
 
   packages/proximity:
     dependencies:
