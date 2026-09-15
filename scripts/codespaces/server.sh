@@ -24,6 +24,10 @@ docker compose up -d postgres redis
 wait_for "Postgres" docker compose exec -T postgres pg_isready -U cosmos
 wait_for "Redis" docker compose exec -T redis redis-cli ping
 
+# Explicit, not relying on devcontainer.json's postCreateCommand having run
+# (or run against the right schema) — generate is idempotent and cheap, so
+# always regenerating here makes this script self-sufficient on any codespace.
+pnpm --filter @cosmos/db run generate
 pnpm --filter @cosmos/db exec prisma migrate deploy
 pnpm --filter @cosmos/realtime run build
 
