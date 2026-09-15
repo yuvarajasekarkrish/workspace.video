@@ -1,8 +1,18 @@
 import { Application, Container } from "pixi.js";
-import type { Point } from "@cosmos/shared";
+import type { Point, RoomLayout } from "@cosmos/shared";
+import {
+  DEFAULT_MOVEMENT_CONFIG,
+  resolveLayout,
+  DEFAULT_LAYOUT_ID,
+  movementConfigForLayout,
+  hitTestSeats,
+} from "@cosmos/shared";
 import { peersStore, type PeersState } from "@/store/peersStore";
 import { objectsStore, type ObjectsState } from "@/store/objectsStore";
+import { seatsStore } from "@/store/seatsStore";
 import { createBackground } from "./Background";
+import { buildFloorView } from "./FloorView";
+import { SeatOverlay } from "./SeatOverlay";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
 import { stepToward, hasConverged, stepScalarToward } from "./interpolation";
@@ -18,6 +28,12 @@ export interface PixiStageOptions {
   roomId: string;
   localUserId: string;
   initialLocalPosition: Point;
+  /** Resolved on the room page from Room.config (see parseRoomConfig) —
+   *  the layout is bundled into the client (packages/shared), so only the
+   *  id crosses the wire, never furniture geometry. Falls back to the
+   *  default layout for an unknown id, mirroring the server's own fallback,
+   *  so a stale client build can never fail to render a floor at all. */
+  layoutId: string;
 }
 
 /**
@@ -47,8 +63,11 @@ export class PixiStage {
   private realtimeClient!: RealtimeClient;
   private objectInteraction!: ObjectInteractionController;
   private readonly noteEditor = new NoteEditor();
+  private layout!: RoomLayout;
+  private seatOverlay!: SeatOverlay;
   private unsubscribeSnapshotWatch: (() => void) | null = null;
   private unsubscribeObjectsWatch: (() => void) | null = null;
+  private unsubscribeSeatsWatch: (() => void) | null = null;
   private detachKeyboard: (() => void) | null = null;
   private detachObjectKeyboard: (() => void) | null = null;
   private detachDblClick: (() => void) | null = null;
@@ -86,26 +105,47 @@ export class PixiStage {
     });
 
     // world carries the pan/zoom transform; overlay (added later, outside
-    // world) would not scale with it. background -> objects -> avatars,
-    // per the plan's layer ordering (objectLayer replaces the anonymous
-    // placeholder container reserved here through Phase 6).
+    // world) would not scale with it. background -> floor furniture ->
+    // objects -> avatars, per the plan's layer ordering — the floor is
+    // static furniture built once from the layout (see FloorView.ts),
+    // never touched by the per-frame render loop like avatars/objects are.
     this.viewport = new Viewport(this.app.canvas as HTMLCanvasElement, {
       onClickToWalk: (worldPoint) => this.movementController.setWalkTarget(worldPoint),
       onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
       onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
       onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
+      onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
     });
     this.world.addChild(this.viewport.world);
-    this.viewport.world.addChild(createBackground());
+
+    // Resolved client-side from a bundled id (see PixiStageOptions.layoutId
+    // docs) — the same fallback-to-default rule the server applies to a
+    // stale/unknown Room.config, so a bad id can never leave a blank floor.
+    this.layout = resolveLayout(options.layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+    const movementConfig = movementConfigForLayout(this.layout, DEFAULT_MOVEMENT_CONFIG);
+
+    this.viewport.world.addChild(createBackground(movementConfig));
+    this.viewport.world.addChild(buildFloorView(this.layout));
+    this.seatOverlay = new SeatOverlay(this.layout);
+    this.viewport.world.addChild(this.seatOverlay.container);
     this.objectLayer.sortableChildren = true;
     this.viewport.world.addChild(this.objectLayer);
     this.viewport.world.addChild(this.avatarLayer);
     this.app.stage.addChild(this.world);
 
-    this.movementController = new MovementController(options.initialLocalPosition, {
-      onLocalPositionChanged: (position) => peersStore.getState().setLocalPosition(position),
-      onSendMove: (position) => this.realtimeClient.sendMove({ position, clientTs: Date.now() }),
-    });
+    this.movementController = new MovementController(
+      options.initialLocalPosition,
+      {
+        onLocalPositionChanged: (position) => peersStore.getState().setLocalPosition(position),
+        onSendMove: (position) => this.realtimeClient.sendMove({ position, clientTs: Date.now() }),
+        // Fires after `seated` has already flipped false and movement has
+        // already resumed for this frame (see MovementController's
+        // standUp docs) — this is purely "tell the server", never a gate
+        // on standing up itself.
+        onStandUp: () => this.realtimeClient.sendSeatRelease(),
+      },
+      movementConfig,
+    );
     // The note text editor is an HTML <textarea> overlaid on the canvas
     // (see NoteEditor.ts) — without this guard, typing "w"/"a"/"s"/"d"
     // while editing a note would also walk the avatar out from under the
@@ -135,6 +175,18 @@ export class PixiStage {
       () => this.reconcileObjectViews(objectsStore.getState()),
     );
     this.reconcileObjectViews(objectsStore.getState());
+
+    // Seat occupancy changes at join/leave/sit/stand frequency, never per
+    // frame — a store subscription (not the render loop) drives both the
+    // chair tint (SeatOverlay) and the seated ring on the owning avatar.
+    this.unsubscribeSeatsWatch = seatsStore.subscribe(
+      (state) => state.occupancy,
+      (occupancy) => {
+        this.seatOverlay.update(occupancy);
+        this.updateSeatedAvatars(occupancy);
+      },
+    );
+    this.seatOverlay.update(seatsStore.getState().occupancy);
 
     this.detachObjectKeyboard = this.attachObjectKeyboard(window);
     this.detachDblClick = this.attachDoubleClick(this.app.canvas as HTMLCanvasElement);
@@ -169,6 +221,36 @@ export class PixiStage {
         this.avatars.delete(userId);
       }
     }
+
+    // A newly-joined avatar may already be seated per seats:snapshot — this
+    // keeps a fresh avatar's ring correct without waiting for the next
+    // unrelated seat change.
+    this.updateSeatedAvatars(seatsStore.getState().occupancy);
+  }
+
+  /** Toggles each avatar's seated ring from current occupancy — called on
+   *  every seatsStore change and on avatar reconciliation, never per frame. */
+  private updateSeatedAvatars(occupancy: ReadonlyMap<string, string>): void {
+    const seatedUserIds = new Set(occupancy.values());
+    for (const [userId, avatar] of this.avatars) {
+      avatar.setSeated(seatedUserIds.has(userId));
+    }
+  }
+
+  /** Viewport's onFurnitureGestureStart — a hit on a seat claims the
+   *  gesture (so it doesn't also become a click-to-walk) and fires the
+   *  claim asynchronously; the local avatar only teleports on an accepted
+   *  ack (sit-down waits for it — see RealtimeClient.sendSeatClaim's docs),
+   *  unlike standing up, which is optimistic. A miss returns false and
+   *  falls through to the normal click-to-walk/pan arbitration. */
+  private handleFurnitureGestureStart(worldPoint: Point): boolean {
+    const seat = hitTestSeats(this.layout, worldPoint);
+    if (!seat) return false;
+
+    void this.realtimeClient.sendSeatClaim(seat.id).then((result) => {
+      if (result.ok) this.movementController.applyTeleport(seat.anchor);
+    });
+    return true;
   }
 
   /** Creates/destroys ObjectView instances to match the current object set.
@@ -369,6 +451,12 @@ export class PixiStage {
     this.objectInteraction.deleteSelected();
   }
 
+  /** The capacity screen's "Try again" button calls this — same
+   *  never-expose-the-client-directly pattern as the two methods above. */
+  retryJoin(): void {
+    this.realtimeClient.retryJoin();
+  }
+
   dispose(): void {
     this.disposed = true;
     this.detachKeyboard?.();
@@ -377,12 +465,14 @@ export class PixiStage {
     this.noteEditor.dispose();
     this.unsubscribeSnapshotWatch?.();
     this.unsubscribeObjectsWatch?.();
+    this.unsubscribeSeatsWatch?.();
     this.realtimeClient?.dispose();
     this.viewport?.dispose();
     for (const avatar of this.avatars.values()) avatar.destroy();
     this.avatars.clear();
     for (const view of this.objectViews.values()) view.destroy();
     this.objectViews.clear();
+    this.seatOverlay?.destroy();
     // app.canvas may not exist yet if disposed mid-init; app.destroy handles
     // removing ticker callbacks and the renderer regardless.
     this.app.destroy(true, { children: true });

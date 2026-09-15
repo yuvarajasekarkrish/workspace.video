@@ -1,6 +1,15 @@
 import { redirect } from "next/navigation";
 import { prisma, assertRoomMembership } from "@cosmos/db";
 import { spawnPositionForUser } from "@cosmos/proximity";
+import {
+  parseRoomConfig,
+  resolveLayout,
+  DEFAULT_LAYOUT_ID,
+  zoneById,
+  tileRectCenter,
+  movementConfigForLayout,
+  DEFAULT_MOVEMENT_CONFIG,
+} from "@cosmos/shared";
 import { getSessionUser } from "@/lib/session";
 import { RoomCanvas } from "@/components/RoomCanvas";
 
@@ -29,17 +38,36 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
 
   const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
 
+  // Resolved from Room.config, falling back to the default layout for a
+  // missing/unknown id — the identical rule the realtime server applies at
+  // join_room, so client and server always agree on where the floor's
+  // bounds and spawn point are (see @cosmos/shared's layouts module).
+  const { layoutId } = parseRoomConfig(room.config);
+  const layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+  const spawnZone = zoneById(layout, layout.spawnZoneId)!;
+  const movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
+
   // Same deterministic ring-offset spawn the realtime server uses (see
   // apps/realtime/src/server.ts join_room handler) so the local avatar
   // doesn't visibly jump once the server's snapshot arrives.
-  const initialLocalPosition = spawnPositionForUser(session.userId, { x: 100, y: 100 });
+  const initialLocalPosition = spawnPositionForUser(
+    session.userId,
+    tileRectCenter(spawnZone.rect),
+    undefined,
+    movementConfig,
+  );
 
   return (
     <main className="h-screen w-screen overflow-hidden bg-[#0b0d12]">
       <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 text-sm text-neutral-400">
         {room.name}
       </div>
-      <RoomCanvas roomId={roomId} localUserId={session.userId} initialLocalPosition={initialLocalPosition} />
+      <RoomCanvas
+        roomId={roomId}
+        localUserId={session.userId}
+        initialLocalPosition={initialLocalPosition}
+        layoutId={layout.id}
+      />
     </main>
   );
 }
