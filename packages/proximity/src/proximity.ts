@@ -55,7 +55,10 @@ export function computeProximityState(
   };
 }
 
-function statesEqual(a: ProximityState, b: ProximityState): boolean {
+/** Exported so callers outside this module (RoomManager's zone-audio dedupe)
+ *  can compare two ProximityState values the same way tickProximity does
+ *  internally, rather than re-rolling the epsilon comparison. */
+export function statesEqual(a: ProximityState, b: ProximityState): boolean {
   return (
     a.audioSubscribed === b.audioSubscribed &&
     a.videoSubscribed === b.videoSubscribed &&
