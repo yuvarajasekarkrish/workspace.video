@@ -78,12 +78,26 @@ enum WorkspaceRole {
   member
 }
 
+enum WorkspacePlan {
+  startup
+  team
+  company
+  large
+  enterprise
+}
+
 model Workspace {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  slug      String        @unique
+  // Concurrent-participant limit is resolved from this via
+  // packages/shared's PLAN_PARTICIPANT_LIMITS (see
+  // packages/db/src/participantLimits.ts) — no billing fields live here;
+  // a future subscription system replaces the limit LOOKUP, not this column's
+  // shape. Defaulted so existing rows are valid without a data migration.
+  plan      WorkspacePlan @default(startup)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   members WorkspaceMember[]
   rooms   Room[]

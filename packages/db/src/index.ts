@@ -13,3 +13,4 @@ if (process.env.NODE_ENV !== "production") {
 export * from "@prisma/client";
 export * from "./membership";
 export * from "./objects";
+export * from "./participantLimits";
