@@ -813,9 +813,13 @@ describe("RoomManager", () => {
       // The zone override made both sides hear full gain (asserted in the
       // sibling test above), but the RAW cache underneath must still show
       // the true, un-overridden distance-based state — otherwise the next
-      // hysteresis calculation reads a corrupted "wasAudio" baseline.
+      // hysteresis calculation reads a corrupted "wasAudio" baseline. Phase
+      // 9's sparse tracker never stores a NOT_NEARBY pair at all (see
+      // SparseProximityTracker's docs), so "undefined" here IS the honest,
+      // un-corrupted raw state for a genuinely-600px-apart pair — not a
+      // missing value.
       const rawInMeeting = rm.proximityStateForTest("room1", "u1", "u2");
-      expect(rawInMeeting?.audioSubscribed).toBe(false); // 600px apart is genuinely NOT_NEARBY
+      expect(rawInMeeting?.audioSubscribed ?? false).toBe(false); // 600px apart is genuinely NOT_NEARBY
 
       // Move both to a distance BETWEEN audioRadius (500) and
       // audioRadius+hysteresis (525) — 510px. If the raw cache had been
@@ -828,7 +832,7 @@ describe("RoomManager", () => {
       rm.runTickForTest("room1");
 
       const rawAfterExit = rm.proximityStateForTest("room1", "u1", "u2");
-      expect(rawAfterExit?.audioSubscribed).toBe(false);
+      expect(rawAfterExit?.audioSubscribed ?? false).toBe(false);
     });
 
     it("zoneOf is pruned on removePeer — a rejoining user in the SAME zone is treated as a fresh entry", async () => {
@@ -876,6 +880,267 @@ describe("RoomManager", () => {
       // anything at all.
       const audioToNewSocket = emitted.find((e) => e.target === "s1-new" && e.event === "proximity:update");
       expect(audioToNewSocket?.payload).toMatchObject({ peerId: "u2", audioSubscribed: true, audioGain: 1 });
+    });
+
+    // All Hands: stage rect col4,row0,cols3,rows1 -> world x:[640,1120) y:[0,160).
+    // Audience rect col4,row1,cols3,rows2 -> world x:[640,1120) y:[160,480).
+    const ON_STAGE = { x: 641, y: 1 };
+    const FAR_AUDIENCE_CORNER = { x: 1119, y: 479 }; // ~676px from ON_STAGE — NOT a grid candidate (cell 525px)
+    const NEUTRAL_1 = { x: 50, y: 700 };
+    const NEUTRAL_2 = { x: 50, y: 1300 };
+
+    it("an audience member hears a stage speaker at full gain even though they are physically far apart (not a grid neighbour)", () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", peer("speaker", NEUTRAL_1, "s-speaker"), 100);
+      rm.admitAndAddPeer("room1", peer("listener", NEUTRAL_2, "s-listener"), 100);
+      rm.runTickForTest("room1");
+
+      // Confirm they are genuinely not grid neighbours before the zone move.
+      expect(Math.hypot(ON_STAGE.x - FAR_AUDIENCE_CORNER.x, ON_STAGE.y - FAR_AUDIENCE_CORNER.y)).toBeGreaterThan(525);
+
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("speaker", ON_STAGE, "s-speaker"), 100);
+      rm.admitAndAddPeer("room1", peer("listener", FAR_AUDIENCE_CORNER, "s-listener"), 100);
+      rm.runTickForTest("room1");
+
+      const audioToListener = emitted.find((e) => e.target === "s-listener" && e.event === "proximity:update");
+      expect(audioToListener?.payload).toMatchObject({ peerId: "speaker", audioSubscribed: true, audioGain: 1 });
+
+      // The reverse direction is deliberately NOT full-gain (the table's
+      // "stage S <- audience of S: raw") — since they're genuinely far
+      // apart, the speaker should never be told they're subscribed. (A
+      // candidate pair examined for the first time in either direction
+      // always reports its true state once, even NOT_NEARBY — the same
+      // "first sight" behavior Phase 8 always had — so an explicit
+      // unsubscribed message here is fine; a subscribed one would not be.)
+      const audioToSpeaker = emitted.find((e) => e.target === "s-speaker" && e.event === "proximity:update");
+      if (audioToSpeaker) {
+        expect(audioToSpeaker.payload).toMatchObject({ peerId: "listener", audioSubscribed: false });
+      }
+    });
+
+    it("leaving the audience zone (while still far from the stage) correctly reverts to muted, not stuck at full gain", () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", peer("speaker", ON_STAGE, "s-speaker"), 100);
+      rm.admitAndAddPeer("room1", peer("listener", FAR_AUDIENCE_CORNER, "s-listener"), 100);
+      rm.runTickForTest("room1"); // listener now hears speaker at full gain
+
+      emitted.length = 0;
+      // Listener leaves the audience zone but stays just as far away.
+      rm.admitAndAddPeer("room1", peer("listener", NEUTRAL_2, "s-listener"), 100);
+      rm.runTickForTest("room1");
+
+      const audioToListener = emitted.find((e) => e.target === "s-listener" && e.event === "proximity:update");
+      expect(audioToListener?.payload).toMatchObject({ peerId: "speaker", audioSubscribed: false });
+    });
+  });
+
+  describe("disconnect cleanup (Phase 9 sparse structures)", () => {
+    function peer(userId: string, position: { x: number; y: number }, socketId = `s-${userId}`) {
+      return { userId, name: userId, avatarUrl: null, socketId, position };
+    }
+
+    it("removePeer drops the departing user from the spatial index, the proximity tracker, zone membership, and directed audio maps — without touching unrelated peers", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      const A = { x: 0, y: 700 };
+      const B = { x: 50, y: 700 }; // near A
+      const C = { x: 60, y: 700 }; // near A and B
+      rm.admitAndAddPeer("room1", peer("a", A), 100);
+      rm.admitAndAddPeer("room1", peer("b", B), 100);
+      rm.admitAndAddPeer("room1", peer("c", C), 100);
+      rm.runTickForTest("room1");
+
+      expect(rm.proximityStateForTest("room1", "a", "b")?.audioSubscribed).toBe(true);
+      expect(rm.proximityStateForTest("room1", "a", "c")?.audioSubscribed).toBe(true);
+      expect(rm.proximityStateForTest("room1", "b", "c")?.audioSubscribed).toBe(true);
+
+      await rm.removePeer("room1", "a");
+
+      // a's pairs are gone...
+      expect(rm.proximityStateForTest("room1", "a", "b")).toBeUndefined();
+      expect(rm.proximityStateForTest("room1", "a", "c")).toBeUndefined();
+      // ...but b/c, who never left, are untouched.
+      expect(rm.proximityStateForTest("room1", "b", "c")?.audioSubscribed).toBe(true);
+      expect(rm.snapshot("room1").map((p) => p.userId).sort()).toEqual(["b", "c"]);
+    });
+
+    it("a reconnecting user (same userId) re-triggers proximity:update against a peer who never left", async () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      const A = { x: 0, y: 700 };
+      const B = { x: 50, y: 700 };
+      rm.admitAndAddPeer("room1", peer("a", A, "s-a-old"), 100);
+      rm.admitAndAddPeer("room1", peer("b", B, "s-b"), 100);
+      rm.runTickForTest("room1");
+
+      await rm.removePeer("room1", "a");
+      rm.admitAndAddPeer("room1", peer("a", A, "s-a-new"), 100); // identical position, new socket
+
+      emitted.length = 0;
+      rm.runTickForTest("room1");
+
+      const audioToNewSocket = emitted.find((e) => e.target === "s-a-new" && e.event === "proximity:update");
+      expect(audioToNewSocket?.payload).toMatchObject({ peerId: "b", audioSubscribed: true });
+    });
+  });
+
+  describe("zone-transition oracle (grid + sparse tracker vs the zoneAudio table, ground truth)", () => {
+    // Verifies, via a SCRIPTED sequence, that RoomManager's emitted directed
+    // audio exactly matches what the pure `effectiveAudio` function (already
+    // exhaustively unit-tested in zoneAudio.test.ts) says it should be, for
+    // every transition the plan called out: raw-nearby <-> raw-far, both in
+    // the same meeting room, stage <-> its FAR audience, different private
+    // zones, open zone <-> no zone, and focus. This is the guard against a
+    // regression where the grid/tracker correctly find nearby pairs but the
+    // zone candidate-generation misses a pair the audio table says should
+    // still update.
+    function peer(userId: string, position: { x: number; y: number }, socketId = `s-${userId}`) {
+      return { userId, name: userId, avatarUrl: null, socketId, position };
+    }
+
+    // Meeting Room A: world x:[0,640) y:[0,480). Meeting Room B is a
+    // separate private zone elsewhere on the floor — use the "no zone" desk
+    // grid area (col0-2,row3-8) as a stand-in "different private zone" via
+    // Meeting Room A vs Cabin 1 (a real second private zone in openOffice1).
+    const RAW_NEARBY = { a: { x: 0, y: 700 }, b: { x: 50, y: 700 } }; // 50px apart, no zone
+    const RAW_FAR = { a: { x: 0, y: 700 }, b: { x: 4000, y: 4000 } };
+    const MEETING_A_1 = { x: 10, y: 100 };
+    const MEETING_A_2 = { x: 600, y: 100 }; // same zone, ~590px apart (not a grid neighbour)
+    const STAGE = { x: 641, y: 1 };
+    const AUDIENCE_FAR = { x: 1119, y: 479 };
+
+    it("matches effectiveAudio's ground truth at every scripted transition", () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", peer("a", RAW_NEARBY.a), 100);
+      rm.admitAndAddPeer("room1", peer("b", RAW_NEARBY.b), 100);
+      rm.runTickForTest("room1");
+
+      function assertListenerHears(listenerSocket: string, speakerId: string, subscribed: boolean, gain?: number) {
+        const update = emitted.find((e) => e.target === listenerSocket && e.event === "proximity:update");
+        if (!subscribed) {
+          // Either no update at all (never was subscribed) or an explicit
+          // unsubscribe transition — both are valid "not hearing them".
+          if (update) expect(update.payload).toMatchObject({ peerId: speakerId, audioSubscribed: false });
+          return;
+        }
+        expect(update?.payload).toMatchObject({
+          peerId: speakerId,
+          audioSubscribed: true,
+          ...(gain !== undefined ? { audioGain: gain } : {}),
+        });
+      }
+
+      // Step 1: raw-nearby, no zone -> both hear each other (raw proximity).
+      assertListenerHears("s-a", "b", true, 1);
+      assertListenerHears("s-b", "a", true, 1);
+
+      // Step 2: move far apart, no zone -> both revert to not hearing.
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("a", RAW_FAR.a), 100);
+      rm.admitAndAddPeer("room1", peer("b", RAW_FAR.b), 100);
+      rm.runTickForTest("room1");
+      assertListenerHears("s-a", "b", false);
+      assertListenerHears("s-b", "a", false);
+
+      // Step 3: both into Meeting Room A, far apart WITHIN the zone (not a
+      // grid neighbour) -> zone override grants full gain both ways.
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("a", MEETING_A_1), 100);
+      rm.admitAndAddPeer("room1", peer("b", MEETING_A_2), 100);
+      rm.runTickForTest("room1");
+      assertListenerHears("s-a", "b", true, 1);
+      assertListenerHears("s-b", "a", true, 1);
+
+      // Step 4: b moves to the All Hands stage, a stays in Meeting Room A —
+      // different private/stage zones -> a is muted toward b (a is in a
+      // private zone, only shares audio with someone in the SAME private
+      // zone), and b (stage, not private) hears raw proximity from a, which
+      // is far -> not subscribed either.
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("b", STAGE), 100);
+      rm.runTickForTest("room1");
+      assertListenerHears("s-a", "b", false);
+      assertListenerHears("s-b", "a", false);
+
+      // Step 5: a moves to the All Hands audience, far from the stage where
+      // b now is -> a (audience) hears b (stage) at full gain; b does NOT
+      // get a spurious full-gain update back (stage<-audience is raw).
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("a", AUDIENCE_FAR), 100);
+      rm.runTickForTest("room1");
+      assertListenerHears("s-a", "b", true, 1);
+      assertListenerHears("s-b", "a", false);
+
+      // Step 6: a leaves the audience zone (back to no zone), still far from
+      // b -> reverts to not hearing at all.
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("a", RAW_FAR.a), 100);
+      rm.runTickForTest("room1");
+      assertListenerHears("s-a", "b", false);
+    });
+  });
+
+  describe("getTickStats — Phase 10 per-phase breakdown", () => {
+    function peer(userId: string, position: { x: number; y: number }, socketId = `s-${userId}`) {
+      return { userId, name: userId, avatarUrl: null, socketId, position };
+    }
+
+    it("reports all-zero phase stats before any tick has run", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      const stats = rm.getTickStats();
+      expect(stats.sampleCount).toBe(0);
+      expect(stats.phases.positions).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
+      expect(stats.phases.proximity).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
+      expect(stats.phases.zone).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
+      expect(stats.phases.audioEmit).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
+    });
+
+    it("records non-negative phase timings that sum to roughly the overall tick duration, after a real tick", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", peer("a", { x: 0, y: 0 }), 100);
+      rm.admitAndAddPeer("room1", peer("b", { x: 50, y: 0 }), 100);
+      rm.runTickForTest("room1");
+
+      const stats = rm.getTickStats();
+      expect(stats.sampleCount).toBe(1);
+      expect(stats.phases.positions.avgMs).toBeGreaterThanOrEqual(0);
+      expect(stats.phases.proximity.avgMs).toBeGreaterThanOrEqual(0);
+      expect(stats.phases.zone.avgMs).toBeGreaterThanOrEqual(0);
+      expect(stats.phases.audioEmit.avgMs).toBeGreaterThanOrEqual(0);
+
+      const phaseSum =
+        stats.phases.positions.avgMs + stats.phases.proximity.avgMs + stats.phases.zone.avgMs + stats.phases.audioEmit.avgMs;
+      // The four phases are sequential marks within the same tick, so their
+      // sum should be very close to (never meaningfully larger than) the
+      // overall recorded tick duration — a small epsilon covers timer
+      // granularity, not a real gap.
+      expect(phaseSum).toBeLessThanOrEqual(stats.avgMs + 1);
+    });
+
+    it("does not record a phase sample for a tick on an empty/nonexistent room", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.runTickForTest("room1"); // no peers — tickBody returns undefined
+
+      const stats = rm.getTickStats();
+      // The overall duration IS still sampled (tick() always records it),
+      // but the phase buffers must not have grown from a tick that never
+      // reached the phase-marking code.
+      expect(stats.sampleCount).toBe(1);
+      expect(stats.phases.positions).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
     });
   });
 });

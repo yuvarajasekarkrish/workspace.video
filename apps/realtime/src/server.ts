@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { Server as SocketIOServer } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { resolveRoomEndpoint } from "@cosmos/realtime-core";
 import {
   ClientEvents,
@@ -23,13 +24,45 @@ import {
   type SeatsSnapshotEvent,
 } from "@cosmos/shared";
 import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider } from "@cosmos/db";
+import type { ParticipantLimitProvider } from "@cosmos/shared";
 import { env } from "./env";
-import { instanceId, redisPub, redisSub, roomLease, instanceRegistry, startHeartbeat, stopHeartbeat } from "./instance";
+import {
+  instanceId,
+  redisPub,
+  redisSub,
+  roomLease,
+  instanceRegistry,
+  startHeartbeat,
+  stopHeartbeat,
+  redisPublishStats,
+} from "./instance";
 import { verifySessionToken, assertRoomMembership } from "./auth";
 import { RoomManager, broadcasterFromSocketServer } from "./roomManager";
+import { CountingBroadcaster } from "./countingBroadcaster";
+import { maybeRegisterLoadHarnessRoutes } from "./loadHarnessRoutes";
 import { spawnPositionForUser } from "@cosmos/proximity";
 
 const app = Fastify({ logger: true });
+
+/**
+ * Dev/load-testing-only override of the plan-resolved participant limit —
+ * lets the load harness (see the Phase 9 plan's final step) exercise a
+ * ceiling above Enterprise's 200 without touching a single plan limit or
+ * advertising a higher tier anywhere in the product. Guarded on BOTH the env
+ * var's presence AND `NODE_ENV !== "production"`, so it is structurally
+ * inert in a production deployment even if the env var were ever set there
+ * by mistake — this must never become a real capacity lever.
+ */
+const loadHarnessLimitOverride: ParticipantLimitProvider =
+  process.env.NODE_ENV !== "production" && process.env.LOAD_HARNESS_LIMIT_OVERRIDE
+    ? {
+        async getWorkspaceParticipantLimit(workspaceId) {
+          const override = Number(process.env.LOAD_HARNESS_LIMIT_OVERRIDE);
+          if (Number.isInteger(override) && override > 0) return override;
+          return planParticipantLimitProvider.getWorkspaceParticipantLimit(workspaceId);
+        },
+      }
+    : planParticipantLimitProvider;
 
 app.get("/health", async () => ({ ok: true, instanceId }));
 
@@ -55,20 +88,90 @@ app.get<{ Params: { roomId: string } }>("/internal/resolve-room/:roomId", async 
   }
 });
 
-// Declared before roomManager exists (Fastify locks route registration
-// after listen() starts accepting connections) and assigned right after —
-// the handler closes over this binding, not a value, so it sees the real
-// instance by the time any request actually arrives. Dev/load-testing
-// convenience only: reports this process's own tick-timing and memory
-// health under load (see the plan's load harness step), never called by
-// production application code.
+// Declared before roomManager/countingBroadcaster exist (Fastify locks route
+// registration after listen() starts accepting connections) and assigned
+// right after — the handler closes over these bindings, not values, so it
+// sees the real instances by the time any request actually arrives. Dev/
+// load-testing convenience only: reports this process's own tick-timing,
+// memory, CPU, event-loop and emit-volume health under load (see the Phase
+// 9/10 plans' load harness steps), never called by production application code.
 let roomManager: RoomManager;
-app.get("/internal/metrics", async () => ({
-  instanceId,
-  uptimeSeconds: process.uptime(),
-  memoryUsage: process.memoryUsage(),
-  tick: roomManager.getTickStats(),
-}));
+let countingBroadcaster: CountingBroadcaster;
+
+// Event-loop delay histogram — Phase 10's L4 lead (the move:correction
+// storm under load "fits event-loop stalls", but that was never measured).
+// resolution 10ms is more than fine for spotting stalls in the tens-to-
+// thousands-of-ms range this investigation cares about. Reset on every
+// /internal/metrics read so each read reports the window since the last one,
+// the same "since last read" contract process.cpuUsage() deltas use below.
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
+eventLoopDelay.enable();
+
+// CPU and emit-rate metrics are both "since the last /internal/metrics
+// read" deltas, mirroring process.cpuUsage()'s own delta-argument contract
+// — a single point-in-time cumulative number is far less useful under load
+// than "how much CPU / how many emits happened in the last N seconds".
+let lastMetricsReadAt = process.hrtime.bigint();
+let lastCpuUsage = process.cpuUsage();
+let lastEmitSnapshot: Record<string, { count: number; sampledCount: number; sampledBytesSum: number }> = {};
+let lastRedisPublishCount = 0;
+
+app.get("/internal/metrics", async () => {
+  const now = process.hrtime.bigint();
+  const elapsedSeconds = Number(now - lastMetricsReadAt) / 1e9;
+  lastMetricsReadAt = now;
+
+  const cpuUsage = process.cpuUsage(lastCpuUsage);
+  lastCpuUsage = process.cpuUsage();
+  // cpuUsage() fields are microseconds; %-of-one-core = usedMicros / elapsedMicros * 100.
+  const elapsedMicros = Math.max(1, elapsedSeconds * 1e6);
+  const cpuPercent = {
+    user: (cpuUsage.user / elapsedMicros) * 100,
+    system: (cpuUsage.system / elapsedMicros) * 100,
+  };
+
+  const eventLoop = {
+    p50Ms: eventLoopDelay.percentile(50) / 1e6,
+    p99Ms: eventLoopDelay.percentile(99) / 1e6,
+    maxMs: eventLoopDelay.max / 1e6,
+  };
+  eventLoopDelay.reset();
+
+  const emitSnapshot = countingBroadcaster.snapshot();
+  const emitRates: Record<string, { emitsPerSec: number; avgBytesPerEmit: number; bytesPerSecEstimate: number }> = {};
+  for (const [event, stat] of Object.entries(emitSnapshot)) {
+    const previous = lastEmitSnapshot[event];
+    const deltaCount = stat.count - (previous?.count ?? 0);
+    const deltaSampledCount = stat.sampledCount - (previous?.sampledCount ?? 0);
+    const deltaSampledBytes = stat.sampledBytesSum - (previous?.sampledBytesSum ?? 0);
+    const avgBytesPerEmit = deltaSampledCount > 0 ? deltaSampledBytes / deltaSampledCount : 0;
+    emitRates[event] = {
+      emitsPerSec: elapsedSeconds > 0 ? deltaCount / elapsedSeconds : 0,
+      avgBytesPerEmit,
+      bytesPerSecEstimate: elapsedSeconds > 0 ? (avgBytesPerEmit * deltaCount) / elapsedSeconds : 0,
+    };
+  }
+  lastEmitSnapshot = emitSnapshot;
+
+  const redisPublishDelta = redisPublishStats.count - lastRedisPublishCount;
+  lastRedisPublishCount = redisPublishStats.count;
+  const redisPublishesPerSec = elapsedSeconds > 0 ? redisPublishDelta / elapsedSeconds : 0;
+
+  return {
+    instanceId,
+    uptimeSeconds: process.uptime(),
+    memoryUsage: process.memoryUsage(),
+    tick: roomManager.getTickStats(),
+    cpuPercent,
+    eventLoop,
+    emitRates,
+    redisPublishesPerSec,
+  };
+});
+
+if (maybeRegisterLoadHarnessRoutes(app, process.env)) {
+  app.log.warn("LOAD_HARNESS_ENABLED=1: /internal/load-harness/* fixture routes are active (dev/test only)");
+}
 
 await app.listen({ port: env.port, host: "0.0.0.0" });
 
@@ -77,7 +180,8 @@ const io = new SocketIOServer(app.server, {
   adapter: createAdapter(redisPub, redisSub),
 });
 
-roomManager = new RoomManager(broadcasterFromSocketServer(io), roomLease, instanceId, 10_000, {
+countingBroadcaster = new CountingBroadcaster(broadcasterFromSocketServer(io));
+roomManager = new RoomManager(countingBroadcaster, roomLease, instanceId, 10_000, {
   loadRoomObjects,
   upsertObject,
   deleteObject,
@@ -142,7 +246,7 @@ io.on("connection", (socket) => {
     // Resolved from Workspace.plan today; a future billing system swaps only
     // this provider (see ParticipantLimitProvider in @cosmos/shared) — the
     // rest of this flow is unaffected.
-    const limit = await planParticipantLimitProvider.getWorkspaceParticipantLimit(workspaceId);
+    const limit = await loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId);
 
     // admitAndAddPeer checks capacity and inserts the peer in one synchronous
     // call, so two sockets racing for the last slot can't both be admitted.

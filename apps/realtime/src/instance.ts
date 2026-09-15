@@ -13,6 +13,20 @@ export const redisPub = new Redis(env.redisUrl);
 export const redisSub = redisPub.duplicate();
 export const redisCommands = new Redis(env.redisUrl);
 
+/** Phase 10 instrumentation: counts every PUBLISH issued on `redisPub`,
+ *  which is also the connection `@socket.io/redis-adapter` uses to fan out
+ *  every `io.to(...).emit(...)` call to other instances — see the Phase 10
+ *  plan's L1 lead. Monkey-patched rather than routed through a wrapper type
+ *  so the adapter (constructed with `redisPub` directly in server.ts) picks
+ *  up the counting with no change to how it's constructed. Never changes
+ *  publish behavior — every call is forwarded unchanged. */
+export const redisPublishStats = { count: 0 };
+const originalPublish = redisPub.publish.bind(redisPub);
+redisPub.publish = ((...args: Parameters<typeof originalPublish>) => {
+  redisPublishStats.count++;
+  return originalPublish(...args);
+}) as typeof redisPub.publish;
+
 export const instanceRegistry = new InstanceRegistry(redisCommands, {
   ttlSeconds: env.instanceHeartbeatTtlSeconds,
 });

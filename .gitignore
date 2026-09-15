@@ -12,3 +12,4 @@ build/
 /packages/db/prisma/migrations/.tmp/
 coverage/
 *.tsbuildinfo
+/apps/realtime/load-results/
