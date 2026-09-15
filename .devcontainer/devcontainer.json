@@ -1,0 +1,18 @@
+{
+  "name": "cosmos-workspace",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "hostRequirements": {
+    "cpus": 2
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@12.4.1 --activate && pnpm install && pnpm --filter @cosmos/db run generate",
+  "forwardPorts": [4001, 5432, 6379],
+  "portsAttributes": {
+    "4001": { "label": "realtime server", "visibility": "private" },
+    "5432": { "label": "postgres", "visibility": "private" },
+    "6379": { "label": "redis", "visibility": "private" }
+  }
+}
