@@ -26,11 +26,23 @@ export default async function HomePage() {
 
   return (
     <main className="mx-auto max-w-xl p-8">
-      <h1 className="mb-1 text-xl font-semibold">Cosmos Workspace</h1>
-      <p className="mb-6 text-sm text-neutral-400">Signed in as {session.email}</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="mb-1 text-xl font-semibold">Cosmos Workspace</h1>
+          <p className="text-sm text-neutral-400">Signed in as {session.email}</p>
+        </div>
+        <Link
+          href="/workspaces/new"
+          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium hover:bg-blue-500"
+        >
+          Create workspace
+        </Link>
+      </div>
 
       {memberships.length === 0 && (
-        <p className="text-sm text-neutral-500">No workspaces yet — run the db seed script.</p>
+        <p className="text-sm text-neutral-500">
+          No workspaces yet — create one above, or run the db seed script.
+        </p>
       )}
 
       {memberships.map((m) => (
