@@ -5,14 +5,19 @@ import type { Point, CanvasObjectType } from "@cosmos/shared";
 import { PixiStage } from "@/canvas/PixiStage";
 import { SpatialAudioController } from "@/audio/SpatialAudioController";
 import { ConnectionBadge } from "./ConnectionBadge";
+import { OccupancyBadge } from "./OccupancyBadge";
+import { CapacityScreen } from "./CapacityScreen";
 import { RoomHud } from "./RoomHud";
 import { AudioControls } from "./AudioControls";
 import { ObjectToolbar } from "./ObjectToolbar";
+import { ZoneToast } from "./ZoneToast";
+import { ZoneHudChip } from "./ZoneHudChip";
 
 export interface RoomCanvasProps {
   roomId: string;
   localUserId: string;
   initialLocalPosition: Point;
+  layoutId: string;
 }
 
 async function fetchLiveKitToken(roomId: string) {
@@ -43,7 +48,7 @@ async function fetchLiveKitToken(roomId: string) {
  * audio fail and dispose independently, and audio has no dependency on the
  * Pixi Application existing at all.
  */
-export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCanvasProps) {
+export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layoutId }: RoomCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioControllerRef = useRef<SpatialAudioController | null>(null);
   const stageRef = useRef<PixiStage | null>(null);
@@ -55,7 +60,7 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
     let cancelled = false;
     let stage: PixiStage | null = null;
 
-    PixiStage.create({ canvasContainer: container, roomId, localUserId, initialLocalPosition }).then(
+    PixiStage.create({ canvasContainer: container, roomId, localUserId, initialLocalPosition, layoutId }).then(
       (created) => {
         if (cancelled) {
           created.dispose();
@@ -71,7 +76,7 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
       stageRef.current = null;
       stage?.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition is intentionally a one-shot seed, not a reactive dependency
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition/layoutId are intentionally one-shot seeds, not reactive dependencies
   }, [roomId, localUserId]);
 
   useEffect(() => {
@@ -101,13 +106,21 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition }: RoomCa
     stageRef.current?.deleteSelectedObject();
   }, []);
 
+  const handleRetryJoin = useCallback(() => {
+    stageRef.current?.retryJoin();
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       <ConnectionBadge />
+      <OccupancyBadge />
+      <ZoneHudChip layoutId={layoutId} />
+      <ZoneToast />
       <RoomHud />
       <AudioControls onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} />
       <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
+      <CapacityScreen onRetry={handleRetryJoin} />
     </div>
   );
 }

@@ -9,6 +9,7 @@ const LABEL: Record<string, string> = {
   joining: "Joining…",
   connected: "Connected",
   reconnecting: "Reconnecting…",
+  workspace_full: "Workspace full",
   error: "Error",
 };
 
@@ -19,6 +20,7 @@ const DOT_COLOR: Record<string, string> = {
   joining: "bg-amber-400",
   connected: "bg-emerald-400",
   reconnecting: "bg-amber-400",
+  workspace_full: "bg-red-500",
   error: "bg-red-500",
 };
 

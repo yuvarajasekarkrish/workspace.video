@@ -10,6 +10,10 @@ import {
   ObjectsSnapshotEventSchema,
   ObjectSyncEventSchema,
   ObjectRemovedEventSchema,
+  OccupancyUpdateEventSchema,
+  SeatsSnapshotEventSchema,
+  SeatUpdateEventSchema,
+  ZoneChangedEventSchema,
   type MoveEvent,
   type ObjectUpsertEvent,
   type ObjectDeleteEvent,
@@ -18,6 +22,9 @@ import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
 import { proximityStore } from "@/store/proximityStore";
 import { objectsStore } from "@/store/objectsStore";
+import { occupancyStore } from "@/store/occupancyStore";
+import { seatsStore } from "@/store/seatsStore";
+import { zoneStore } from "@/store/zoneStore";
 
 export interface RoomEndpoint {
   instanceId: string;
@@ -90,6 +97,29 @@ export class RealtimeClient {
     this.socket?.emit(ClientEvents.ObjectDelete, event);
   }
 
+  /** Sit-down waits for the ack (a claim can legitimately be refused —
+   *  taken, out of range), unlike sendMove/sendObjectUpsert's fire-and-
+   *  forget style; resolves `{ok:true}` or `{ok:false, error}` rather than
+   *  throwing, since a rejection is an expected outcome, not a failure. */
+  sendSeatClaim(seatId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    return new Promise((resolve) => {
+      if (!this.socket) return resolve({ ok: false, error: "not_connected" });
+      this.socket.emit(ClientEvents.SeatClaim, { seatId }, (ack: unknown) => {
+        const ackObj = ack as { ok?: boolean; error?: string } | undefined;
+        if (ackObj?.error) resolve({ ok: false, error: ackObj.error });
+        else resolve({ ok: true });
+      });
+    });
+  }
+
+  /** Fire-and-forget, unlike sendSeatClaim — standing up is optimistic on
+   *  the client (see MovementController's onStandUp) and release is
+   *  idempotent server-side, so there is nothing meaningful an ack could
+   *  change about local state here. */
+  sendSeatRelease(): void {
+    this.socket?.emit(ClientEvents.SeatRelease, {});
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -137,6 +167,16 @@ export class RealtimeClient {
       // it survives a reload/resync under a reused userId. Same rule,
       // applied to the audio side of the same event.
       proximityStore.getState().pruneToRoster(new Set(parsed.data.peers.map((p) => p.userId)));
+      // Every join re-broadcasts the current occupancy to the whole room —
+      // this is how existing clients' counts stay current on the join path
+      // (the leave path has no snapshot, so it uses occupancy:update below).
+      occupancyStore.getState().setOccupancy(parsed.data.active, parsed.data.limit);
+    });
+
+    socket.on(ServerEvents.OccupancyUpdate, (raw) => {
+      const parsed = OccupancyUpdateEventSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.roomId !== this.roomId) return;
+      occupancyStore.getState().setOccupancy(parsed.data.active, parsed.data.limit);
     });
 
     socket.on(ServerEvents.PeersDelta, (raw) => {
@@ -194,6 +234,35 @@ export class RealtimeClient {
       objectsStore.getState().applyRemoved(parsed.data.objectId);
     });
 
+    // Wholesale replacement, sent only to the joining/reconnecting socket —
+    // same primitive and reasoning as objects:snapshot above.
+    socket.on(ServerEvents.SeatsSnapshot, (raw) => {
+      const parsed = SeatsSnapshotEventSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.roomId !== this.roomId) return;
+      seatsStore.getState().applySnapshot(parsed.data.occupancy);
+    });
+
+    // Broadcast to the whole room on every occupancy change. Note this
+    // never touches MovementController's local `seated` flag — see
+    // seatsStore.ts's docs on that ownership boundary — so an echo of our
+    // own seat arriving here after we've already stood up locally is inert.
+    socket.on(ServerEvents.SeatUpdate, (raw) => {
+      const parsed = SeatUpdateEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      seatsStore.getState().applyUpdate(parsed.data.seatId, parsed.data.userId);
+    });
+
+    // Sent only to this socket, whenever OUR OWN zone membership changes —
+    // drives the zone toast and HUD chip (see components/ZoneToast.tsx,
+    // ZoneHudChip.tsx). Not roomId-scoped since it carries no roomId of its
+    // own (it's inherently about "this connection", already known to be in
+    // exactly one room).
+    socket.on(ServerEvents.ZoneChanged, (raw) => {
+      const parsed = ZoneChangedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      zoneStore.getState().setZone(parsed.data.zone);
+    });
+
     // The instance we're connected to is no longer authoritative for this
     // room - re-resolve from scratch rather than retry it (see class docs).
     socket.on(ServerEvents.OwnerChanged, (raw) => {
@@ -216,16 +285,36 @@ export class RealtimeClient {
     });
   }
 
+  /** Re-sends join_room on the already-connected socket — the capacity
+   *  screen's "Try again" button calls this (via PixiStage.retryJoin) rather
+   *  than tearing down and re-resolving the endpoint, since a workspace_full
+   *  rejection means nothing about the socket/endpoint was wrong. */
+  retryJoin(): void {
+    this.joinRoom();
+  }
+
   private joinRoom(): void {
     if (!this.socket || this.disposed) return;
     connectionStore.getState().setStatus("joining");
+    connectionStore.getState().setCapacity(null);
 
     this.socket.emit(ClientEvents.JoinRoom, { roomId: this.roomId }, (ack: unknown) => {
       if (this.disposed) return;
-      const ackObj = ack as { ok?: boolean; error?: string } | undefined;
+      const ackObj = ack as { ok?: boolean; error?: string; limit?: number; active?: number } | undefined;
 
       if (ackObj?.error === "not_owner") {
         this.scheduleReconnect("Not the room owner; re-resolving.");
+        return;
+      }
+      if (ackObj?.error === "workspace_full") {
+        // Deliberately not scheduleReconnect: the socket/endpoint are fine,
+        // and auto-retrying a full workspace on a timer would just hammer
+        // the server. The user retries explicitly instead.
+        connectionStore.getState().setCapacity({
+          active: ackObj.active ?? 0,
+          limit: ackObj.limit ?? 0,
+        });
+        connectionStore.getState().setStatus("workspace_full");
         return;
       }
       if (ackObj?.error) {
@@ -237,6 +326,7 @@ export class RealtimeClient {
       this.reconnectAttempt = 0; // successful join resets backoff
       connectionStore.getState().setStatus("connected");
       connectionStore.getState().setError(null);
+      connectionStore.getState().setCapacity(null);
     });
   }
 
