@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #0E1116; color: #E7EAEE; font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: #8FA6F0; }
+    a:hover { color: #B7C6F6; }
+    button, input { font-family: inherit; }
+    .mono { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .plan:hover { border-color: #3D4A66 !important; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #4C6FE0; outline-offset: 2px; }
+  </style>
+</helmet>
+<div style="position: relative; width: 1440px; height: 900px; overflow: hidden; background: #0E1116;">
+  <div style="height: 56px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1F242D;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" stroke="#4C6FE0" stroke-width="1.5"></rect><rect x="11.5" y="1.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="1.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="11.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect></svg>
+      <span style="font-size: 14px; font-weight: 600; color: #EEF1F5;">Cosmos</span>
+    </div>
+    <a href="#" style="font-size: 13px; color: #9AA2AF; text-decoration: none;">Back to workspaces</a>
+  </div>
+
+  <div style="width: 1120px; margin: 0 auto; padding-top: 44px; display: flex; flex-direction: column; gap: 28px;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <span style="font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7C8491;">New workspace</span>
+      <h1 style="margin: 0; font-size: 30px; line-height: 38px; font-weight: 600; color: #F2F4F7; text-wrap: balance;">Set up your office</h1>
+      <p style="margin: 0; max-width: 620px; font-size: 15px; line-height: 23px; color: #9AA2AF;">Every workspace gets the same office floor. Your plan sets how many people can be inside at the same time.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; width: 440px;">
+      <label for="workspace-name" style="font-size: 13px; font-weight: 500; color: #D5DAE1;">Workspace name</label>
+      <input id="workspace-name" type="text" value="Northwind Studio" style="height: 42px; box-sizing: border-box; padding: 0 12px; border-radius: 6px; border: 1px solid #2A303A; background: #13171E; color: #EEF1F5; font-size: 14px;">
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <span style="font-size: 13px; font-weight: 500; color: #D5DAE1;">How many people will be in the office at once?</span>
+      <div role="radiogroup" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px;">
+        <sc-for list="{{plans}}" as="p" hint-placeholder-count="5">
+          <button class="plan" role="radio" onClick="{{p.pick}}" style="position: relative; box-sizing: border-box; min-height: 188px; padding: 16px; border-radius: 8px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 12px; {{p.cardStyle}}">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 14px; font-weight: 600; color: #EEF1F5;">{{p.label}}</span>
+              <span style="width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid; display: flex; align-items: center; justify-content: center; {{p.checkStyle}}">
+                <sc-if value="{{p.checkOn}}" hint-placeholder-val="{{ false }}">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="m2 5.2 2 2 4-4.4" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </sc-if>
+              </span>
+            </div>
+            <div style="display: flex; align-items: baseline; gap: 6px;">
+              <span class="mono" style="font-size: 34px; line-height: 40px; font-weight: 500; color: #F2F4F7;">{{p.limit}}</span>
+              <span style="font-size: 12px; color: #9AA2AF;">people at once</span>
+            </div>
+            <span style="font-size: 12.5px; line-height: 18px; color: #9AA2AF; text-wrap: pretty;">{{p.fit}}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: stretch; gap: 28px; padding: 20px; border-radius: 10px; background: #13171E; border: 1px solid #1F242D;">
+      <div style="position: relative; width: 338px; height: 273px; flex-shrink: 0; border-radius: 6px; background-color: #F6F7F9; background-image: radial-gradient(#DCE0E6 1px, transparent 1px); background-size: 8px 8px; overflow: hidden;">
+        <sc-for list="{{mini}}" as="m" hint-placeholder-count="14">
+          <div style="position: absolute; box-sizing: border-box; border-radius: 2px; {{m.style}}"></div>
+        </sc-for>
+      </div>
+      <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <span style="font-size: 16px; font-weight: 600; color: #EEF1F5;">Your office floor</span>
+          <span style="font-size: 13.5px; line-height: 21px; color: #9AA2AF; max-width: 460px;">Rows of two-seater desks, a meeting room, a standup area, collaboration tables, All Hands, six private cabins, a kitchen and a lounge. The full floor seats 232 people.</span>
+          <div style="display: flex; flex-direction: column; gap: 6px; width: 460px; margin-top: 6px;">
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: #9AA2AF;">
+              <span>{{planName}} lets <span class="mono" style="color: #EEF1F5;">{{limitText}}</span> people in at once</span>
+              <span class="mono">232 seats</span>
+            </div>
+            <div style="height: 6px; border-radius: 3px; background: #232933; overflow: hidden; display: flex;">
+              <div style="background: #4C6FE0; transition: width 220ms ease; {{meterStyle}}"></div>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+          <span style="font-size: 12.5px; color: #7C8491;">No payment is taken.</span>
+          <div style="display: flex; gap: 10px;">
+            <button style="height: 40px; padding: 0 16px; border-radius: 6px; border: 1px solid #2F3847; background: transparent; color: #D5DAE1; font-size: 13.5px; font-weight: 500; cursor: pointer;">Cancel</button>
+            <button onClick="{{create}}" style="height: 40px; padding: 0 18px; border-radius: 6px; border: 0; background: #4C6FE0; color: #FFFFFF; font-size: 13.5px; font-weight: 600; cursor: pointer;">{{createLabel}}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { plan: 'company', creating: false };
+  }
+  renderVals() {
+    const plans = [
+      { id: 'startup', label: 'Startup', limit: 10, fit: 'A founding team working together every day.' },
+      { id: 'team', label: 'Team', limit: 25, fit: 'A few teams sharing one floor.' },
+      { id: 'company', label: 'Company', limit: 50, fit: 'The whole company in one space.' },
+      { id: 'large', label: 'Large', limit: 100, fit: 'Company-wide meetings and busy days.' },
+      { id: 'enterprise', label: 'Enterprise', limit: 200, fit: 'The full floor at its busiest.' }
+    ];
+    const chosen = plans.find((p) => p.id === this.state.plan);
+    const S = 338 / 1144;
+    const rect = (x, y, w, h, extra) => ({ style: 'left:' + Math.round(x * S) + 'px;top:' + Math.round(y * S) + 'px;width:' + Math.max(1, Math.round(w * S)) + 'px;height:' + Math.max(1, Math.round(h * S)) + 'px;' + extra });
+    const zoneLine = 'border:1px dashed #AEB6C2;';
+    const solid = 'background:#FFFFFF;border:1px solid #AEB6C2;';
+    const grid = 'background:#E1E4E9;';
+    const mini = [
+      rect(381, 0, 1, 924, grid), rect(762, 0, 1, 924, grid), rect(0, 280, 1144, 1, grid), rect(0, 660, 1144, 1, grid),
+      rect(16, 16, 349, 248, zoneLine), rect(52, 100, 276, 56, solid),
+      rect(397, 16, 349, 248, zoneLine), rect(425, 97, 300, 128, 'background-image:radial-gradient(#9AA2AF 1px, transparent 1.3px);background-size:9px 9px;'),
+      rect(778, 16, 350, 248, zoneLine), rect(821, 70, 276, 40, solid), rect(821, 168, 276, 40, solid),
+      rect(16, 772, 170, 144, zoneLine), rect(67, 792, 68, 68, solid),
+      rect(195, 772, 170, 144, zoneLine), rect(246, 792, 68, 68, solid)
+    ];
+    for (let i = 0; i < 18; i++) mini.push(rect(48 + (i % 3) * 120, 309 + Math.floor(i / 3) * 80, 40, 40, solid));
+    [[420, 318], [590, 446], [420, 574]].forEach((t) => mini.push(rect(t[0], t[1], 140, 52, solid + 'border-radius:8px;')));
+    [[778, 296], [963, 296], [778, 418], [963, 418], [778, 540], [963, 540]].forEach((c) => mini.push(rect(c[0], c[1], 165, 110, zoneLine)));
+    mini.push(rect(397, 676, 349, 232, zoneLine), rect(420, 716, 240, 40, solid), rect(778, 676, 350, 232, zoneLine), rect(800, 716, 150, 36, solid), rect(800, 836, 150, 36, solid));
+    return {
+      plans: plans.map((p) => {
+        const on = p.id === this.state.plan;
+        return {
+          label: p.label, limit: p.limit, fit: p.fit, checkOn: on,
+          cardStyle: on ? 'border:1.5px solid #4C6FE0;background:#141B2D;' : 'border:1.5px solid #252B35;background:#13171E;',
+          checkStyle: on ? 'background:#4C6FE0;border-color:#4C6FE0;' : 'background:transparent;border-color:#3A424F;',
+          pick: () => this.setState({ plan: p.id, creating: false })
+        };
+      }),
+      mini: mini,
+      planName: chosen.label,
+      limitText: String(chosen.limit),
+      meterStyle: 'width:' + Math.round((chosen.limit / 232) * 100) + '%;',
+      create: () => this.setState({ creating: true }),
+      createLabel: this.state.creating ? 'Creating…' : 'Create workspace'
+    };
+  }
+}
+</script>
+</body>
+</html>

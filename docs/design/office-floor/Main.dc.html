@@ -1,0 +1,394 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #0E1116; color: #E7EAEE; font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: #8FA6F0; }
+    a:hover { color: #B7C6F6; }
+    button { font-family: inherit; }
+    .mono { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .zone:hover { border-color: #4C6FE0 !important; }
+    .desk-free:hover .desk-top { border-color: #4C6FE0 !important; }
+    .desk-free:hover .desk-chair { border-color: #4C6FE0 !important; }
+    .dock-btn:hover { background: #1A1F28 !important; }
+    button:focus-visible, .zone:focus-visible, .desk-free:focus-visible { outline: 2px solid #4C6FE0; outline-offset: 2px; }
+    @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+</helmet>
+<div style="position: relative; width: 1440px; height: 1100px; overflow: hidden; background: #0E1116;">
+
+  <div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1F242D;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" stroke="#4C6FE0" stroke-width="1.5"></rect><rect x="11.5" y="1.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="1.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="11.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect></svg>
+      <span style="font-size: 14px; font-weight: 600; color: #EEF1F5;">Northwind Studio</span>
+      <span style="width: 1px; height: 16px; background: #2A303A;"></span>
+      <span style="font-size: 13px; color: #9AA2AF;">Main floor</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 6px; background: #171B22; border: 1px solid #232933;">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5.5" r="2.5" stroke="#9AA2AF" stroke-width="1.3"></circle><path d="M1.5 13.5c.6-2.4 2.3-3.6 4.5-3.6s3.9 1.2 4.5 3.6" stroke="#9AA2AF" stroke-width="1.3" stroke-linecap="round"></path><path d="M11 3.2a2.4 2.4 0 0 1 0 4.6M12.6 10.2c1 .6 1.6 1.7 1.9 3.3" stroke="#9AA2AF" stroke-width="1.3" stroke-linecap="round"></path></svg>
+        <span class="mono" style="font-size: 12.5px; color: #EEF1F5;">38 / 50</span>
+        <span style="width: 56px; height: 4px; border-radius: 2px; background: #262C36; overflow: hidden; display: flex;"><span style="width: 76%; background: #2E9E73;"></span></span>
+        <span style="font-size: 12px; color: #9AA2AF;">Company plan</span>
+      </div>
+      <button style="height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid #2F3847; background: #1A1F28; color: #EEF1F5; font-size: 13px; font-weight: 500; cursor: pointer;">Invite</button>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; top: 56px; width: 248px; height: 972px; box-sizing: border-box; padding: 16px 12px; border-right: 1px solid #1F242D; display: flex; flex-direction: column; gap: 16px;">
+    <div style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 6px; background: #151920; border: 1px solid #232933; color: #6E7683; font-size: 13px;">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="#6E7683" stroke-width="1.4"></circle><path d="M10.5 10.5 14 14" stroke="#6E7683" stroke-width="1.4" stroke-linecap="round"></path></svg>
+      <span>Find a person or room</span>
+    </div>
+    <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 0 4px;">
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7C8491;">In this office</span>
+      <span class="mono" style="font-size: 11px; color: #7C8491;">38</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px; background: #161B25;">
+        <div style="width: 26px; height: 26px; border-radius: 50%; background: #4C6FE0; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;">Y</div>
+        <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+          <span style="font-size: 13px; color: #EEF1F5;">You</span>
+          <span class="mono" style="font-size: 11px; color: #8FA6F0;">{{meSeat}}</span>
+        </div>
+      </div>
+      <sc-for list="{{others}}" as="o" hint-placeholder-count="7">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px;">
+          <div style="width: 26px; height: 26px; border-radius: 50%; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; {{o.style}}">{{o.initials}}</div>
+          <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+            <span style="font-size: 13px; color: #D5DAE1;">{{o.name}}</span>
+            <span class="mono" style="font-size: 11px; color: #7C8491;">{{o.seat}}</span>
+          </div>
+        </div>
+      </sc-for>
+      <span style="padding: 6px 8px; font-size: 12px; color: #6E7683;">and 30 more</span>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 248px; top: 56px; width: 1192px; height: 972px;">
+    <div style="position: absolute; left: 24px; top: 24px; width: 1144px; height: 924px; border-radius: 8px; background-color: #F6F7F9; background-image: radial-gradient(#D9DDE3 1px, transparent 1px); background-size: 20px 20px; overflow: hidden;">
+
+      <sc-for list="{{furniture}}" as="f" hint-placeholder-count="80">
+        <div style="position: absolute; box-sizing: border-box; pointer-events: none; {{f.style}}"></div>
+      </sc-for>
+
+      <sc-for list="{{zones}}" as="z" hint-placeholder-count="13">
+        <div class="zone" role="button" tabindex="0" onClick="{{z.pick}}" style="position: absolute; box-sizing: border-box; border-radius: 8px; cursor: pointer; {{z.geo}}">
+          <div style="position: absolute; left: 8px; bottom: 8px; display: flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 4px; background: #1C212A; color: #EEF1F5; font-size: 10.5px; font-weight: 500; line-height: 14px; white-space: nowrap; pointer-events: none;">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1" width="7" height="8" rx="1" stroke="#8FD1B4" stroke-width="1.1"></rect><path d="M6 5h.01" stroke="#8FD1B4" stroke-width="1.4" stroke-linecap="round"></path></svg>
+            <span>{{z.label}}</span>
+            <span class="mono" style="font-size: 10px; color: {{z.countColor}};">{{z.count}}</span>
+          </div>
+        </div>
+      </sc-for>
+
+      <sc-for list="{{desks}}" as="d" hint-placeholder-count="18">
+        <div class="{{d.cls}}" role="button" tabindex="0" onClick="{{d.pick}}" style="position: absolute; width: 88px; height: 58px; {{d.style}}">
+          <div class="mono" style="position: absolute; left: 0; top: 0; width: 88px; text-align: center; font-size: 9px; line-height: 10px; color: #7C8491;">{{d.label}}</div>
+          <div class="desk-top" style="position: absolute; left: 24px; top: 13px; width: 40px; height: 40px; box-sizing: border-box; border-radius: 3px; background: #FFFFFF; {{d.deskStyle}}">
+            <div style="position: absolute; left: 11px; top: 5px; width: 15px; height: 9px; box-sizing: border-box; border-radius: 2px; border: 1.2px solid #B6BDC8;"></div>
+            <div style="position: absolute; left: 11px; top: 23px; width: 15px; height: 9px; box-sizing: border-box; border-radius: 2px; border: 1.2px solid #B6BDC8;"></div>
+          </div>
+          <div class="desk-chair" style="position: absolute; left: 6px; top: 26px; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%; background: #F6F7F9; {{d.chairStyle}}"></div>
+          <div class="desk-chair" style="position: absolute; left: 68px; top: 26px; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%; background: #F6F7F9; {{d.chairStyle}}"></div>
+        </div>
+      </sc-for>
+
+      <sc-for list="{{avatars}}" as="a" hint-placeholder-count="22">
+        <div style="position: absolute; width: 20px; height: 20px; transform: translate(-50%, -50%); border-radius: 50%; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 600; pointer-events: none; {{a.style}}">{{a.initials}}</div>
+      </sc-for>
+
+      <div style="position: absolute; transform: translate(-50%, 0); padding: 1px 6px; border-radius: 3px; background: #1C212A; color: #FFFFFF; font-size: 9.5px; font-weight: 500; white-space: nowrap; pointer-events: none; transition: left 260ms ease, top 260ms ease; {{youTagStyle}}">You</div>
+      <div style="position: absolute; width: 24px; height: 24px; transform: translate(-50%, -50%); border-radius: 50%; background: #4C6FE0; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; pointer-events: none; transition: left 260ms ease, top 260ms ease; {{meStyle}}">Y</div>
+    </div>
+
+    <sc-if value="{{hasChip}}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; left: 596px; top: 40px; transform: translate(-50%, 0); display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #171B22; border: 1px solid #262C36; box-shadow: 0 6px 18px rgba(14, 17, 22, 0.22); white-space: nowrap;">
+        <span style="width: 8px; height: 8px; border-radius: 50%; {{chipDot}}"></span>
+        <span style="font-size: 13px; font-weight: 500; color: #EEF1F5;">{{chipLabel}}</span>
+        <span style="width: 1px; height: 14px; background: #2A303A;"></span>
+        <span style="font-size: 12px; color: #9AA2AF;">{{chipEffect}}</span>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; left: 596px; bottom: 60px; transform: translate(-50%, 0); width: 380px; box-sizing: border-box; padding: 12px 16px; border-radius: 8px; background: #171B22; border: 1px solid #2A303A; box-shadow: 0 10px 28px rgba(14, 17, 22, 0.3); display: flex; flex-direction: column; gap: 3px; animation: toastIn 180ms ease-out;">
+        <span style="font-size: 13.5px; font-weight: 600; color: #EEF1F5;">{{toastTitle}}</span>
+        <span style="font-size: 12.5px; line-height: 18px; color: #AEB5C0; text-wrap: pretty;">{{toastBody}}</span>
+      </div>
+    </sc-if>
+
+    <div style="position: absolute; right: 44px; bottom: 44px; display: flex; flex-direction: column; gap: 8px;">
+      <button title="Center on me" style="width: 36px; height: 36px; border-radius: 8px; border: 1px solid #D5DAE1; background: #FFFFFF; display: flex; align-items: center; justify-content: center; cursor: pointer;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="4" stroke="#3A414C" stroke-width="1.5"></circle><path d="M9 1.5v3M9 13.5v3M1.5 9h3M13.5 9h3" stroke="#3A414C" stroke-width="1.5" stroke-linecap="round"></path></svg></button>
+      <div style="width: 36px; border-radius: 8px; border: 1px solid #D5DAE1; background: #FFFFFF; display: flex; flex-direction: column; align-items: center;">
+        <button title="Zoom in" style="width: 36px; height: 32px; border: 0; background: transparent; color: #3A414C; font-size: 17px; cursor: pointer;">+</button>
+        <span class="mono" style="font-size: 10px; color: #5E6673;">100%</span>
+        <button title="Zoom out" style="width: 36px; height: 32px; border: 0; background: transparent; color: #3A414C; font-size: 17px; cursor: pointer;">−</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; bottom: 0; width: 1440px; height: 72px; box-sizing: border-box; padding: 0 20px; border-top: 1px solid #1F242D; display: flex; align-items: center; justify-content: space-between;">
+    <div style="display: flex; align-items: center; gap: 10px; width: 248px;">
+      <div style="width: 30px; height: 30px; border-radius: 50%; background: #4C6FE0; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;">Y</div>
+      <div style="display: flex; flex-direction: column; gap: 1px;">
+        <span style="font-size: 13px; color: #EEF1F5;">You</span>
+        <span class="mono" style="font-size: 11px; color: #7C8491;">{{meSeat}}</span>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button class="dock-btn" style="width: 76px; height: 52px; border-radius: 8px; border: 0; background: transparent; color: #D5DAE1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="7" y="2.5" width="6" height="10" rx="3" stroke="#D5DAE1" stroke-width="1.5"></rect><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5" stroke="#D5DAE1" stroke-width="1.5" stroke-linecap="round"></path></svg>Mic</button>
+      <button class="dock-btn" style="width: 76px; height: 52px; border-radius: 8px; border: 0; background: transparent; color: #D5DAE1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="5.5" width="10.5" height="9" rx="2" stroke="#D5DAE1" stroke-width="1.5"></rect><path d="m13 9 4.5-2.5v7L13 11" stroke="#D5DAE1" stroke-width="1.5" stroke-linejoin="round"></path></svg>Camera</button>
+      <button class="dock-btn" style="width: 76px; height: 52px; border-radius: 8px; border: 0; background: transparent; color: #D5DAE1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="3.5" width="15" height="10" rx="1.5" stroke="#D5DAE1" stroke-width="1.5"></rect><path d="M7 17h6M10 13.5V17" stroke="#D5DAE1" stroke-width="1.5" stroke-linecap="round"></path></svg>Share</button>
+      <span style="width: 1px; height: 28px; background: #232933;"></span>
+      <button onClick="{{stand}}" style="height: 40px; padding: 0 14px; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; {{standStyle}}"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 14V4M5 7.5 9 3.5l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>Stand up</button>
+    </div>
+    <div style="display: flex; justify-content: flex-end; width: 248px;">
+      <button style="height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid #3A2626; background: transparent; color: #EC7B72; font-size: 13px; font-weight: 500; cursor: pointer;">Leave office</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { mySeat: 'desk-12', zone: null, toast: null };
+  }
+  componentWillUnmount() {
+    clearTimeout(this.toastTimer);
+  }
+  flash(toast, patch) {
+    clearTimeout(this.toastTimer);
+    this.setState(Object.assign({ toast: toast }, patch || {}));
+    this.toastTimer = setTimeout(() => this.setState({ toast: null }), 3800);
+  }
+  sit(num) {
+    this.flash({ title: 'Seated at Desk ' + num, body: 'Move, or press Stand up, to free the desk.' }, { mySeat: 'desk-' + num, zone: null });
+  }
+  stand() {
+    if (!this.state.mySeat) return;
+    const num = this.state.mySeat.replace('desk-', '');
+    this.flash({ title: 'You stood up', body: 'Desk ' + num + ' is free again.' }, { mySeat: null });
+  }
+  enter(z) {
+    const bodies = {
+      meeting: "People outside can't hear you, and you can't hear them.",
+      cabin: 'Only people in this cabin can hear you.',
+      stage: 'Everyone seated in All Hands can hear the stage.',
+      open: 'Everyone here hears each other clearly.'
+    };
+    this.flash({ title: 'Joined ' + z.label, body: bodies[z.kind] }, { zone: z.id, mySeat: null });
+  }
+  renderVals() {
+    const s = this.state;
+    const INK = '#9AA2AF';
+    const W = 1144;
+    const H = 924;
+    const furniture = [];
+    const seatsByZone = {};
+    const box = (x, y, w, h, r, fill, stroke) => furniture.push({ style: 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;border-radius:' + r + 'px;background:' + fill + ';border:1.5px solid ' + stroke + ';' });
+    const line = (x, y, w, h) => furniture.push({ style: 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;background:#E1E4E9;' });
+    const seat = (zid, x, y) => { (seatsByZone[zid] = seatsByZone[zid] || []).push({ x: x, y: y }); };
+    const chair = (zid, x, y) => { box(x - 7, y - 7, 14, 14, 7, '#F6F7F9', INK); seat(zid, x, y); };
+    const plant = (x, y) => box(x - 8, y - 8, 16, 16, 8, '#E6F2E9', '#86B896');
+
+    line(381, 0, 1, H);
+    line(762, 0, 1, H);
+    line(0, 280, W, 1);
+    line(0, 660, W, 1);
+
+    const zones = [
+      { id: 'meet-a', label: 'Meeting Room A', kind: 'meeting', x: 16, y: 16, w: 349, h: 248, cap: 20 },
+      { id: 'allhands', label: 'All Hands', kind: 'stage', x: 397, y: 16, w: 349, h: 248, cap: 40 },
+      { id: 'standup', label: 'Standup Area', kind: 'open', x: 778, y: 16, w: 350, h: 248, cap: 20 },
+      { id: 'bench-19', label: 'Bench 19', kind: 'open', x: 16, y: 772, w: 170, h: 144, cap: 4 },
+      { id: 'bench-20', label: 'Bench 20', kind: 'open', x: 195, y: 772, w: 170, h: 144, cap: 4 },
+      { id: 'cabin-1', label: 'Private Cabin 1', kind: 'cabin', x: 778, y: 296, w: 165, h: 110, cap: 2 },
+      { id: 'cabin-2', label: 'Private Cabin 2', kind: 'cabin', x: 963, y: 296, w: 165, h: 110, cap: 2 },
+      { id: 'cabin-3', label: 'Private Cabin 3', kind: 'cabin', x: 778, y: 418, w: 165, h: 110, cap: 2 },
+      { id: 'cabin-4', label: 'Private Cabin 4', kind: 'cabin', x: 963, y: 418, w: 165, h: 110, cap: 2 },
+      { id: 'cabin-5', label: 'Private Cabin 5', kind: 'cabin', x: 778, y: 540, w: 165, h: 110, cap: 2 },
+      { id: 'cabin-6', label: 'Private Cabin 6', kind: 'cabin', x: 963, y: 540, w: 165, h: 110, cap: 2 },
+      { id: 'kitchen', label: 'Kitchen', kind: 'open', x: 397, y: 676, w: 349, h: 232, cap: 6 },
+      { id: 'lounge', label: 'Lounge', kind: 'open', x: 778, y: 676, w: 350, h: 232, cap: 10 }
+    ];
+
+    // Meeting Room A: screen, long table, 20 chairs (9 per side + 1 at each end)
+    box(120, 30, 140, 6, 2, '#DDE2E8', '#C9CFD8');
+    box(52, 100, 276, 56, 6, '#FFFFFF', INK);
+    for (let i = 0; i < 9; i++) chair('meet-a', 68 + i * 30.5, 84);
+    for (let i = 0; i < 9; i++) chair('meet-a', 68 + i * 30.5, 172);
+    chair('meet-a', 38, 128);
+    chair('meet-a', 342, 128);
+    plant(344, 36);
+
+    // Standup Area (right column): whiteboard, two long tables, 20 chairs
+    box(795, 50, 6, 150, 2, '#DDE2E8', '#C9CFD8');
+    box(821, 70, 276, 40, 20, '#FFFFFF', INK);
+    box(821, 168, 276, 40, 20, '#FFFFFF', INK);
+    for (let i = 0; i < 5; i++) chair('standup', 849 + i * 55, 56);
+    for (let i = 0; i < 5; i++) chair('standup', 849 + i * 55, 124);
+    for (let i = 0; i < 5; i++) chair('standup', 849 + i * 55, 154);
+    for (let i = 0; i < 5; i++) chair('standup', 849 + i * 55, 222);
+    plant(1107, 36);
+
+    // Benches 19 and 20: shared 4-person tables
+    [101, 280].forEach((cx, b) => {
+      const zid = b === 0 ? 'bench-19' : 'bench-20';
+      box(cx - 34, 792, 68, 68, 4, '#FFFFFF', INK);
+      chair(zid, cx, 780);
+      chair(zid, cx - 46, 826);
+      chair(zid, cx + 46, 826);
+      chair(zid, cx, 872);
+    });
+
+    // Collaboration tables, staggered left / right / left
+    [[420, 318], [590, 446], [420, 574]].forEach((t) => {
+      box(t[0], t[1], 140, 52, 26, '#FFFFFF', INK);
+      [30, 70, 110].forEach((dx) => { chair('collab', t[0] + dx, t[1] - 12); chair('collab', t[0] + dx, t[1] + 64); });
+      chair('collab', t[0] - 12, t[1] + 26);
+      chair('collab', t[0] + 152, t[1] + 26);
+    });
+    plant(736, 306);
+    plant(404, 480);
+
+    // All Hands (middle column): plants, screen, stage, 40 chairs in 4 rows of 10
+    plant(419, 40);
+    plant(445, 40);
+    plant(699, 40);
+    plant(725, 40);
+    box(499, 30, 150, 7, 2, '#C9CFD8', '#C9CFD8');
+    box(479, 46, 190, 22, 4, '#EEF1F5', INK);
+    seat('stage', 574, 57);
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 10; c++) chair('allhands', 425 + c * 32, 104 + r * 32);
+    }
+
+    // Private cabins: desk, two chairs, plant
+    zones.filter((z) => z.kind === 'cabin').forEach((z) => {
+      box(z.x + 62, z.y + 22, 40, 40, 2, '#FFFFFF', INK);
+      chair(z.id, z.x + 48, z.y + 42);
+      chair(z.id, z.x + 116, z.y + 42);
+      plant(z.x + 150, z.y + 18);
+    });
+
+    // Kitchen: counter, coffee station, 6 stools
+    box(420, 716, 240, 40, 4, '#EEF1F5', INK);
+    box(680, 716, 44, 40, 4, '#FFFFFF', INK);
+    for (let i = 0; i < 6; i++) chair('kitchen', 440 + i * 40, 776);
+    plant(724, 884);
+
+    // Lounge: sofas, coffee table, plants
+    box(800, 716, 150, 36, 12, '#FFFFFF', INK);
+    box(800, 836, 150, 36, 12, '#FFFFFF', INK);
+    box(830, 776, 90, 40, 20, '#FFFFFF', INK);
+    box(980, 736, 36, 120, 12, '#FFFFFF', INK);
+    [820, 875, 930].forEach((x) => { seat('lounge', x, 734); seat('lounge', x, 854); });
+    [756, 796, 836].forEach((y) => seat('lounge', 998, y));
+    plant(1100, 700);
+    plant(1100, 888);
+
+    const deskOcc = { 2: 'JC', 5: 'KT', 7: 'RA', 9: 'PN', 14: 'EM', 17: 'TV' };
+    const zoneOcc = { 'meet-a': ['ML', 'DP', 'YT', 'RS'], standup: ['LW', 'NB'], 'bench-19': ['HS', 'GF'], 'bench-20': ['BK'], allhands: ['DO', 'NA', 'VK', 'FE', 'QL', 'UB'], 'cabin-2': ['OH'], kitchen: ['SB'], lounge: ['TR', 'QA'] };
+    const tints = ['#5A6B8C', '#687A5C', '#8C6B5A', '#5C7F86', '#7A6390', '#86705A'];
+    const tintOf = (t) => tints[(t.charCodeAt(0) + t.charCodeAt(1)) % tints.length];
+
+    const desks = [];
+    for (let i = 0; i < 18; i++) {
+      const num = i + 1;
+      const left = 24 + (i % 3) * 120;
+      const top = 296 + Math.floor(i / 3) * 80;
+      const other = deskOcc[num];
+      const mine = s.mySeat === 'desk-' + num;
+      const stroke = mine ? '#4C6FE0' : INK;
+      desks.push({
+        num: num, label: 'Desk ' + num, cx: left + 30, cy: top + 33,
+        cls: other || mine ? 'desk' : 'desk-free',
+        style: 'left:' + left + 'px;top:' + top + 'px;cursor:' + (other || mine ? 'default' : 'pointer') + ';',
+        deskStyle: 'border:1.5px solid ' + stroke + ';',
+        chairStyle: 'border:1.5px solid ' + stroke + ';',
+        pick: () => {
+          if (mine) return;
+          if (other) this.flash({ title: 'Desk ' + num + ' is taken', body: 'Pick a desk with empty chairs.' });
+          else this.sit(num);
+        }
+      });
+    }
+
+    const avatars = [];
+    const avatar = (t, x, y, seated) => avatars.push({ initials: t, style: 'left:' + x + 'px;top:' + y + 'px;background:' + tintOf(t) + ';box-shadow:' + (seated ? '0 0 0 2px #F6F7F9, 0 0 0 3.5px #2E9E73' : '0 0 0 2px #F6F7F9') + ';' });
+    desks.forEach((d) => { if (deskOcc[d.num]) avatar(deskOcc[d.num], d.cx - 17, d.cy, true); });
+    Object.keys(zoneOcc).forEach((zid) => zoneOcc[zid].forEach((t, i) => {
+      const pt = (seatsByZone[zid] || [])[i];
+      if (pt) avatar(t, pt.x, pt.y, false);
+    }));
+
+    const current = zones.find((z) => z.id === s.zone);
+    let me = { x: 500, y: 420 };
+    if (s.mySeat) {
+      const d = desks.find((q) => 'desk-' + q.num === s.mySeat);
+      if (d) me = { x: d.cx - 17, y: d.cy };
+    } else if (current) {
+      const taken = (zoneOcc[current.id] || []).length;
+      me = (seatsByZone[current.id] || [])[taken] || { x: current.x + current.w / 2, y: current.y + current.h / 2 };
+    }
+
+    const zoneVals = zones.map((z) => {
+      const active = s.zone === z.id;
+      const people = (zoneOcc[z.id] || []).length + (active ? 1 : 0);
+      let countColor = '#7FD1AE';
+      if (people >= z.cap) countColor = '#EC7B72';
+      else if (people >= z.cap * 0.8) countColor = '#F0B45A';
+      return {
+        label: z.label,
+        count: people + '/' + z.cap,
+        countColor: countColor,
+        geo: 'left:' + z.x + 'px;top:' + z.y + 'px;width:' + z.w + 'px;height:' + z.h + 'px;border:1.5px ' + (active ? 'solid #4C6FE0' : 'dashed #C3C9D2') + ';background:' + (active ? 'rgba(76, 111, 224, 0.06)' : 'transparent') + ';',
+        pick: () => this.enter(z)
+      };
+    });
+
+    const effects = { meeting: 'Private audio', cabin: 'Private audio', stage: 'Hears the stage', open: 'Open audio' };
+    const seatedNum = s.mySeat ? s.mySeat.replace('desk-', '') : null;
+    const chipLabel = seatedNum ? 'Desk ' + seatedNum : current ? current.label : '';
+    const chipEffect = seatedNum ? 'Nearby audio' : current ? effects[current.kind] : '';
+    const chipDot = current && (current.kind === 'meeting' || current.kind === 'cabin') ? 'background:#4C6FE0;' : 'background:#2E9E73;';
+
+    const others = [
+      ['Kenji Tan', 'KT', 'Desk 5'], ['Priya Nair', 'PN', 'Desk 9'], ['Maya Lopez', 'ML', 'Meeting Room A'],
+      ['Diego Ortiz', 'DO', 'All Hands'], ['Lena Weiss', 'LW', 'Standup Area'], ['Omar Haddad', 'OH', 'Private Cabin 2'], ['Sofia Berg', 'SB', 'Kitchen']
+    ].map((o) => ({ name: o[0], initials: o[1], seat: o[2], style: 'background:' + tintOf(o[1]) + ';' }));
+
+    return {
+      zones: zoneVals,
+      furniture: furniture,
+      desks: desks,
+      avatars: avatars,
+      meStyle: 'left:' + me.x + 'px;top:' + me.y + 'px;box-shadow:' + (s.mySeat ? '0 0 0 2px #F6F7F9, 0 0 0 4px #4C6FE0' : '0 0 0 2px #F6F7F9') + ';',
+      youTagStyle: 'left:' + me.x + 'px;top:' + (me.y - 30) + 'px;',
+      meSeat: seatedNum ? 'Desk ' + seatedNum : current ? current.label : 'Walking',
+      others: others,
+      hasChip: !!chipLabel,
+      chipLabel: chipLabel,
+      chipEffect: chipEffect,
+      chipDot: chipDot,
+      hasToast: !!s.toast,
+      toastTitle: s.toast ? s.toast.title : '',
+      toastBody: s.toast ? s.toast.body : '',
+      stand: () => this.stand(),
+      standStyle: s.mySeat ? 'background:#1E2533;color:#EEF1F5;border:1px solid #2F3847;cursor:pointer;' : 'background:transparent;color:#5E6673;border:1px solid #232933;cursor:default;'
+    };
+  }
+}
+</script>
+</body>
+</html>

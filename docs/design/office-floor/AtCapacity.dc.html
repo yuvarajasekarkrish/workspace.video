@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #0E1116; color: #E7EAEE; font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: #8FA6F0; }
+    a:hover { color: #B7C6F6; }
+    button { font-family: inherit; }
+    .mono { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    button:focus-visible { outline: 2px solid #4C6FE0; outline-offset: 2px; }
+  </style>
+</helmet>
+<div style="position: relative; width: 1440px; height: 900px; overflow: hidden; background: #0E1116;">
+  <div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1F242D;">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" stroke="#4C6FE0" stroke-width="1.5"></rect><rect x="11.5" y="1.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="1.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect><rect x="11.5" y="11.5" width="7" height="7" rx="1.5" stroke="#8C95A3" stroke-width="1.5"></rect></svg>
+      <span style="font-size: 14px; font-weight: 600; color: #EEF1F5;">Northwind Studio</span>
+      <span style="width: 1px; height: 16px; background: #2A303A;"></span>
+      <span style="font-size: 13px; color: #9AA2AF;">Main floor</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 6px; background: #171B22; border: 1px solid #3A2626;">
+      <span class="mono" style="font-size: 12.5px; color: #EC7B72;">10 / 10</span>
+      <span style="width: 56px; height: 4px; border-radius: 2px; background: #C9483F;"></span>
+      <span style="font-size: 12px; color: #9AA2AF;">Startup plan</span>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 32px; top: 88px; width: 1376px; height: 780px; border-radius: 8px; background-color: #F6F7F9; background-image: radial-gradient(#D9DDE3 1px, transparent 1px); background-size: 20px 20px; overflow: hidden;">
+    <div style="position: absolute; left: 640px; top: 40px; width: 300px; height: 220px; border: 1.5px dashed #B6BDC8; border-radius: 6px;"></div>
+    <div style="position: absolute; left: 980px; top: 40px; width: 340px; height: 220px; border: 1.5px dashed #B6BDC8; border-radius: 6px;"></div>
+    <div style="position: absolute; left: 980px; top: 300px; width: 340px; height: 300px; border: 1.5px dashed #B6BDC8; border-radius: 6px;"></div>
+    <div style="position: absolute; left: 640px; top: 480px; width: 300px; height: 260px; border: 1.5px dashed #B6BDC8; border-radius: 6px;"></div>
+    <div style="position: absolute; left: 60px; top: 80px; width: 220px; height: 250px; border: 1.5px solid #C9CFD8; border-radius: 4px; background-image: radial-gradient(#9AA2AF 2px, transparent 2.5px); background-size: 44px 50px;"></div>
+    <div style="position: absolute; left: 320px; top: 80px; width: 264px; height: 300px; border: 1.5px solid #C9CFD8; border-radius: 4px; background-image: radial-gradient(#9AA2AF 2px, transparent 2.5px); background-size: 44px 50px;"></div>
+    <div style="position: absolute; left: 60px; top: 600px; width: 520px; height: 140px; border: 1.5px dashed #B6BDC8; border-radius: 6px;"></div>
+  </div>
+  <div style="position: absolute; left: 0; top: 56px; width: 1440px; height: 844px; background: rgba(14, 17, 22, 0.78);"></div>
+
+  <div role="alertdialog" aria-labelledby="full-title" style="position: absolute; left: 460px; top: 214px; width: 520px; box-sizing: border-box; padding: 32px; border-radius: 12px; background: #171B22; border: 1px solid #262C36; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 22px;">
+    <div style="display: flex; flex-direction: column; gap: 14px;">
+      <div style="width: 44px; height: 44px; border-radius: 10px; background: rgba(201, 72, 63, 0.14); display: flex; align-items: center; justify-content: center;">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="4.5" y="2.5" width="11" height="17" rx="1.5" stroke="#EC7B72" stroke-width="1.6"></rect><path d="M12.5 11h.01M18.5 19.5h-14" stroke="#EC7B72" stroke-width="1.6" stroke-linecap="round"></path></svg>
+      </div>
+      <h2 id="full-title" style="margin: 0; font-size: 22px; line-height: 30px; font-weight: 600; color: #F2F4F7;">Northwind Studio is full</h2>
+      <p style="margin: 0; font-size: 14.5px; line-height: 22px; color: #AEB5C0; text-wrap: pretty;">10 of 10 people are in the office on the Startup plan. A spot opens as soon as someone leaves.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <span style="font-size: 12.5px; color: #9AA2AF;">In the office now</span>
+        <span class="mono" style="font-size: 13px; color: #EC7B72;">10 / 10</span>
+      </div>
+      <div style="height: 6px; border-radius: 3px; background: #C9483F;"></div>
+      <div style="display: flex; gap: 6px; margin-top: 8px;">
+        <sc-for list="{{inside}}" as="p" hint-placeholder-count="10">
+          <div title="{{p.name}}" style="width: 30px; height: 30px; border-radius: 50%; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 600; box-shadow: 0 0 0 2px #171B22; {{p.style}}">{{p.initials}}</div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; gap: 10px;">
+        <button onClick="{{retry}}" style="height: 42px; padding: 0 20px; border-radius: 6px; border: 0; background: #4C6FE0; color: #FFFFFF; font-size: 14px; font-weight: 600; cursor: pointer;">Try again</button>
+        <button style="height: 42px; padding: 0 18px; border-radius: 6px; border: 1px solid #2F3847; background: transparent; color: #D5DAE1; font-size: 14px; font-weight: 500; cursor: pointer;">Back to workspaces</button>
+      </div>
+      <sc-if value="{{hasStatus}}" hint-placeholder-val="{{ false }}">
+        <span class="mono" style="font-size: 12px; {{statusStyle}}">{{statusText}}</span>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { attempts: 0 };
+  }
+  renderVals() {
+    const tints = ['#5A6B8C', '#687A5C', '#8C6B5A', '#5C7F86', '#7A6390', '#86705A'];
+    const people = [['Kenji Tan', 'KT'], ['Priya Nair', 'PN'], ['Maya Lopez', 'ML'], ['Diego Ortiz', 'DO'], ['Sofia Berg', 'SB'], ['Omar Haddad', 'OH'], ['Lena Weiss', 'LW'], ['Jin Cho', 'JC'], ['Ravi Anand', 'RA'], ['Emma Moss', 'EM']];
+    const a = this.state.attempts;
+    return {
+      inside: people.map((p, i) => ({ name: p[0], initials: p[1], style: 'background:' + tints[i % tints.length] + ';' })),
+      retry: () => this.setState({ attempts: a + 1 }),
+      hasStatus: a > 0,
+      statusText: a === 1 ? 'Checked just now. Still full.' : 'A spot opened. Joining Northwind Studio…',
+      statusStyle: a === 1 ? 'color:#9AA2AF;' : 'color:#7FD1AE;'
+    };
+  }
+}
+</script>
+</body>
+</html>
