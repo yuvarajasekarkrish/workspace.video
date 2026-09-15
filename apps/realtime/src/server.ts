@@ -9,10 +9,20 @@ import {
   MoveEventSchema,
   ObjectUpsertEventSchema,
   ObjectDeleteEventSchema,
+  SeatClaimEventSchema,
+  SeatReleaseEventSchema,
+  parseRoomConfig,
+  resolveLayout,
+  DEFAULT_LAYOUT_ID,
+  zoneById,
+  tileRectCenter,
+  movementConfigForLayout,
+  DEFAULT_MOVEMENT_CONFIG,
   type PeersSnapshotEvent,
   type ObjectsSnapshotEvent,
+  type SeatsSnapshotEvent,
 } from "@cosmos/shared";
-import { loadRoomObjects, upsertObject, deleteObject } from "@cosmos/db";
+import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider } from "@cosmos/db";
 import { env } from "./env";
 import { instanceId, redisPub, redisSub, roomLease, instanceRegistry, startHeartbeat, stopHeartbeat } from "./instance";
 import { verifySessionToken, assertRoomMembership } from "./auth";
@@ -45,6 +55,21 @@ app.get<{ Params: { roomId: string } }>("/internal/resolve-room/:roomId", async 
   }
 });
 
+// Declared before roomManager exists (Fastify locks route registration
+// after listen() starts accepting connections) and assigned right after —
+// the handler closes over this binding, not a value, so it sees the real
+// instance by the time any request actually arrives. Dev/load-testing
+// convenience only: reports this process's own tick-timing and memory
+// health under load (see the plan's load harness step), never called by
+// production application code.
+let roomManager: RoomManager;
+app.get("/internal/metrics", async () => ({
+  instanceId,
+  uptimeSeconds: process.uptime(),
+  memoryUsage: process.memoryUsage(),
+  tick: roomManager.getTickStats(),
+}));
+
 await app.listen({ port: env.port, host: "0.0.0.0" });
 
 const io = new SocketIOServer(app.server, {
@@ -52,7 +77,7 @@ const io = new SocketIOServer(app.server, {
   adapter: createAdapter(redisPub, redisSub),
 });
 
-const roomManager = new RoomManager(broadcasterFromSocketServer(io), roomLease, instanceId, 10_000, {
+roomManager = new RoomManager(broadcasterFromSocketServer(io), roomLease, instanceId, 10_000, {
   loadRoomObjects,
   upsertObject,
   deleteObject,
@@ -79,11 +104,22 @@ io.on("connection", (socket) => {
 
     const { roomId } = parsed.data;
 
+    let workspaceId: string;
+    let roomConfig: unknown;
     try {
-      await assertRoomMembership(user.userId, roomId);
+      ({ workspaceId, config: roomConfig } = await assertRoomMembership(user.userId, roomId));
     } catch (err) {
       return ack?.({ error: (err as Error).message });
     }
+
+    // Resolved from Room.config, falling back to the default layout for a
+    // missing/unknown id — the identical rule the room page applies
+    // client-side, so client and server always agree on floor bounds and
+    // the spawn point (see @cosmos/shared's layouts module).
+    const { layoutId } = parseRoomConfig(roomConfig);
+    const layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+    const movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
+    const spawnZone = zoneById(layout, layout.spawnZoneId)!;
 
     // Claim-or-confirm ownership. This is the guard against a split room: if
     // this instance is not (or is no longer) the authoritative owner, refuse
@@ -95,33 +131,50 @@ io.on("connection", (socket) => {
       return ack?.({ error: "not_owner", roomId });
     }
 
-    roomManager.ensureRoom(roomId);
+    roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout);
     // Must complete before any object read/mutation for this room, including
     // this very join's objects:snapshot below — otherwise a joining client
     // could be sent an incomplete (still-loading) object list. Concurrent
     // joins for the same room all await the same in-flight load rather than
     // racing separate ones (see RoomManager.hydrateObjects's docs).
     await roomManager.hydrateObjects(roomId);
-    await socket.join(roomId);
 
-    roomManager.addPeer(roomId, {
+    // Resolved from Workspace.plan today; a future billing system swaps only
+    // this provider (see ParticipantLimitProvider in @cosmos/shared) — the
+    // rest of this flow is unaffected.
+    const limit = await planParticipantLimitProvider.getWorkspaceParticipantLimit(workspaceId);
+
+    // admitAndAddPeer checks capacity and inserts the peer in one synchronous
+    // call, so two sockets racing for the last slot can't both be admitted.
+    // Rejected: do NOT join the socket to the room and do not broadcast
+    // anything — nothing about the room's state changes for a refused join.
+    const admission = roomManager.admitAndAddPeer(roomId, {
       userId: user.userId,
       name: user.email, // placeholder until profile data is wired up in phase 2
       avatarUrl: null,
       socketId: socket.id,
-      // TODO(phase 8): use the room's configured spawn point instead of a
-      // fixed default once Room.config is read here. Deterministic per-user
-      // ring offset so multiple avatars don't render exactly on top of each
-      // other (see packages/proximity/src/spawn.ts).
-      position: spawnPositionForUser(user.userId, { x: 100, y: 100 }),
-    });
+      // Deterministic per-user ring offset around the layout's spawn zone
+      // center, so multiple avatars don't render exactly on top of each
+      // other (see packages/proximity/src/spawn.ts). Closes the TODO this
+      // used to carry — Room.config is now read above via assertRoomMembership.
+      position: spawnPositionForUser(user.userId, tileRectCenter(spawnZone.rect), undefined, movementConfig),
+    }, limit);
+
+    if (!admission.admitted) {
+      return ack?.({ error: "workspace_full", limit: admission.limit, active: admission.active });
+    }
+
+    await socket.join(roomId);
     socket.data.roomId = roomId;
 
     // Broadcast to the whole room, not just this socket: existing peers
     // otherwise only ever learn of a newcomer via peers:delta, which carries
     // no name/avatar, so they'd render the newcomer permanently unnamed.
-    // This also doubles as the client's clean-resync primitive on reconnect.
-    const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId) };
+    // This also doubles as the client's clean-resync primitive on reconnect,
+    // and (via active/limit) how everyone's occupancy display stays current
+    // on the join path — see OccupancyUpdateEventSchema for the leave path.
+    const occ = roomManager.occupancy(roomId);
+    const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId), ...occ };
     io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot);
 
     // Objects:snapshot goes to the JOINING socket only, unlike peers:snapshot
@@ -131,6 +184,12 @@ io.on("connection", (socket) => {
     // learn the newcomer's identity.
     const objectsSnapshot: ObjectsSnapshotEvent = { roomId, objects: roomManager.objectsSnapshot(roomId) };
     socket.emit(ServerEvents.ObjectsSnapshot, objectsSnapshot);
+
+    // Same joiner-only rule as objects:snapshot, for the same reason: an
+    // existing peer's knowledge of who's seated where doesn't change just
+    // because someone else joined.
+    const seatsSnapshot: SeatsSnapshotEvent = { roomId, occupancy: roomManager.seatsSnapshot(roomId) };
+    socket.emit(ServerEvents.SeatsSnapshot, seatsSnapshot);
 
     ack?.({ ok: true });
   });
@@ -149,6 +208,31 @@ io.on("connection", (socket) => {
         reason: result.reason,
       });
     }
+  });
+
+  socket.on(ClientEvents.SeatClaim, (raw, ack?: (res: unknown) => void) => {
+    const roomId = socket.data.roomId as string | undefined;
+    if (!roomId) return ack?.({ error: "not_in_room" });
+
+    const parsed = SeatClaimEventSchema.safeParse(raw);
+    if (!parsed.success) return ack?.({ error: "invalid_payload" });
+
+    const result = roomManager.claimSeat(roomId, user.userId, parsed.data.seatId);
+    if (!result) return ack?.({ error: "room_not_found" });
+    if (!result.accepted) return ack?.({ error: result.reason });
+    ack?.({ ok: true });
+  });
+
+  socket.on(ClientEvents.SeatRelease, (raw, ack?: (res: unknown) => void) => {
+    const roomId = socket.data.roomId as string | undefined;
+    if (!roomId) return ack?.({ error: "not_in_room" });
+
+    // Payload is always {} — parsed only to reject malformed non-object
+    // input consistently with every other handler here.
+    if (!SeatReleaseEventSchema.safeParse(raw).success) return ack?.({ error: "invalid_payload" });
+
+    roomManager.releaseSeat(roomId, user.userId);
+    ack?.({ ok: true });
   });
 
   socket.on(ClientEvents.ObjectUpsert, async (raw, ack?: (res: unknown) => void) => {

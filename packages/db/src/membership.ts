@@ -46,11 +46,11 @@ export async function withTransientRetry<T>(fn: () => Promise<T>, attempts = 5, 
 export async function assertRoomMembership(
   userId: string,
   roomId: string,
-): Promise<{ workspaceId: string }> {
+): Promise<{ workspaceId: string; config: unknown }> {
   const room = await withTransientRetry(() =>
     prisma.room.findUnique({
       where: { id: roomId },
-      select: { workspaceId: true },
+      select: { workspaceId: true, config: true },
     }),
   );
   if (!room) {
@@ -67,5 +67,9 @@ export async function assertRoomMembership(
     throw new Error("User is not a member of this room's workspace.");
   }
 
-  return { workspaceId: room.workspaceId };
+  // `config` is included alongside workspaceId purely as a convenience for
+  // callers that need both from one round trip (e.g. the realtime server's
+  // join_room, which resolves the room's layout right after this call) —
+  // existing callers that only destructure `{ workspaceId }` are unaffected.
+  return { workspaceId: room.workspaceId, config: room.config };
 }

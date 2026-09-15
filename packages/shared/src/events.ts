@@ -71,6 +71,22 @@ export const ObjectDeleteEventSchema = z.object({
 });
 export type ObjectDeleteEvent = z.infer<typeof ObjectDeleteEventSchema>;
 
+/** Claims a hot-desk seat by id. The server validates existence, occupancy,
+ *  and proximity against its own last-accepted position for this peer —
+ *  never a client-supplied point, or "sitting" would be a free teleport
+ *  (see packages/proximity/src/seatOccupancy.ts). */
+export const SeatClaimEventSchema = z.object({
+  seatId: z.string().min(1),
+});
+export type SeatClaimEvent = z.infer<typeof SeatClaimEventSchema>;
+
+/** Releases whichever seat the sender currently occupies. Idempotent — a
+ *  release with no seat held is a harmless no-op, which is what makes the
+ *  optimistic-stand-up / implicit-release-on-move race safe (see the plan's
+ *  "Ordering: seat:release vs. the first move"). */
+export const SeatReleaseEventSchema = z.object({});
+export type SeatReleaseEvent = z.infer<typeof SeatReleaseEventSchema>;
+
 // ---------------------------------------------------------------------------
 // Server -> Client
 // ---------------------------------------------------------------------------
@@ -83,12 +99,33 @@ export const PeerSchema = z.object({
 });
 export type Peer = z.infer<typeof PeerSchema>;
 
-/** Full roster, sent on join and after any resync (e.g. reconnect). */
+/** Full roster, sent on join and after any resync (e.g. reconnect). Carries
+ *  the workspace's current occupancy alongside the roster so a freshly
+ *  joined client has both without waiting for a separate event — existing
+ *  clients also receive this on every join, which is what keeps their
+ *  occupancy display current without a dedicated broadcast on the join
+ *  path (see OccupancyUpdateEventSchema below, used for the leave path,
+ *  where no snapshot is otherwise sent). */
 export const PeersSnapshotEventSchema = z.object({
   roomId: z.string().min(1),
   peers: z.array(PeerSchema),
+  active: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
 });
 export type PeersSnapshotEvent = z.infer<typeof PeersSnapshotEventSchema>;
+
+/** Broadcast whenever a workspace's active-participant count changes
+ *  (join or leave) — the join path also refreshes this via
+ *  PeersSnapshotEventSchema's active/limit fields, but a leave only emits
+ *  peers:delta (which carries no occupancy), so this is what keeps
+ *  occupancy displays current for everyone still in the room after someone
+ *  departs. */
+export const OccupancyUpdateEventSchema = z.object({
+  roomId: z.string().min(1),
+  active: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+export type OccupancyUpdateEvent = z.infer<typeof OccupancyUpdateEventSchema>;
 
 /** Batched incremental position update, emitted once per 100ms tick per room,
  *  containing only peers whose position actually changed since the last tick. */
@@ -174,6 +211,42 @@ export const OwnerChangedEventSchema = z.object({
 });
 export type OwnerChangedEvent = z.infer<typeof OwnerChangedEventSchema>;
 
+/** Full seat occupancy, sent only to the joining/reconnecting socket — the
+ *  same wholesale-replacement role objects:snapshot plays, and for the
+ *  identical reason: an existing peer's knowledge of who's seated where
+ *  doesn't change just because someone else joined. */
+export const SeatsSnapshotEventSchema = z.object({
+  roomId: z.string().min(1),
+  occupancy: z.array(z.object({ seatId: z.string().min(1), userId: z.string().min(1) })),
+});
+export type SeatsSnapshotEvent = z.infer<typeof SeatsSnapshotEventSchema>;
+
+/** Broadcast to the whole room on every occupancy change (claim, release, or
+ *  an implicit release from a move) — `userId: null` means the seat is now
+ *  free. */
+export const SeatUpdateEventSchema = z.object({
+  seatId: z.string().min(1),
+  userId: z.string().min(1).nullable(),
+});
+export type SeatUpdateEvent = z.infer<typeof SeatUpdateEventSchema>;
+
+/** Sent to a single peer's own socket whenever THEIR zone membership
+ *  changes (entering or leaving a meeting room, cabin, stage, audience,
+ *  open area, or focus zone) — never broadcast, since it's about what that
+ *  one peer just experienced. `zone: null` means they left every zone.
+ *  Drives the zone UX toast/HUD chip; a meeting zone silently changing who
+ *  you can hear is a correctness requirement, not polish (see the plan). */
+export const ZoneChangedEventSchema = z.object({
+  zone: z
+    .object({
+      id: z.string().min(1),
+      label: z.string(),
+      kind: z.enum(["meeting", "cabin", "stage", "audience", "open", "focus", "lobby"]),
+    })
+    .nullable(),
+});
+export type ZoneChangedEvent = z.infer<typeof ZoneChangedEventSchema>;
+
 // ---------------------------------------------------------------------------
 // Event name constants (used as Socket.IO event names on both sides)
 // ---------------------------------------------------------------------------
@@ -183,6 +256,8 @@ export const ClientEvents = {
   JoinRoom: "join_room",
   ObjectUpsert: "object:upsert",
   ObjectDelete: "object:delete",
+  SeatClaim: "seat:claim",
+  SeatRelease: "seat:release",
 } as const;
 
 export const ServerEvents = {
@@ -194,4 +269,8 @@ export const ServerEvents = {
   ObjectSync: "object:sync",
   ObjectRemoved: "object:removed",
   OwnerChanged: "owner:changed",
+  OccupancyUpdate: "occupancy:update",
+  SeatsSnapshot: "seats:snapshot",
+  SeatUpdate: "seat:update",
+  ZoneChanged: "zone:changed",
 } as const;

@@ -1,17 +1,39 @@
 import type { Server as SocketIOServer } from "socket.io";
-import type { Point, ObjectState } from "@cosmos/shared";
-import { ServerEvents, DEFAULT_MOVEMENT_CONFIG, DEFAULT_PROXIMITY_CONFIG } from "@cosmos/shared";
+import type {
+  Point,
+  ObjectState,
+  ActiveParticipantCounter,
+  AdmitParticipantResult,
+  MovementConfig,
+  RoomLayout,
+} from "@cosmos/shared";
+import {
+  ServerEvents,
+  DEFAULT_MOVEMENT_CONFIG,
+  DEFAULT_PROXIMITY_CONFIG,
+  admitParticipant,
+  resolveLayout,
+  DEFAULT_LAYOUT_ID,
+  seatById,
+  zoneAt,
+  zoneById,
+} from "@cosmos/shared";
 import type { RoomLease } from "@cosmos/realtime-core";
 import {
   validateMove,
   tickProximity,
   pairKey,
+  statesEqual,
   resolveObjectWrite,
   resolveObjectDelete,
+  resolveSeatClaim,
+  effectiveAudio,
   type ProximityState,
   type ProposedObjectWrite,
   type ObjectWriteResult,
   type ObjectDeleteOutcome,
+  type SeatClaimResult,
+  type ZoneRef,
 } from "@cosmos/proximity";
 import { ObjectPersistence, noopObjectRepository, type ObjectRepository } from "./objectPersistence";
 
@@ -54,14 +76,66 @@ interface PeerState {
  * plan's "Redis is not in the per-movement path" decision. One RoomManager
  * per realtime process; rooms this instance does not own simply never appear
  * here (join is refused before a room's state would be created — see server.ts).
+ *
+ * Implements ActiveParticipantCounter (keyed by workspaceId, not roomId) so
+ * that "how many people may be in this workspace at once" (a
+ * ParticipantLimitProvider, resolved in server.ts from Workspace.plan) and
+ * "who is here right now" stay decoupled: Phase 8's product constraint is one
+ * office room per workspace, but activeUserIds() already unions peers across
+ * every room this instance owns for a workspace, so a future multi-room
+ * workspace needs no change here — only a cross-instance (Redis-backed)
+ * implementation of this same interface if rooms end up owned by different
+ * instances.
  */
-export class RoomManager {
+export class RoomManager implements ActiveParticipantCounter {
   private rooms = new Map<
     string,
     {
+      workspaceId: string;
+      /** This room's floor bounds, resolved once at ensureRoom() from its
+       *  layout (see @cosmos/shared's movementConfigForLayout) — applyMove
+       *  validates against THIS, never the global DEFAULT_MOVEMENT_CONFIG,
+       *  so a room's floor size is what actually bounds where a peer can
+       *  walk. */
+      movementConfig: MovementConfig;
+      /** Resolved once at ensureRoom() — the source of seat geometry for
+       *  claimSeat's existence/proximity checks. Never re-resolved mid-room
+       *  lifetime (a layout doesn't change under a live room). */
+      layout: RoomLayout;
       peers: Map<string, PeerState>; // keyed by userId
+      /** Hot-desk occupancy: seatId -> the userId sitting there. Never
+       *  persisted — lost on eviction/failover by design (see the plan's
+       *  R3/occupancy-lifecycle notes); reconstructed from nothing because
+       *  a seat is a session-scoped claim, not durable room content. */
+      seats: Map<string, string>;
+      /** Reverse index of `seats`, so releaseSeat/removePeer/a move from a
+       *  seated peer can find "which seat is THIS user in" in O(1) instead
+       *  of scanning `seats`. Kept in lockstep with it everywhere it's
+       *  written. */
+      seatOf: Map<string, string>;
+      /** Raw, UN-overridden tickProximity output — deliberately never
+       *  written with a zone-overridden value (that would corrupt
+       *  hysteresis, since computeProximityState reads this as its
+       *  "wasAudio"/"wasVideo" baseline; see tick()'s docs). */
       proximityStates: Map<string, ProximityState>; // keyed by pairKey(a,b)
+      /** Each peer's current zone id (or null), diffed every tick against
+       *  the previous tick's value — this is what lets a zone crossing
+       *  between two STATIONARY people still trigger an audio update, since
+       *  tickProximity alone only reports pairs whose DISTANCE changed. */
+      zoneOf: Map<string, string | null>;
+      /** The last EFFECTIVE (post zone-override) audio state actually sent
+       *  to each directed listener<-speaker pair, keyed by
+       *  "${listenerUserId}->${speakerUserId}" — separate from
+       *  proximityStates because the two must never be conflated (see
+       *  tick()'s docs on the trap that would create). */
+      lastEmittedAudio: Map<string, ProximityState>;
       objects: Map<string, ObjectState>; // keyed by objectId
+      /** Last participant limit passed to admitAndAddPeer for this room —
+       *  cached so removePeer (which has no limit of its own to work with)
+       *  can still broadcast an accurate occupancy:update. Always set before
+       *  removePeer matters, since a peer can only be present to remove
+       *  after at least one successful admitAndAddPeer call. */
+      participantLimit: number;
       /** Memoized load-from-Postgres promise, set the first time
        *  hydrateObjects() is called for this room and never cleared —
        *  concurrent joins all await the SAME promise instead of triggering
@@ -96,8 +170,17 @@ export class RoomManager {
   /** Called once this instance has confirmed (via the lease) that it owns
    *  `roomId`. Idempotent — safe to call on every join. Deliberately
    *  synchronous: it only allocates in-memory room state. Loading
-   *  persisted objects is a separate async step — see hydrateObjects(). */
-  ensureRoom(roomId: string): void {
+   *  persisted objects is a separate async step — see hydrateObjects().
+   *  `workspaceId` is recorded so activeUserIds() can be computed per
+   *  workspace rather than per room. `movementConfig`/`layout` default to
+   *  the global bounds and the default office layout so every existing
+   *  call site (tests included) that never passed either is unaffected. */
+  ensureRoom(
+    roomId: string,
+    workspaceId: string,
+    movementConfig: MovementConfig = DEFAULT_MOVEMENT_CONFIG,
+    layout: RoomLayout = resolveLayout(DEFAULT_LAYOUT_ID)!,
+  ): void {
     if (this.rooms.has(roomId)) return;
 
     const tickTimer = setInterval(
@@ -117,9 +200,17 @@ export class RoomManager {
     }, this.leaseRefreshIntervalMs);
 
     this.rooms.set(roomId, {
+      workspaceId,
+      movementConfig,
+      layout,
       peers: new Map(),
+      seats: new Map(),
+      seatOf: new Map(),
       proximityStates: new Map(),
+      zoneOf: new Map(),
+      lastEmittedAudio: new Map(),
       objects: new Map(),
+      participantLimit: 0,
       objectsHydration: null,
       tickTimer,
       leaseRefreshTimer,
@@ -147,10 +238,62 @@ export class RoomManager {
     return room.objectsHydration;
   }
 
-  addPeer(roomId: string, peer: Omit<PeerState, "acceptedAtMs">): void {
+  /** Every distinct user currently present across every room this instance
+   *  owns for the given workspace — the ActiveParticipantCounter contract.
+   *  Today that's at most one room (Phase 8's one-office-room-per-workspace
+   *  product constraint), but this method doesn't assume that: it unions
+   *  peers across all matching rooms, so a future multi-room workspace is
+   *  transparent to callers of admitParticipant. */
+  activeUserIds(workspaceId: string): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const room of this.rooms.values()) {
+      if (room.workspaceId !== workspaceId) continue;
+      for (const userId of room.peers.keys()) ids.add(userId);
+    }
+    return ids;
+  }
+
+  /** Current occupancy for display (HUD, capacity screens) — active count is
+   *  workspace-wide via activeUserIds(); limit is this room's most recently
+   *  seen participant limit. Returns zeros for an unknown room rather than
+   *  throwing, since this is read for UI display, not an authorization
+   *  decision (admitAndAddPeer is the actual gate). */
+  occupancy(roomId: string): { active: number; limit: number } {
     const room = this.rooms.get(roomId);
-    if (!room) return;
+    if (!room) return { active: 0, limit: 0 };
+    return { active: this.activeUserIds(room.workspaceId).size, limit: room.participantLimit };
+  }
+
+  /** Checks the workspace's participant limit and, if there is room, adds
+   *  the peer — in the same synchronous call, so two sockets racing for the
+   *  last slot cannot both be admitted (Node serializes synchronous code on
+   *  the instance that owns this room's lease). `limit` is resolved by the
+   *  caller (server.ts, via a ParticipantLimitProvider) rather than fetched
+   *  here, keeping RoomManager itself free of I/O — the same separation
+   *  Phase 7 established between RoomManager and its injected
+   *  ObjectRepository.
+   *
+   *  On admission, broadcasts occupancy:update so everyone already in the
+   *  room sees the new count immediately (the joining client instead learns
+   *  it from peers:snapshot, sent right after this call in server.ts). */
+  admitAndAddPeer(
+    roomId: string,
+    peer: Omit<PeerState, "acceptedAtMs">,
+    limit: number,
+  ): AdmitParticipantResult {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return { admitted: false, reason: "workspace_full", limit, active: 0 };
+    }
+
+    room.participantLimit = limit;
+    const result = admitParticipant(this.activeUserIds(room.workspaceId), peer.userId, limit);
+    if (!result.admitted) return result;
+
     room.peers.set(peer.userId, { ...peer, acceptedAtMs: Date.now() });
+    const occ = this.occupancy(roomId);
+    this.broadcaster.to(roomId).emit(ServerEvents.OccupancyUpdate, { roomId, ...occ });
+    return result;
   }
 
   /** Returns a Promise (rather than being fire-and-forget) so callers that
@@ -160,6 +303,12 @@ export class RoomManager {
   async removePeer(roomId: string, userId: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
+
+    // Unconditional, regardless of how many peers remain — evictRoom only
+    // fires once the room is EMPTY, which a busy room may never reach, so
+    // this is the only reliable place a leaked seat gets freed.
+    this.releaseSeat(roomId, userId);
+
     room.peers.delete(userId);
 
     // Prune every cached pair-proximity state involving the departing peer.
@@ -175,7 +324,24 @@ export class RoomManager {
       }
     }
 
+    // Same leak/stale-cache class of bug as proximityStates above, for the
+    // two zone-audio-specific maps: an untended zoneOf entry is a memory
+    // leak, and a stale lastEmittedAudio entry for a departed user could
+    // suppress a genuinely new emit to/from a same-named future connection.
+    room.zoneOf.delete(userId);
+    for (const key of room.lastEmittedAudio.keys()) {
+      if (key.startsWith(`${userId}->`) || key.endsWith(`->${userId}`)) {
+        room.lastEmittedAudio.delete(key);
+      }
+    }
+
     this.broadcaster.to(roomId).emit(ServerEvents.PeersDelta, { roomId, updates: [], left: [userId] });
+
+    // Leaving is the one occupancy-changing path peers:snapshot doesn't
+    // cover (that's only re-sent on a join) — without this, everyone still
+    // in the room would see a stale "active" count until someone else joins.
+    const occ = this.occupancy(roomId);
+    this.broadcaster.to(roomId).emit(ServerEvents.OccupancyUpdate, { roomId, ...occ });
 
     if (room.peers.size === 0) {
       await this.evictRoom(roomId, { notifyOwnerChanged: false });
@@ -204,11 +370,17 @@ export class RoomManager {
     const peer = room?.peers.get(userId);
     if (!room || !peer) return undefined;
 
+    // A move from a seated peer is treated as an implicit stand-up — the
+    // client stands up optimistically (see the approved plan) and may send
+    // its next move before the corresponding seat:release arrives; release
+    // is idempotent, so whichever order they arrive in is safe.
+    this.releaseSeat(roomId, userId);
+
     const result = validateMove(
       proposed,
       { position: peer.position, acceptedAtMs: peer.acceptedAtMs },
       Date.now(),
-      DEFAULT_MOVEMENT_CONFIG,
+      room.movementConfig,
     );
 
     if (result.accepted) {
@@ -217,6 +389,71 @@ export class RoomManager {
     }
 
     return result;
+  }
+
+  /** Current seat occupancy, sent to a joining client as seats:snapshot —
+   *  never broadcast to the whole room on a join, for the identical reason
+   *  objects:snapshot isn't either (see that method's docs). */
+  seatsSnapshot(roomId: string): { seatId: string; userId: string }[] {
+    const room = this.rooms.get(roomId);
+    if (!room) return [];
+    return Array.from(room.seats.entries()).map(([seatId, userId]) => ({ seatId, userId }));
+  }
+
+  /** Claims a hot-desk seat for `userId`. The proximity check uses the
+   *  peer's own last-accepted SERVER position, never a client-supplied
+   *  point (see seatOccupancy.ts's docs on why). On acceptance, teleports
+   *  the peer directly to the seat's anchor — this is the separate,
+   *  speed-check-bypassing action validateMove's own docstring requires for
+   *  teleport-style repositioning; `acceptedAtMs` is updated in the SAME
+   *  assignment as `position` so a stale queued `move` can't be validated
+   *  against a fresh elapsed-time window and silently pull the peer back
+   *  out of the chair (see the plan's explicit test for this). Any
+   *  previously-held seat is released as part of the same accepted claim. */
+  claimSeat(roomId: string, userId: string, seatId: string): SeatClaimResult | undefined {
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(userId);
+    if (!room || !peer) return undefined;
+
+    const seat = seatById(room.layout, seatId);
+    const result = resolveSeatClaim(
+      seat,
+      peer.position,
+      room.seats.get(seatId),
+      userId,
+      room.seatOf.get(userId) ?? null,
+    );
+
+    if (result.accepted) {
+      if (result.previousSeatId) {
+        room.seats.delete(result.previousSeatId);
+        this.broadcaster.to(roomId).emit(ServerEvents.SeatUpdate, { seatId: result.previousSeatId, userId: null });
+      }
+      room.seats.set(seatId, userId);
+      room.seatOf.set(userId, seatId);
+      peer.position = seat!.anchor;
+      peer.acceptedAtMs = Date.now();
+      this.broadcaster.to(roomId).emit(ServerEvents.SeatUpdate, { seatId, userId });
+    }
+
+    return result;
+  }
+
+  /** Frees whichever seat `userId` currently holds. Idempotent — a no-op
+   *  when the user holds no seat, which is what makes the optimistic
+   *  stand-up / implicit-release-on-move race (see applyMove) safe: however
+   *  many release paths fire for the same stand-up, only the first does
+   *  anything. */
+  releaseSeat(roomId: string, userId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const seatId = room.seatOf.get(userId);
+    if (!seatId) return;
+
+    room.seatOf.delete(userId);
+    room.seats.delete(seatId);
+    this.broadcaster.to(roomId).emit(ServerEvents.SeatUpdate, { seatId, userId: null });
   }
 
   /** Every object currently held for a room, sent to a joining/reconnecting
@@ -288,7 +525,39 @@ export class RoomManager {
     this.tick(roomId);
   }
 
+  /** Test-only peek at the RAW (never zone-overridden) cached proximity
+   *  state for a pair — lets tests assert directly that proximityStates was
+   *  never corrupted by a zone audio override, the same spirit as
+   *  runTickForTest above. Production code never calls this. */
+  proximityStateForTest(roomId: string, a: string, b: string): ProximityState | undefined {
+    return this.rooms.get(roomId)?.proximityStates.get(pairKey(a, b));
+  }
+
+  /** Rolling per-tick duration samples across every room this instance owns
+   *  — an instance-wide health signal, not per-room, since what the load
+   *  harness (see the plan's final step) cares about is how the ONE process
+   *  handling N concurrent connections is doing overall. Exposed via
+   *  getTickStats() -> server.ts's /internal/metrics. */
+  private readonly tickDurationsMs: number[] = [];
+  private static readonly MAX_TICK_SAMPLES = 200;
+
+  /** Rolling tick-duration stats for /internal/metrics. Empty stats (all
+   *  zero) before the first tick has run. */
+  getTickStats(): { sampleCount: number; avgMs: number; maxMs: number } {
+    const samples = this.tickDurationsMs;
+    if (samples.length === 0) return { sampleCount: 0, avgMs: 0, maxMs: 0 };
+    const sum = samples.reduce((a, b) => a + b, 0);
+    return { sampleCount: samples.length, avgMs: sum / samples.length, maxMs: Math.max(...samples) };
+  }
+
   private tick(roomId: string): void {
+    const start = performance.now();
+    this.tickBody(roomId);
+    this.tickDurationsMs.push(performance.now() - start);
+    if (this.tickDurationsMs.length > RoomManager.MAX_TICK_SAMPLES) this.tickDurationsMs.shift();
+  }
+
+  private tickBody(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || room.peers.size === 0) return;
 
@@ -312,25 +581,94 @@ export class RoomManager {
     }
 
     // Proximity: recompute over current positions, diff against last known
-    // pair states, and push only pairs whose state actually changed.
+    // pair states. `room.proximityStates` stores exactly this RAW output,
+    // forever — never a zone-overridden value. Writing an override back in
+    // here would corrupt computeProximityState's hysteresis, since it reads
+    // this cache as its own "wasAudio"/"wasVideo" baseline next tick (see
+    // packages/proximity/src/proximity.ts) — a zone-forced full-gain pair
+    // would then get an undeserved +hysteresisPx grace band the moment
+    // distance alone is checked again, e.g. right after leaving the zone.
     const changes = tickProximity(currentPositions, room.proximityStates, DEFAULT_PROXIMITY_CONFIG);
     for (const change of changes) {
       room.proximityStates.set(pairKey(change.a, change.b), change.state);
+    }
 
-      const socketA = room.peers.get(change.a)?.socketId;
-      const socketB = room.peers.get(change.b)?.socketId;
-      if (socketA) {
-        this.broadcaster.to(socketA).emit(ServerEvents.ProximityUpdate, {
-          peerId: change.b,
-          ...change.state,
+    // Zone membership: diffed independently every tick, because
+    // tickProximity above only reports pairs whose DISTANCE changed — two
+    // people already standing still together when one crosses into a
+    // meeting room produces zero distance change and would otherwise emit
+    // nothing, even though what they can hear just changed completely.
+    const zoneChangedUsers: string[] = [];
+    for (const peer of room.peers.values()) {
+      const zone = zoneAt(room.layout, peer.position);
+      const zoneId = zone?.id ?? null;
+      const previousZoneId = room.zoneOf.get(peer.userId) ?? null;
+      if (zoneId !== previousZoneId) {
+        room.zoneOf.set(peer.userId, zoneId);
+        zoneChangedUsers.push(peer.userId);
+        this.broadcaster.to(peer.socketId).emit(ServerEvents.ZoneChanged, {
+          zone: zone ? { id: zone.id, label: zone.label, kind: zone.kind } : null,
         });
       }
-      if (socketB) {
-        this.broadcaster.to(socketB).emit(ServerEvents.ProximityUpdate, {
-          peerId: change.a,
-          ...change.state,
-        });
+    }
+
+    // Candidate pairs for a directed audio re-check: every pair whose raw
+    // distance-state changed, UNION every pair involving a user whose zone
+    // just changed (that user crossing a boundary can change what THEY
+    // hear from, and are heard by, everyone else — not just the nearest
+    // peer, which is why this fans out to all current peers, not just
+    // `changes`'s pairs).
+    const candidatePairs = new Set<string>();
+    for (const change of changes) candidatePairs.add(pairKey(change.a, change.b));
+    if (zoneChangedUsers.length > 0) {
+      const allUserIds = Array.from(room.peers.keys());
+      for (const changedUserId of zoneChangedUsers) {
+        for (const otherUserId of allUserIds) {
+          if (otherUserId !== changedUserId) candidatePairs.add(pairKey(changedUserId, otherUserId));
+        }
       }
+    }
+
+    const zoneRefFor = (userId: string): ZoneRef | null => {
+      const zoneId = room.zoneOf.get(userId);
+      if (!zoneId) return null;
+      const zone = zoneById(room.layout, zoneId);
+      return zone ? { id: zone.id, kind: zone.kind, stageId: zone.stageId } : null;
+    };
+
+    for (const key of candidatePairs) {
+      const [a, b] = key.split(":") as [string, string];
+      const raw = room.proximityStates.get(key);
+      if (!raw) continue; // one side already left this tick
+
+      const zoneA = zoneRefFor(a);
+      const zoneB = zoneRefFor(b);
+
+      this.maybeEmitDirectedAudio(room, roomId, a, b, effectiveAudio(raw, zoneA, zoneB));
+      this.maybeEmitDirectedAudio(room, roomId, b, a, effectiveAudio(raw, zoneB, zoneA));
+    }
+  }
+
+  /** Emits proximity:update to `listenerUserId` about `speakerUserId` only
+   *  if the EFFECTIVE (post zone-override) state actually differs from what
+   *  was last sent for this exact direction — dedup lives here, keyed
+   *  separately per direction, since a stage/audience pair (or any private
+   *  zone pairing) is asymmetric by design. */
+  private maybeEmitDirectedAudio(
+    room: NonNullable<ReturnType<RoomManager["rooms"]["get"]>>,
+    roomId: string,
+    listenerUserId: string,
+    speakerUserId: string,
+    state: ProximityState,
+  ): void {
+    const key = `${listenerUserId}->${speakerUserId}`;
+    const previous = room.lastEmittedAudio.get(key);
+    if (previous && statesEqual(previous, state)) return;
+
+    room.lastEmittedAudio.set(key, state);
+    const listenerSocketId = room.peers.get(listenerUserId)?.socketId;
+    if (listenerSocketId) {
+      this.broadcaster.to(listenerSocketId).emit(ServerEvents.ProximityUpdate, { peerId: speakerUserId, ...state });
     }
   }
 
