@@ -22,6 +22,15 @@ export interface ViewportCallbacks {
   onObjectGestureMove?: (worldPoint: Point) => void;
   /** Called once when a claimed object gesture ends (pointerup). */
   onObjectGestureEnd?: () => void;
+  /** Consulted after onObjectGestureStart declines, in the same
+   *  space-held-bypasses-everything / left-button-only slot — a hit on a
+   *  seat (see canvas/objects... no: @cosmos/shared's hitTestSeats over the
+   *  room's static layout). Unlike an object gesture, sitting is a discrete
+   *  action with no drag/resize follow-through, so there is no matching
+   *  move/end pair: returning true here only suppresses this press's pan
+   *  and click-to-walk — the caller does the actual "attempt to sit" work
+   *  synchronously inside the callback itself. */
+  onFurnitureGestureStart?: (worldPoint: Point) => boolean;
 }
 
 /**
@@ -49,6 +58,7 @@ export class Viewport {
   private activePointerId: number | null = null;
   private isPanning = false;
   private objectGestureClaimed = false;
+  private furnitureGestureClaimed = false;
   private pressStart: Point = { x: 0, y: 0 };
   private panOriginScreen: Point = { x: 0, y: 0 };
   private panOriginWorld: Point = { x: 0, y: 0 };
@@ -118,14 +128,19 @@ export class Viewport {
     // Space-held always forces panning regardless of what's under the
     // cursor — the deliberate escape hatch to pan over objects — so object
     // hit-testing is skipped entirely in that case.
+    const pt = this.pointerWorldPoint(e);
     this.objectGestureClaimed =
-      isLeft && !this.spaceHeld && (this.callbacks.onObjectGestureStart?.(this.pointerWorldPoint(e)) ?? false);
+      isLeft && !this.spaceHeld && (this.callbacks.onObjectGestureStart?.(pt) ?? false);
+    this.furnitureGestureClaimed =
+      isLeft && !this.spaceHeld && !this.objectGestureClaimed && (this.callbacks.onFurnitureGestureStart?.(pt) ?? false);
 
     // Middle-button and space-held left-button always pan, regardless of
     // how far the pointer ends up moving; a plain left press stays
     // ambiguous until onPointerMove sees it cross the drag threshold —
-    // unless an object gesture just claimed it, which pre-empts both.
-    this.isPanning = !this.objectGestureClaimed && (isMiddle || (isLeft && this.spaceHeld));
+    // unless an object or furniture gesture just claimed it, which
+    // pre-empts both.
+    this.isPanning =
+      !this.objectGestureClaimed && !this.furnitureGestureClaimed && (isMiddle || (isLeft && this.spaceHeld));
   };
 
   private onPointerMove = (e: PointerEvent): void => {
@@ -135,6 +150,8 @@ export class Viewport {
       this.callbacks.onObjectGestureMove?.(this.pointerWorldPoint(e));
       return;
     }
+    // Furniture gestures have no drag follow-through — just suppress pan.
+    if (this.furnitureGestureClaimed) return;
 
     if (!this.isPanning && exceedsDragThreshold(this.pressStart, { x: e.clientX, y: e.clientY })) {
       this.isPanning = true;
@@ -154,18 +171,23 @@ export class Viewport {
     const wasPanning = this.isPanning;
     const wasLeftButton = this.pointerButton === 0;
     const wasObjectGesture = this.objectGestureClaimed;
+    const wasFurnitureGesture = this.furnitureGestureClaimed;
     this.activePointerId = null;
     this.isPanning = false;
     this.objectGestureClaimed = false;
+    this.furnitureGestureClaimed = false;
 
     if (wasObjectGesture) {
       this.callbacks.onObjectGestureEnd?.();
       return;
     }
+    // Already handled synchronously inside onFurnitureGestureStart — a
+    // claimed furniture press never becomes a click-to-walk.
+    if (wasFurnitureGesture) return;
 
     // A left press that never exceeded the drag threshold (and wasn't
-    // forced into panning by space, and didn't claim an object) is a
-    // click-to-walk.
+    // forced into panning by space, and didn't claim an object or seat) is
+    // a click-to-walk.
     if (!wasPanning && wasLeftButton) {
       const rect = this.canvas.getBoundingClientRect();
       const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };

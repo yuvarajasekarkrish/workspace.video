@@ -1,4 +1,5 @@
-import type { Point } from "@cosmos/shared";
+import type { Point, MovementConfig } from "@cosmos/shared";
+import { DEFAULT_MOVEMENT_CONFIG } from "@cosmos/shared";
 import {
   integrateKeyboardMove,
   stepTowardWalkTarget,
@@ -23,6 +24,14 @@ export interface MovementControllerCallbacks {
   /** Called with a move payload exactly when it should be sent to the
    *  server (already throttled/deduped by movement.ts's shouldEmitMove). */
   onSendMove: (position: Point) => void;
+  /** Called exactly once, locally, the instant the user's own movement
+   *  input stands them up out of a seat (a keydown or a click-to-walk).
+   *  The caller sends seat:release here — deliberately AFTER `seated` has
+   *  already flipped to false and movement has already resumed for this
+   *  frame (see applyTeleport's docs and the plan's "stand up is
+   *  optimistic" rule): standing up must never wait on a round trip.
+   *  Optional so every existing call site is unaffected. */
+  onStandUp?: () => void;
 }
 
 /**
@@ -39,10 +48,22 @@ export class MovementController {
   private walkTarget: Point | null = null;
   private lastSentAtMs: number | null = null;
   private lastSentPosition: Point | null = null;
+  /** True from an accepted seat claim (applyTeleport) until the user's own
+   *  next movement input stands them up. Owned exclusively by this class —
+   *  never set from a server seat:update echo (see seatsStore.ts's docs on
+   *  this ownership boundary), so a late echo for our own seat can never
+   *  resurrect it after we've already stood up locally. */
+  private seated = false;
 
   constructor(
     initialPosition: Point,
     private readonly callbacks: MovementControllerCallbacks,
+    /** The room's floor bounds (see @cosmos/shared's movementConfigForLayout) —
+     *  defaults to the global bounds so every existing call site (which
+     *  never passed this) is unaffected. Passed through to the same pure
+     *  clamping functions the server's validateMove uses, so the local
+     *  avatar can never visibly walk past a wall the server would reject. */
+    private readonly bounds: MovementConfig = DEFAULT_MOVEMENT_CONFIG,
   ) {
     this.position = initialPosition;
   }
@@ -58,6 +79,7 @@ export class MovementController {
       if (shouldIgnore()) return;
       const code = (e as KeyboardEvent).code;
       if (code in KEY_TO_DIRECTION) {
+        this.standUp();
         this.heldKeys.add(code);
         this.walkTarget = null; // keyboard input cancels an in-flight click-to-walk
       }
@@ -74,23 +96,52 @@ export class MovementController {
     };
   }
 
-  /** Called by Viewport's onClickToWalk callback. */
+  /** Called by Viewport's onClickToWalk callback. Also a stand-up trigger —
+   *  clicking elsewhere while seated stands the user up (see the class's
+   *  `seated` docs) and then walks there as usual. */
   setWalkTarget(target: Point): void {
+    this.standUp();
     this.walkTarget = target;
   }
 
-  /** Called once per Pixi ticker frame with elapsed seconds. Advances local
-   *  position immediately (never waiting on the server), and separately
-   *  decides whether this tick's position should be sent. */
+  /** True from an accepted seat claim until the user's own next movement
+   *  input. Exposed read-only so callers (e.g. the furniture gesture
+   *  handler) can decide not to attempt a new claim while already seated. */
+  isSeated(): boolean {
+    return this.seated;
+  }
+
+  /** Snaps directly to `position` and marks the user seated — the
+   *  server-sanctioned teleport action for a claimed seat (never routed
+   *  through applyCorrection, which must stay indistinguishable from an
+   *  ordinary rejection and must NOT stand the user up — see applyCorrection
+   *  below). Clears held keys too: a key already down when the claim lands
+   *  must not immediately re-trigger standUp() on the very next frame. */
+  applyTeleport(position: Point): void {
+    this.position = position;
+    this.walkTarget = null;
+    this.heldKeys.clear();
+    this.seated = true;
+    this.callbacks.onLocalPositionChanged(position);
+  }
+
+  /** Called once per Pixi ticker frame with elapsed seconds. While seated,
+   *  this is a deliberate no-op — no movement math, no move traffic at all,
+   *  which is also what makes many seated occupants nearly free on the
+   *  server (see the plan's R2). Otherwise advances local position
+   *  immediately (never waiting on the server), and separately decides
+   *  whether this tick's position should be sent. */
   update(dtSeconds: number, nowMs: number): void {
+    if (this.seated) return;
+
     const direction = this.currentKeyboardDirection();
     let next = this.position;
 
     if (direction.x !== 0 || direction.y !== 0) {
       this.walkTarget = null;
-      next = integrateKeyboardMove(this.position, direction, dtSeconds);
+      next = integrateKeyboardMove(this.position, direction, dtSeconds, this.bounds);
     } else if (this.walkTarget) {
-      next = stepTowardWalkTarget(this.position, this.walkTarget, dtSeconds);
+      next = stepTowardWalkTarget(this.position, this.walkTarget, dtSeconds, this.bounds);
       if (next.x === this.walkTarget.x && next.y === this.walkTarget.y) {
         this.walkTarget = null;
       }
@@ -109,11 +160,25 @@ export class MovementController {
   }
 
   /** Server rejected our last move; snap to the authoritative position and
-   *  drop any in-flight walk target so we don't immediately fight it again. */
+   *  drop any in-flight walk target so we don't immediately fight it again.
+   *  Deliberately does NOT touch `seated` — an unrelated correction arriving
+   *  while seated (e.g. a stale in-flight move from just before the claim)
+   *  must never be mistaken for a stand-up input; only local intent
+   *  (standUp, via keyboard/click) or a fresh applyTeleport ever changes it. */
   applyCorrection(position: Point): void {
     this.position = position;
     this.walkTarget = null;
     this.callbacks.onLocalPositionChanged(position);
+  }
+
+  /** Standing up is optimistic: `seated` flips and movement resumes on the
+   *  SAME frame, before any server round trip — the caller's onStandUp
+   *  fires after, to send seat:release. A no-op when not seated, so calling
+   *  it from every movement-input entry point unconditionally is safe. */
+  private standUp(): void {
+    if (!this.seated) return;
+    this.seated = false;
+    this.callbacks.onStandUp?.();
   }
 
   private currentKeyboardDirection(): Point {
