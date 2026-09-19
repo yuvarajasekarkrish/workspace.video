@@ -50,7 +50,7 @@ describe("RoomLease", () => {
     expect(candidates).toContain([...distinctOwners][0]);
   });
 
-  it("only the current owner can refresh the lease", async () => {
+  it("the current owner's refresh renews; a different instance's refresh reports lost", async () => {
     const lease = new RoomLease(redis, 30);
     const room = roomId();
     await lease.claimOrRead("instance-a", room);
@@ -58,8 +58,36 @@ describe("RoomLease", () => {
     const ownerRefresh = await lease.refresh("instance-a", room);
     const impostorRefresh = await lease.refresh("instance-b", room);
 
-    expect(ownerRefresh).toBe(true);
-    expect(impostorRefresh).toBe(false);
+    expect(ownerRefresh).toBe("renewed");
+    expect(impostorRefresh).toBe("lost");
+    // The impostor's failed refresh must not have clobbered the real owner.
+    expect(await lease.currentOwner(room)).toBe("instance-a");
+  });
+
+  it("refreshing an expired, unclaimed lease reclaims it for the same instance", async () => {
+    const lease = new RoomLease(redis, 1); // 1 second TTL
+    const room = roomId();
+    await lease.claimOrRead("instance-a", room);
+
+    await new Promise((r) => setTimeout(r, 1300));
+
+    const outcome = await lease.refresh("instance-a", room);
+    expect(outcome).toBe("reclaimed");
+    // The reclaimed key must hold OUR instance id, and be alive again.
+    expect(await lease.currentOwner(room)).toBe("instance-a");
+  });
+
+  it("refreshing after another instance claimed the expired lease reports lost", async () => {
+    const lease = new RoomLease(redis, 1); // 1 second TTL
+    const room = roomId();
+    await lease.claimOrRead("instance-a", room);
+
+    await new Promise((r) => setTimeout(r, 1300));
+    await lease.claimOrRead("instance-b", room);
+
+    const outcome = await lease.refresh("instance-a", room);
+    expect(outcome).toBe("lost");
+    expect(await lease.currentOwner(room)).toBe("instance-b");
   });
 
   it("only the current owner can release the lease", async () => {

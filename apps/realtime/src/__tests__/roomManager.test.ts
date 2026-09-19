@@ -64,7 +64,7 @@ function fakeBroadcaster() {
   return { broadcaster, emitted };
 }
 
-function fakeLease(refreshResult = true): RoomLease {
+function fakeLease(refreshResult: "renewed" | "reclaimed" | "lost" = "renewed"): RoomLease {
   return {
     refresh: vi.fn().mockResolvedValue(refreshResult),
     claimOrRead: vi.fn(),
@@ -209,14 +209,14 @@ describe("RoomManager", () => {
     expect(rm.isOwnedLocally("room1")).toBe(false);
   });
 
-  it("evicts the room and notifies clients when the lease refresh fails", async () => {
+  it("evicts the room and notifies clients when the lease is genuinely lost", async () => {
     // Fake timers scoped to this test only (and with real-time passthrough)
     // so setInterval fires deterministically without freezing Date.now(),
     // which RoomManager's movement validation elsewhere depends on.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { broadcaster, emitted } = fakeBroadcaster();
-      const lease = fakeLease(false); // simulate having lost the lease
+      const lease = fakeLease("lost"); // a different instance now holds the key
       const rm = createManager(broadcaster, lease, "instance-a", 100);
       rm.ensureRoom("room1", "ws1");
       rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
@@ -231,6 +231,82 @@ describe("RoomManager", () => {
         payload: { roomId: "room1" },
       });
       expect(broadcaster.disconnectSocketsInRoom).toHaveBeenCalledWith("room1");
+      expect(rm.getLeaseStats().lost).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT evict the room when the lease was merely reclaimed (no competing owner)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const lease = fakeLease("reclaimed"); // key expired, but nobody else claimed it
+      const rm = createManager(broadcaster, lease, "instance-a", 100);
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(lease.refresh).toHaveBeenCalledWith("instance-a", "room1");
+      expect(rm.isOwnedLocally("room1")).toBe(true);
+      expect(emitted).not.toContainEqual(expect.objectContaining({ event: "owner:changed" }));
+      expect(broadcaster.disconnectSocketsInRoom).not.toHaveBeenCalled();
+      expect(rm.getLeaseStats().reclaimed).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT evict and does not reject when refresh throws", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const lease: RoomLease = {
+        refresh: vi.fn().mockRejectedValue(new Error("ECONNRESET")),
+        claimOrRead: vi.fn(),
+        release: vi.fn(),
+        currentOwner: vi.fn(),
+      } as unknown as RoomLease;
+      const rm = createManager(broadcaster, lease, "instance-a", 100);
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(rm.isOwnedLocally("room1")).toBe(true);
+      expect(emitted).not.toContainEqual(expect.objectContaining({ event: "owner:changed" }));
+      expect(broadcaster.disconnectSocketsInRoom).not.toHaveBeenCalled();
+      expect(rm.getLeaseStats().errors).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not overlap refreshes when a refresh call is slow", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { broadcaster } = fakeBroadcaster();
+      let concurrentCalls = 0;
+      let maxConcurrent = 0;
+      const lease: RoomLease = {
+        refresh: vi.fn().mockImplementation(async () => {
+          concurrentCalls++;
+          maxConcurrent = Math.max(maxConcurrent, concurrentCalls);
+          await new Promise((resolve) => setTimeout(resolve, 120)); // slower than the 100ms interval
+          concurrentCalls--;
+          return "renewed";
+        }),
+        claimOrRead: vi.fn(),
+        release: vi.fn(),
+        currentOwner: vi.fn(),
+      } as unknown as RoomLease;
+      const rm = createManager(broadcaster, lease, "instance-a", 100);
+      rm.ensureRoom("room1", "ws1");
+
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(maxConcurrent).toBe(1);
     } finally {
       vi.useRealTimers();
     }

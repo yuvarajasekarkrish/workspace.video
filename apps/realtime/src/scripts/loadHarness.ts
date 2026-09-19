@@ -36,7 +36,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
 import { io as ioClient, type Socket } from "socket.io-client";
-import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, type Point } from "@cosmos/shared";
+import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, ServerEvents, type Point } from "@cosmos/shared";
 
 const ROOM_MOVEMENT_CONFIG = movementConfigForLayout(openOffice1, DEFAULT_MOVEMENT_CONFIG);
 
@@ -191,6 +191,12 @@ interface ConnectedSocket {
    *  happen during setup too. */
   disconnectedAtMs: number | null;
   disconnectReason: string | null;
+  /** Phase 11 Part C: set the moment this socket receives owner:changed —
+   *  the server's own signal that it evicted this room (see roomManager.ts's
+   *  evictRoom). Had this existed during Phase 10c's N=100 run, the run
+   *  would have named its own cause (a lease eviction) instead of the
+   *  investigation needing three rounds of instrumentation to find it. */
+  ownerChangedAtMs: number | null;
 }
 
 function connectSocket(
@@ -249,6 +255,17 @@ function attachCounters(entry: ConnectedSocket): void {
     if (entry.disconnectedAtMs === null) {
       entry.disconnectedAtMs = performance.now();
       entry.disconnectReason = reason;
+    }
+  });
+
+  // Phase 11 Part C: the server's own admission that it evicted this room
+  // (roomManager.ts's evictRoom, fired only on a genuine "lost" lease
+  // outcome — see Part A). Recorded separately from the disconnect above
+  // because owner:changed always arrives BEFORE the disconnect it causes,
+  // so this is what tells us WHY a socket dropped, not just that it did.
+  entry.socket.on(ServerEvents.OwnerChanged, () => {
+    if (entry.ownerChangedAtMs === null) {
+      entry.ownerChangedAtMs = performance.now();
     }
   });
 
@@ -429,6 +446,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               bytesReceived: 0,
               disconnectedAtMs: null,
               disconnectReason: null,
+              ownerChangedAtMs: null,
             };
             attachCounters(entry);
             connected.push(entry);
@@ -510,10 +528,17 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
         userId: c.userId,
         disconnectedAtSec: (c.disconnectedAtMs! - windowStartAt) / 1000,
         reason: c.disconnectReason,
+        // Phase 11 Part C: non-null here means the SERVER evicted the room
+        // (see roomManager.ts's evictRoom) — a lease "lost" outcome, not a
+        // transport-level failure. A drop with this null and a transport-
+        // level reason is a different failure mode entirely.
+        ownerChangedAtSec: c.ownerChangedAtMs !== null ? (c.ownerChangedAtMs - windowStartAt) / 1000 : null,
       }));
+    const ownerChangedCount = connected.filter((c) => c.ownerChangedAtMs !== null).length;
     const socketSurvival = {
       initial: connected.length,
       survivedWindow: connected.length - droppedSockets.length,
+      ownerChangedCount,
       dropped: droppedSockets,
     };
 
@@ -579,6 +604,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     console.log(
       `  socket survival: ${socketSurvival.survivedWindow}/${socketSurvival.initial} still connected at window end` +
         (droppedSockets.length > 0 ? `  <-- ${droppedSockets.length} DROPPED mid-run: ${JSON.stringify(droppedSockets.slice(0, 5))}${droppedSockets.length > 5 ? "…" : ""}` : ""),
+    );
+    console.log(
+      `  owner:changed received: ${ownerChangedCount}/${socketSurvival.initial}` +
+        (ownerChangedCount > 0 ? "  <-- the SERVER evicted this room (lease lost) — see /internal/metrics's lease counters" : ""),
     );
     if (intervals.length > 0) {
       const occSamples = intervals.filter((s) => s.occupancyActive !== null);

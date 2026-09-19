@@ -16,14 +16,21 @@ function ownerKey(roomId: string): string {
   return `room:${roomId}:owner`;
 }
 
-// Compare-and-refresh: only extend the TTL if the caller is still the
-// recorded owner. A bare EXPIRE would let an instance that already lost
-// ownership resurrect a lease it no longer holds.
+// Compare-and-refresh, with a third outcome for a lease that expired with no
+// competing claimant. A bare EXPIRE would let an instance that already lost
+// ownership resurrect a lease it no longer holds; a bare "not equal -> lost"
+// would treat "the key is simply gone" the same as "someone else now owns
+// it" — but those call for very different responses (see refresh()'s doc).
 const REFRESH_SCRIPT = `
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-  return redis.call("EXPIRE", KEYS[1], ARGV[2])
+local current = redis.call("GET", KEYS[1])
+if current == ARGV[1] then
+  redis.call("EXPIRE", KEYS[1], ARGV[2])
+  return "renewed"
+elseif current == false then
+  redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
+  return "reclaimed"
 else
-  return 0
+  return "lost"
 end
 `;
 
@@ -66,10 +73,21 @@ export class RoomLease {
     return current;
   }
 
-  /** Returns true if the refresh succeeded, i.e. `instanceId` was still the
-   *  recorded owner. False means the caller has lost the lease and must stop
-   *  ticking / treat itself as non-authoritative for this room. */
-  async refresh(instanceId: string, roomId: string): Promise<boolean> {
+  /**
+   * Three-way outcome, because "the key isn't ours" has two very different
+   * causes that callers must not treat the same way:
+   *  - "renewed": we were still the recorded owner; TTL extended.
+   *  - "reclaimed": the key had expired (no GET match, but also no other
+   *    owner) — nobody raced us for it, so re-claiming it is the correct,
+   *    safe outcome. Colloquially: we own every peer/socket/tick for this
+   *    room regardless of what Redis briefly forgot, so this is a self-heal,
+   *    not an incident that should evict anyone.
+   *  - "lost": a *different* instance now holds the key. This is the only
+   *    outcome that means we are no longer authoritative and must evict.
+   * All three are decided and applied inside one atomic script, so a
+   * "reclaimed" here can never race another instance's own claim.
+   */
+  async refresh(instanceId: string, roomId: string): Promise<"renewed" | "reclaimed" | "lost"> {
     const result = await this.redis.eval(
       REFRESH_SCRIPT,
       1,
@@ -77,7 +95,7 @@ export class RoomLease {
       instanceId,
       this.leaseTtlSeconds,
     );
-    return result === 1;
+    return result as "renewed" | "reclaimed" | "lost";
   }
 
   /** Releases the lease, but only if `instanceId` is still the recorded

@@ -236,8 +236,24 @@ export class RoomManager implements ActiveParticipantCounter {
       objectsHydration: Promise<void> | null;
       tickTimer: NodeJS.Timeout;
       leaseRefreshTimer: NodeJS.Timeout;
+      /** True while a refresh() call for this room is awaiting Redis. Guards
+       *  against a slow eval causing two overlapping refreshes to race each
+       *  other — see ensureRoom's leaseRefreshTimer callback. */
+      leaseRefreshInFlight: boolean;
     }
   >();
+
+  /** Counts of every refresh() outcome across all rooms, surfaced via
+   *  getLeaseStats() -> server.ts's /internal/metrics (Phase 11 Part C).
+   *  "reclaimed" and "errors" matter most: either one means a room's lease
+   *  briefly lapsed without another instance actually taking over, which
+   *  used to evict 100% of that room's sockets — see the leaseRefreshTimer
+   *  callback below for why that no longer happens. */
+  private leaseOutcomeCounts = { renewed: 0, reclaimed: 0, lost: 0, errors: 0 };
+
+  getLeaseStats(): { renewed: number; reclaimed: number; lost: number; errors: number } {
+    return { ...this.leaseOutcomeCounts };
+  }
 
   private readonly objectPersistence: ObjectPersistence;
 
@@ -280,14 +296,38 @@ export class RoomManager implements ActiveParticipantCounter {
       DEFAULT_PROXIMITY_CONFIG.tickIntervalMs,
     );
 
-    // Refresh the lease well inside its TTL. If refresh ever fails, this
-    // instance has lost ownership (another instance's claim won a race after
-    // this one's lease lapsed) — evict all local state and boot connected
-    // clients back to endpoint resolution rather than keep serving stale state.
+    // Refresh the lease well inside its TTL. Only a "lost" outcome — another
+    // instance now genuinely holds the key — means this instance is no
+    // longer authoritative; evict local state and boot connected clients
+    // back to endpoint resolution rather than keep serving stale state. A
+    // "reclaimed" outcome (the key merely expired, e.g. a transient Redis
+    // TTL/timing hiccup, and nothing else raced to claim it) self-heals in
+    // place: we still hold every peer/socket/tick for this room, so there is
+    // nothing to evict. A thrown error (Redis unreachable for this call) is
+    // caught and skipped rather than evicting on a guess — if the room truly
+    // failed over, the NEXT successful refresh will correctly observe "lost".
     const leaseRefreshTimer = setInterval(async () => {
-      const stillOwner = await this.lease.refresh(this.instanceId, roomId);
-      if (!stillOwner) {
-        await this.evictRoom(roomId, { notifyOwnerChanged: true });
+      const room = this.rooms.get(roomId);
+      if (!room || room.leaseRefreshInFlight) return; // guards against overlap on a slow eval
+      room.leaseRefreshInFlight = true;
+      try {
+        const outcome = await this.lease.refresh(this.instanceId, roomId);
+        this.leaseOutcomeCounts[outcome]++;
+        if (outcome === "reclaimed") {
+          console.warn(
+            `[roomLease] reclaimed an expired lease for room ${roomId} (instance ${this.instanceId}, ${room.peers.size} peer(s)) — no other instance had claimed it; continuing without eviction.`,
+          );
+        } else if (outcome === "lost") {
+          await this.evictRoom(roomId, { notifyOwnerChanged: true });
+        }
+      } catch (err) {
+        this.leaseOutcomeCounts.errors++;
+        console.error(`[roomLease] refresh failed for room ${roomId} (instance ${this.instanceId}):`, err);
+      } finally {
+        // The room may have just been evicted (and thus deleted from
+        // this.rooms) by the "lost" branch above — guard the flag write.
+        const stillTracked = this.rooms.get(roomId);
+        if (stillTracked) stillTracked.leaseRefreshInFlight = false;
       }
     }, this.leaseRefreshIntervalMs);
 
@@ -316,6 +356,7 @@ export class RoomManager implements ActiveParticipantCounter {
       objectsHydration: null,
       tickTimer,
       leaseRefreshTimer,
+      leaseRefreshInFlight: false,
     });
   }
 
@@ -1061,6 +1102,29 @@ export class RoomManager implements ActiveParticipantCounter {
 
   isOwnedLocally(roomId: string): boolean {
     return this.rooms.has(roomId);
+  }
+
+  /** Phase 11 Part B: everything join_room needs about a room it ALREADY
+   *  owns, without re-deriving any of it. While isOwnedLocally(roomId) is
+   *  true, the lease-refresh timer (see ensureRoom) is the thing keeping
+   *  ownership current — a second join doesn't need its own Redis round trip
+   *  to confirm what the timer is already confirming every
+   *  leaseRefreshIntervalMs. Same reasoning for participantLimit/layout/
+   *  movementConfig: they were already resolved on the first join (or the
+   *  last plan-limit refresh) and stored here specifically so they don't
+   *  need to be looked up again per joiner. Returns null for a room this
+   *  instance doesn't own, so callers fall back to the full claim path. */
+  getRoomInfo(
+    roomId: string,
+  ): { workspaceId: string; layout: RoomLayout; movementConfig: MovementConfig; participantLimit: number } | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+    return {
+      workspaceId: room.workspaceId,
+      layout: room.layout,
+      movementConfig: room.movementConfig,
+      participantLimit: room.participantLimit,
+    };
   }
 
   /** Clears every room's tickTimer and leaseRefreshTimer without the

@@ -22,8 +22,10 @@ import {
   type PeersSnapshotEvent,
   type ObjectsSnapshotEvent,
   type SeatsSnapshotEvent,
+  type RoomLayout,
+  type MovementConfig,
 } from "@cosmos/shared";
-import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider } from "@cosmos/db";
+import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider, transientRetryStats } from "@cosmos/db";
 import type { ParticipantLimitProvider } from "@cosmos/shared";
 import { env } from "./env";
 import {
@@ -36,7 +38,7 @@ import {
   stopHeartbeat,
   redisPublishStats,
 } from "./instance";
-import { verifySessionToken, assertRoomMembership } from "./auth";
+import { verifySessionToken, assertRoomMembership, assertWorkspaceMembership } from "./auth";
 import { RoomManager, broadcasterFromSocketServer } from "./roomManager";
 import { CountingBroadcaster } from "./countingBroadcaster";
 import { maybeRegisterLoadHarnessRoutes } from "./loadHarnessRoutes";
@@ -117,6 +119,41 @@ let lastCpuUsage = process.cpuUsage();
 let lastEmitSnapshot: Record<string, { count: number; sampledCount: number; sampledBytesSum: number }> = {};
 let lastRedisPublishCount = 0;
 
+/** Phase 11 Part C: server-side join_room timing, so a load test's observed
+ *  latency (which also includes the client<->server round trip, e.g. a
+ *  relayed port-forward) can be separated from what the handler itself
+ *  actually costs. Same fixed-size ring-buffer treatment as RoomManager's
+ *  tick-timing samples, for the same reason: bounded memory under sustained
+ *  load, no shift()-per-call cost. */
+class RollingMsStats {
+  private static readonly MAX_SAMPLES = 500;
+  private readonly samples: number[] = [];
+  private writeIndex = 0;
+
+  record(ms: number): void {
+    if (this.samples.length < RollingMsStats.MAX_SAMPLES) {
+      this.samples.push(ms);
+    } else {
+      this.samples[this.writeIndex % RollingMsStats.MAX_SAMPLES] = ms;
+    }
+    this.writeIndex++;
+  }
+
+  snapshot(): { sampleCount: number; avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number } {
+    if (this.samples.length === 0) return { sampleCount: 0, avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 };
+    const sorted = [...this.samples].sort((a, b) => a - b);
+    const pct = (p: number) => sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
+    return {
+      sampleCount: sorted.length,
+      avgMs: sorted.reduce((a, b) => a + b, 0) / sorted.length,
+      p50Ms: pct(50),
+      p95Ms: pct(95),
+      p99Ms: pct(99),
+    };
+  }
+}
+const joinDuration = new RollingMsStats();
+
 app.get("/internal/metrics", async () => {
   const now = process.hrtime.bigint();
   const elapsedSeconds = Number(now - lastMetricsReadAt) / 1e9;
@@ -167,6 +204,9 @@ app.get("/internal/metrics", async () => {
     eventLoop,
     emitRates,
     redisPublishesPerSec,
+    lease: roomManager.getLeaseStats(),
+    join: joinDuration.snapshot(),
+    transientDbRetryAttempts: transientRetryStats.attempts,
   };
 });
 
@@ -213,50 +253,93 @@ io.on("connection", (socket) => {
   const user = socket.data.user as { userId: string; email: string };
 
   socket.on(ClientEvents.JoinRoom, async (raw, ack?: (res: unknown) => void) => {
+    const joinStartedAt = performance.now();
+    const finish = (res: unknown) => {
+      joinDuration.record(performance.now() - joinStartedAt);
+      return ack?.(res);
+    };
+
     const parsed = JoinRoomEventSchema.safeParse(raw);
-    if (!parsed.success) return ack?.({ error: "Invalid join payload." });
+    if (!parsed.success) return finish({ error: "Invalid join payload." });
 
     const { roomId } = parsed.data;
 
     let workspaceId: string;
-    let roomConfig: unknown;
-    try {
-      ({ workspaceId, config: roomConfig } = await assertRoomMembership(user.userId, roomId));
-    } catch (err) {
-      return ack?.({ error: (err as Error).message });
+    let layout: RoomLayout;
+    let movementConfig: MovementConfig;
+    let limit: number;
+
+    // Fast path: this instance already owns the room. Every answer below is
+    // already known — the lease-refresh timer (roomManager.ts's
+    // ensureRoom) is what keeps `isOwnedLocally` true, so a second join
+    // doesn't need its own Redis round trip to reconfirm ownership, its own
+    // Room lookup to learn workspaceId/layout, or its own participant-limit
+    // query; RoomManager cached all three the first time this room was
+    // ensured. Only the per-USER membership check can't be skipped or
+    // cached — it must be re-verified for every joiner.
+    const cached = roomManager.getRoomInfo(roomId);
+    if (cached) {
+      try {
+        await assertWorkspaceMembership(user.userId, cached.workspaceId);
+      } catch (err) {
+        return finish({ error: (err as Error).message });
+      }
+      workspaceId = cached.workspaceId;
+      layout = cached.layout;
+      movementConfig = cached.movementConfig;
+      limit = cached.participantLimit;
+      // hydrateObjects is a memoized no-op after the room's first join (see
+      // its docs) — still awaited so a joiner is never sent an incomplete
+      // objects:snapshot, but it resolves an already-settled promise here.
+      await roomManager.hydrateObjects(roomId);
+    } else {
+      // Slow path: first joiner for a room this instance doesn't yet own.
+      let roomConfig: unknown;
+      try {
+        ({ workspaceId, config: roomConfig } = await assertRoomMembership(user.userId, roomId));
+      } catch (err) {
+        return finish({ error: (err as Error).message });
+      }
+
+      // Resolved from Room.config, falling back to the default layout for a
+      // missing/unknown id — the identical rule the room page applies
+      // client-side, so client and server always agree on floor bounds and
+      // the spawn point (see @cosmos/shared's layouts module).
+      const { layoutId } = parseRoomConfig(roomConfig);
+      layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+      movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
+
+      // Claim-or-confirm ownership. This is the guard against a split room:
+      // if this instance is not (or is no longer) the authoritative owner,
+      // refuse the join and tell the client to re-resolve its endpoint from
+      // scratch — never silently serve a second copy of the room's state.
+      const owner = await roomLease.claimOrRead(instanceId, roomId);
+      if (owner !== instanceId) {
+        socket.emit(ServerEvents.OwnerChanged, { roomId });
+        return finish({ error: "not_owner", roomId });
+      }
+
+      roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout);
+
+      // Independent of each other (hydration reads only roomId; the limit
+      // lookup reads only workspaceId) — no data dependency, so they run
+      // concurrently instead of one queuing behind the other's round trip.
+      // hydrateObjects must still complete before any object read/mutation
+      // for this room, including this very join's objects:snapshot below —
+      // otherwise a joining client could be sent an incomplete (still-
+      // loading) object list. Concurrent joins for the same room all await
+      // the same in-flight load rather than racing separate ones (see
+      // RoomManager.hydrateObjects's docs).
+      [, limit] = await Promise.all([
+        roomManager.hydrateObjects(roomId),
+        // Resolved from Workspace.plan today; a future billing system swaps
+        // only this provider (see ParticipantLimitProvider in
+        // @cosmos/shared) — the rest of this flow is unaffected.
+        loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId),
+      ]);
     }
 
-    // Resolved from Room.config, falling back to the default layout for a
-    // missing/unknown id — the identical rule the room page applies
-    // client-side, so client and server always agree on floor bounds and
-    // the spawn point (see @cosmos/shared's layouts module).
-    const { layoutId } = parseRoomConfig(roomConfig);
-    const layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
-    const movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
     const spawnZone = zoneById(layout, layout.spawnZoneId)!;
-
-    // Claim-or-confirm ownership. This is the guard against a split room: if
-    // this instance is not (or is no longer) the authoritative owner, refuse
-    // the join and tell the client to re-resolve its endpoint from scratch —
-    // never silently serve a second copy of the room's state.
-    const owner = await roomLease.claimOrRead(instanceId, roomId);
-    if (owner !== instanceId) {
-      socket.emit(ServerEvents.OwnerChanged, { roomId });
-      return ack?.({ error: "not_owner", roomId });
-    }
-
-    roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout);
-    // Must complete before any object read/mutation for this room, including
-    // this very join's objects:snapshot below — otherwise a joining client
-    // could be sent an incomplete (still-loading) object list. Concurrent
-    // joins for the same room all await the same in-flight load rather than
-    // racing separate ones (see RoomManager.hydrateObjects's docs).
-    await roomManager.hydrateObjects(roomId);
-
-    // Resolved from Workspace.plan today; a future billing system swaps only
-    // this provider (see ParticipantLimitProvider in @cosmos/shared) — the
-    // rest of this flow is unaffected.
-    const limit = await loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId);
 
     // admitAndAddPeer checks capacity and inserts the peer in one synchronous
     // call, so two sockets racing for the last slot can't both be admitted.
@@ -275,7 +358,7 @@ io.on("connection", (socket) => {
     }, limit);
 
     if (!admission.admitted) {
-      return ack?.({ error: "workspace_full", limit: admission.limit, active: admission.active });
+      return finish({ error: "workspace_full", limit: admission.limit, active: admission.active });
     }
 
     await socket.join(roomId);
@@ -305,7 +388,7 @@ io.on("connection", (socket) => {
     const seatsSnapshot: SeatsSnapshotEvent = { roomId, occupancy: roomManager.seatsSnapshot(roomId) };
     socket.emit(ServerEvents.SeatsSnapshot, seatsSnapshot);
 
-    ack?.({ ok: true });
+    finish({ ok: true });
   });
 
   socket.on(ClientEvents.Move, (raw) => {

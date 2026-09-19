@@ -1,6 +1,14 @@
 import { prisma } from "./index";
 import { Prisma } from "@prisma/client";
 
+/** Phase 11 Part C: counts every transient-retry attempt actually taken, so a
+ *  future load-test run can attribute join-latency tail (or not) to this
+ *  path's 300/600/900/1200ms backoff instead of guessing from timing alone.
+ *  Exported read-only; nothing resets it — server.ts reads it as a
+ *  monotonically increasing counter, same treatment as the lease-outcome
+ *  counts in roomManager.ts. */
+export const transientRetryStats = { attempts: 0 };
+
 /** Retries a Prisma call a couple of times, but only for a transient
  *  connection failure (P1001 "Can't reach database server") — never for a
  *  genuine query result like a missing row, which must fail immediately.
@@ -27,6 +35,7 @@ export async function withTransientRetry<T>(fn: () => Promise<T>, attempts = 5, 
       lastError = err;
       const isTransient = err instanceof Prisma.PrismaClientInitializationError || (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P1001");
       if (!isTransient || attempt === attempts - 1) throw err;
+      transientRetryStats.attempts++;
       await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
     }
   }
@@ -47,23 +56,25 @@ export async function assertRoomMembership(
   userId: string,
   roomId: string,
 ): Promise<{ workspaceId: string; config: unknown }> {
+  // One round trip, not two: the membership check is expressed as a nested
+  // filter on the same query that reads the room, rather than a second
+  // findUnique chained on the first query's result. Phase 11: this handler
+  // is on the join_room hot path, and at load every serialized round trip
+  // queues separately against the connection pool.
   const room = await withTransientRetry(() =>
     prisma.room.findUnique({
       where: { id: roomId },
-      select: { workspaceId: true, config: true },
+      select: {
+        workspaceId: true,
+        config: true,
+        workspace: { select: { members: { where: { userId }, select: { userId: true }, take: 1 } } },
+      },
     }),
   );
   if (!room) {
     throw new Error("Room not found.");
   }
-
-  const membership = await withTransientRetry(() =>
-    prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId: room.workspaceId, userId } },
-      select: { userId: true },
-    }),
-  );
-  if (!membership) {
+  if (room.workspace.members.length === 0) {
     throw new Error("User is not a member of this room's workspace.");
   }
 
@@ -72,4 +83,25 @@ export async function assertRoomMembership(
   // join_room, which resolves the room's layout right after this call) —
   // existing callers that only destructure `{ workspaceId }` are unaffected.
   return { workspaceId: room.workspaceId, config: room.config };
+}
+
+/**
+ * The membership half of assertRoomMembership on its own, for a caller that
+ * already knows `workspaceId` (Phase 11: the realtime server's join_room,
+ * once its RoomManager already owns the room — the room lookup that
+ * resolves workspaceId is then redundant work, since the owning instance
+ * cached it on first join). Every join still calls this: a room's
+ * workspaceId never changes, but membership is per-user and must always be
+ * re-checked.
+ */
+export async function assertWorkspaceMembership(userId: string, workspaceId: string): Promise<void> {
+  const membership = await withTransientRetry(() =>
+    prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { userId: true },
+    }),
+  );
+  if (!membership) {
+    throw new Error("User is not a member of this room's workspace.");
+  }
 }
