@@ -45,6 +45,19 @@ function openCanary(id: number, startedAt: number): Promise<Canary> {
   return new Promise((resolve, reject) => {
     const socket = createConnection({ host: hostname, port: connectPort });
     const canary: Canary = { id, socket, closedAtMs: null, closeReason: null };
+    // Distinguishes "the initial connection attempt itself failed" (must
+    // reject, so main()'s catch reports it — matching loadHarness.ts's
+    // connectSocket pattern) from "a socket that already connected dropped
+    // during the hold period" (must NOT reject/resolve again — the promise
+    // already settled; only record state for the report). Before this was
+    // tracked, an error/close BEFORE connect (e.g. ECONNREFUSED) recorded
+    // state but never settled the promise, and with the connect-timeout
+    // timer cleared alongside it, nothing was left registered with the
+    // event loop — Node would exit the whole process with code 0, silently,
+    // reporting nothing. That is exactly the failure mode this script
+    // exists to catch (the relay refusing/dropping a connection), so it had
+    // to be fixed before this script's output could be trusted at all.
+    let connected = false;
 
     const timer = setTimeout(() => {
       socket.destroy();
@@ -52,17 +65,27 @@ function openCanary(id: number, startedAt: number): Promise<Canary> {
     }, 10_000);
 
     socket.once("connect", () => {
+      connected = true;
       clearTimeout(timer);
       resolve(canary);
     });
     socket.once("error", (err) => {
       clearTimeout(timer);
+      if (!connected) {
+        reject(err);
+        return;
+      }
       if (canary.closedAtMs === null) {
         canary.closedAtMs = performance.now() - startedAt;
         canary.closeReason = `error: ${err.message}`;
       }
     });
     socket.once("close", () => {
+      if (!connected) {
+        clearTimeout(timer);
+        reject(new Error("connection closed before completing"));
+        return;
+      }
       if (canary.closedAtMs === null) {
         canary.closedAtMs = performance.now() - startedAt;
         canary.closeReason ??= "close";
@@ -71,19 +94,37 @@ function openCanary(id: number, startedAt: number): Promise<Canary> {
   });
 }
 
+/** Node's dual-stack connect (tries IPv6 and IPv4 concurrently, "happy
+ *  eyeballs") throws an AggregateError whose own .message is empty — the
+ *  actual per-address failures (e.g. ECONNREFUSED) live in .errors. Without
+ *  unwrapping this, every connect failure printed as a blank string. */
+function describeConnectError(err: unknown): string {
+  const e = err as { message?: string; code?: string; errors?: { message?: string }[] };
+  if (e.message) return e.code ? `${e.code}: ${e.message}` : e.message;
+  if (e.errors?.length) return e.errors.map((sub) => sub.message ?? String(sub)).join("; ");
+  return e.code ?? String(err);
+}
+
 async function main(): Promise<void> {
   const startedAt = performance.now();
   console.log(`  opening ${COUNT} raw TCP canaries to ${hostname}:${connectPort}, holding for ${DURATION_MS / 1000}s, no application traffic...`);
 
   const canaries: Canary[] = [];
+  let connectFailures = 0;
   for (let i = 0; i < COUNT; i++) {
     try {
       canaries.push(await openCanary(i, startedAt));
     } catch (err) {
-      console.error(`  canary ${i}:`, (err as Error).message);
+      connectFailures++;
+      console.error(`  canary ${i} failed to connect:`, describeConnectError(err));
     }
   }
   console.log(`  ${canaries.length}/${COUNT} canaries connected.`);
+  if (connectFailures === COUNT) {
+    console.error(`  ALL ${COUNT} canaries failed to connect — nothing is reachable at ${hostname}:${connectPort}. Check the port forward is actually up before trusting any result below.`);
+    process.exitCode = 1;
+    return;
+  }
 
   await new Promise((resolve) => setTimeout(resolve, DURATION_MS));
 
@@ -111,7 +152,7 @@ async function main(): Promise<void> {
           : ""),
     );
   } else {
-    console.log("  no application-free explanation available: every canary survived the full duration untouched.");
+    console.log(`  no mid-hold drops: every connected canary (${canaries.length}) survived the full ${DURATION_MS / 1000}s untouched.`);
   }
 }
 
