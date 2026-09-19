@@ -26,6 +26,7 @@ import {
 import { spawnPositionForUser } from "@cosmos/proximity";
 import type * as Auth from "./auth";
 import type { RoomManager } from "./roomManager";
+import type { EmitTailRecorder } from "./emitTailRecorder";
 
 export interface SocketHandlerDeps {
   io: SocketIOServer;
@@ -40,6 +41,10 @@ export interface SocketHandlerDeps {
   /** Called once per new connection, before its handlers attach — server.ts
    *  uses it for heartbeat sampling; tests leave it unset. */
   onConnection?: (socket: Socket) => void;
+  /** Phase 17 diagnostics: times the emits made directly on Socket.IO here,
+   *  which never pass through CountingBroadcaster. Read-only; unset in tests
+   *  that do not care. */
+  emitTail?: EmitTailRecorder;
 }
 
 export function registerSocketHandlers(deps: SocketHandlerDeps): void {
@@ -53,8 +58,16 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
     disconnectReasonCounts,
     loadHarnessLimitOverride,
     onConnection,
+    emitTail,
   } = deps;
   const { verifySessionToken, assertRoomMembership, assertWorkspaceMembership } = deps.auth;
+
+  // Wraps a direct emit so its duration lands in the tail histogram. Behavior
+  // is identical with or without the recorder: `emit` runs exactly once.
+  const timed = (event: string, recipients: () => number, payload: unknown, emit: () => void): void =>
+    emitTail ? emitTail.time(event, "direct", emit, { recipients, payload }) : emit();
+  const toOne = () => 1;
+  const roomSize = (roomId: string) => () => io.sockets.adapter.rooms.get(roomId)?.size ?? 0;
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
@@ -148,7 +161,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
           loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId),
         ]);
         if (owner !== instanceId) {
-          socket.emit(ServerEvents.OwnerChanged, { roomId });
+          timed(ServerEvents.OwnerChanged, toOne, { roomId }, () => socket.emit(ServerEvents.OwnerChanged, { roomId }));
           return finish({ error: "not_owner", roomId });
         }
 
@@ -200,7 +213,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // on the join path — see OccupancyUpdateEventSchema for the leave path.
       const occ = roomManager.occupancy(roomId);
       const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId), ...occ };
-      io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot);
+      timed(ServerEvents.PeersSnapshot, roomSize(roomId), snapshot, () => io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot));
 
       // Objects:snapshot goes to the JOINING socket only, unlike peers:snapshot
       // — an existing peer's knowledge of the room's objects doesn't change
@@ -208,13 +221,13 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // changed), whereas peers:snapshot also doubles as how existing peers
       // learn the newcomer's identity.
       const objectsSnapshot: ObjectsSnapshotEvent = { roomId, objects: roomManager.objectsSnapshot(roomId) };
-      socket.emit(ServerEvents.ObjectsSnapshot, objectsSnapshot);
+      timed(ServerEvents.ObjectsSnapshot, toOne, objectsSnapshot, () => socket.emit(ServerEvents.ObjectsSnapshot, objectsSnapshot));
 
       // Same joiner-only rule as objects:snapshot, for the same reason: an
       // existing peer's knowledge of who's seated where doesn't change just
       // because someone else joined.
       const seatsSnapshot: SeatsSnapshotEvent = { roomId, occupancy: roomManager.seatsSnapshot(roomId) };
-      socket.emit(ServerEvents.SeatsSnapshot, seatsSnapshot);
+      timed(ServerEvents.SeatsSnapshot, toOne, seatsSnapshot, () => socket.emit(ServerEvents.SeatsSnapshot, seatsSnapshot));
 
       finish({ ok: true });
     });
@@ -229,10 +242,8 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // clientTs is passed for diagnostics only — see RoomManager.applyMove.
       const result = roomManager.applyMove(roomId, user.userId, parsed.data.position, parsed.data.clientTs);
       if (result && !result.accepted) {
-        socket.emit(ServerEvents.MoveCorrection, {
-          position: result.correctedPosition,
-          reason: result.reason,
-        });
+        const correction = { position: result.correctedPosition, reason: result.reason };
+        timed(ServerEvents.MoveCorrection, toOne, correction, () => socket.emit(ServerEvents.MoveCorrection, correction));
       }
     });
 
@@ -291,7 +302,8 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       if (!result) return ack?.({ error: "room_not_found" });
 
       if (result.accepted) {
-        io.to(roomId).emit(ServerEvents.ObjectSync, { object: result.next, accepted: true });
+        const sync = { object: result.next, accepted: true };
+        timed(ServerEvents.ObjectSync, roomSize(roomId), sync, () => io.to(roomId).emit(ServerEvents.ObjectSync, sync));
         return ack?.({ ok: true });
       }
 
@@ -299,7 +311,8 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
         // The object was deleted by someone else since this client last saw
         // it — nothing to sync it TO (ObjectSyncEventSchema requires a
         // non-null object), so just tell the writer it's gone.
-        socket.emit(ServerEvents.ObjectRemoved, { objectId: parsed.data.objectId, roomId });
+        const removed = { objectId: parsed.data.objectId, roomId };
+        timed(ServerEvents.ObjectRemoved, toOne, removed, () => socket.emit(ServerEvents.ObjectRemoved, removed));
         return ack?.({ error: "not_found" });
       }
 
@@ -307,7 +320,8 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // authoritative object to send (nothing was ever created), the other
       // two do.
       if (result.authoritative) {
-        socket.emit(ServerEvents.ObjectSync, { object: result.authoritative, accepted: false });
+        const stale = { object: result.authoritative, accepted: false };
+        timed(ServerEvents.ObjectSync, toOne, stale, () => socket.emit(ServerEvents.ObjectSync, stale));
       }
       ack?.({ error: result.reason });
     });
@@ -325,13 +339,15 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       if (!outcome) return ack?.({ error: "room_not_found" });
 
       if (outcome.outcome === "deleted" || outcome.outcome === "already_gone") {
-        io.to(roomId).emit(ServerEvents.ObjectRemoved, { objectId: parsed.data.objectId, roomId });
+        const gone = { objectId: parsed.data.objectId, roomId };
+        timed(ServerEvents.ObjectRemoved, roomSize(roomId), gone, () => io.to(roomId).emit(ServerEvents.ObjectRemoved, gone));
         return ack?.({ ok: true });
       }
 
       // rejected: "stale_version" | "not_creator" — authoritative is always
       // present here since the object must exist for either rejection reason.
-      socket.emit(ServerEvents.ObjectSync, { object: outcome.authoritative, accepted: false });
+      const authoritative = { object: outcome.authoritative, accepted: false };
+      timed(ServerEvents.ObjectSync, toOne, authoritative, () => socket.emit(ServerEvents.ObjectSync, authoritative));
       ack?.({ error: outcome.reason });
     });
 

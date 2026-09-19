@@ -1,4 +1,5 @@
 import type { RoomBroadcaster } from "./roomManager";
+import type { EmitTailRecorder } from "./emitTailRecorder";
 
 /** Cumulative per-event emit stats. Bytes are sampled (see
  *  `CountingBroadcaster`'s docs), never measured on every emit — so
@@ -35,6 +36,13 @@ export class CountingBroadcaster implements RoomBroadcaster {
   constructor(
     private readonly inner: RoomBroadcaster,
     private readonly sampleRate = 20,
+    /** Phase 17 diagnostics: when given, the wrapped emit call is timed (the
+     *  payload-size sampling above is deliberately outside the timed span).
+     *  `recipientsOf` is only ever called for an already-slow emit. */
+    private readonly timing?: {
+      tail: EmitTailRecorder;
+      recipientsOf?: (target: string) => number;
+    },
   ) {}
 
   to(target: string): { emit(event: string, payload: unknown): void } {
@@ -52,7 +60,15 @@ export class CountingBroadcaster implements RoomBroadcaster {
           stat.sampledBytesSum += JSON.stringify(payload).length;
           stat.sampledCount++;
         }
-        innerTarget.emit(event, payload);
+        const timing = this.timing;
+        if (!timing) {
+          innerTarget.emit(event, payload);
+          return;
+        }
+        timing.tail.time(event, "room", () => innerTarget.emit(event, payload), {
+          recipients: timing.recipientsOf ? () => timing.recipientsOf!(target) : undefined,
+          payload,
+        });
       },
     };
   }

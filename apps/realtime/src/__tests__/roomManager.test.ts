@@ -1345,4 +1345,54 @@ describe("RoomManager", () => {
       expect(stats.phases.positions).toEqual({ avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0 });
     });
   });
+
+  describe("tick windows — Phase 17 stall diagnostics", () => {
+    it("returns windows oldest-to-newest even after the 400-entry ring has wrapped", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      // The first tick only sets the baseline, so 451 ticks make 450 windows:
+      // 50 more than the ring holds, which overwrites the 50 oldest in place.
+      for (let i = 0; i < 451; i++) rm.runTickForTest("room1");
+
+      const { windows } = rm.getMoveValidationStats();
+      expect(windows).toHaveLength(400);
+      const times = windows.map((w) => w.atMs);
+      expect(times, "atMs must never go backwards across the wrap point").toEqual([...times].sort((a, b) => a - b));
+    });
+
+    it("stamps each window with the end time on the performance.now() clock", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.runTickForTest("room1");
+      const before = performance.now();
+      rm.runTickForTest("room1");
+      const after = performance.now();
+      const [w] = rm.getMoveValidationStats().windows;
+      expect(w!.atMs).toBeGreaterThanOrEqual(before);
+      expect(w!.atMs).toBeLessThanOrEqual(after);
+    });
+
+    it("carries the diagnostics hooks' emit counts and loop delay into each window", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const begin = vi.fn();
+      const end = vi.fn(() => ({ emitCount: 7, emitMs: 2.5 }));
+      const take = vi.fn(() => 42);
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, undefined, {
+        beginTick: begin,
+        endTick: end,
+        takeLoopMaxMs: take,
+      });
+      rm.ensureRoom("room1", "ws1");
+      rm.runTickForTest("room1");
+      rm.runTickForTest("room1");
+
+      expect(begin).toHaveBeenCalledTimes(2);
+      expect(end).toHaveBeenCalledTimes(2);
+      // Read on the baseline tick too, so the first real window starts clean.
+      expect(take).toHaveBeenCalledTimes(2);
+      expect(rm.getMoveValidationStats().windows[0]).toMatchObject({ emitCount: 7, emitMs: 2.5, loopMaxMs: 42 });
+    });
+  });
 });

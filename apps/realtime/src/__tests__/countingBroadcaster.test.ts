@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { CountingBroadcaster } from "../countingBroadcaster";
+import { EmitTailRecorder } from "../emitTailRecorder";
 import type { RoomBroadcaster } from "../roomManager";
 
 function fakeInner(): RoomBroadcaster & { emitted: { target: string; event: string; payload: unknown }[] } {
@@ -12,6 +13,58 @@ function fakeInner(): RoomBroadcaster & { emitted: { target: string; event: stri
     disconnectSocketsInRoom: vi.fn(),
   };
 }
+
+describe("CountingBroadcaster with emit timing (Phase 17)", () => {
+  it("passes every emit through unchanged, in order, with timing switched on", () => {
+    const inner = fakeInner();
+    const tail = new EmitTailRecorder();
+    const counting = new CountingBroadcaster(inner, 20, { tail });
+    counting.to("room1").emit("peers:delta", { a: 1 });
+    counting.to("s1").emit("proximity:update", { b: 2 });
+    expect(inner.emitted).toEqual([
+      { target: "room1", event: "peers:delta", payload: { a: 1 } },
+      { target: "s1", event: "proximity:update", payload: { b: 2 } },
+    ]);
+    expect(tail.snapshot().overall.count).toBe(2);
+  });
+
+  it("records a slow emit with its recipient count and payload size, and only then looks them up", () => {
+    let t = 0;
+    const tail = new EmitTailRecorder(() => t);
+    const recipientsOf = vi.fn(() => 100);
+    const slowInner: RoomBroadcaster = {
+      to: () => ({ emit: () => void (t += 60) }),
+      disconnectSocketsInRoom: vi.fn(),
+    };
+    const counting = new CountingBroadcaster(slowInner, 20, { tail, recipientsOf });
+    counting.to("room1").emit("peers:snapshot", { peers: [] });
+
+    expect(recipientsOf).toHaveBeenCalledWith("room1");
+    expect(tail.snapshot().ops[0]).toMatchObject({ event: "peers:snapshot", durationMs: 60, recipients: 100, payloadBytes: 12 });
+
+    recipientsOf.mockClear();
+    const fastInner: RoomBroadcaster = { to: () => ({ emit: () => void (t += 1) }), disconnectSocketsInRoom: vi.fn() };
+    new CountingBroadcaster(fastInner, 20, { tail, recipientsOf }).to("s").emit("e", {});
+    expect(recipientsOf).not.toHaveBeenCalled();
+  });
+
+  it("still counts, times and rethrows the same error when the wrapped emit throws", () => {
+    const boom = new Error("socket write failed");
+    const throwing: RoomBroadcaster = {
+      to: () => ({
+        emit: () => {
+          throw boom;
+        },
+      }),
+      disconnectSocketsInRoom: vi.fn(),
+    };
+    const tail = new EmitTailRecorder();
+    const counting = new CountingBroadcaster(throwing, 20, { tail });
+    expect(() => counting.to("room1").emit("peers:delta", {})).toThrow(boom);
+    expect(counting.snapshot()["peers:delta"]!.count).toBe(1);
+    expect(tail.snapshot().overall.count).toBe(1);
+  });
+});
 
 describe("CountingBroadcaster", () => {
   it("passes every emit through to the wrapped broadcaster unchanged", () => {

@@ -8,6 +8,7 @@ import { ClientEvents, ServerEvents } from "@cosmos/shared";
 import { RoomManager, broadcasterFromSocketServer } from "../roomManager.js";
 import { registerSocketHandlers } from "../socketHandlers.js";
 import type { ObjectRepository } from "../objectPersistence.js";
+import { EmitTailRecorder } from "../emitTailRecorder.js";
 
 const ROOM_ID = "room1";
 const WORKSPACE_ID = "ws1";
@@ -16,7 +17,7 @@ const WORKSPACE_ID = "ws1";
  *  RoomManager, real socket.io-client connections. Only the external
  *  dependencies (lease, membership, session tokens, participant limit) are
  *  faked — the join/disconnect wiring under test is the real thing. */
-async function startSeam(objectRepository?: ObjectRepository) {
+async function startSeam(objectRepository?: ObjectRepository, emitTail?: EmitTailRecorder) {
   const httpServer: HttpServer = createServer();
   const io = new SocketIOServer(httpServer);
   const lease = {
@@ -35,6 +36,7 @@ async function startSeam(objectRepository?: ObjectRepository) {
     instanceId: "instance-a",
     joinDuration: { record: () => {} },
     disconnectReasonCounts: {},
+    emitTail,
     loadHarnessLimitOverride: { getWorkspaceParticipantLimit: async () => 100 },
     auth: {
       // The token IS the userId — keeps tests readable.
@@ -123,6 +125,31 @@ describe("socket seam", () => {
     const after = seam.roomManager.snapshot(ROOM_ID).find((p) => p.userId === "u1")?.position;
     expect(after, "a move from the live socket must be accepted").toEqual(target);
     expect(seam.roomManager.getStaleDisconnectsIgnored(), "the guard must be observable in metrics").toBe(1);
+  });
+
+  it("times the join's direct emits, and the client still receives the same snapshots", async () => {
+    const tail = new EmitTailRecorder();
+    seam = await startSeam(undefined, tail);
+
+    const s1 = await connect("u1");
+    const received: string[] = [];
+    for (const event of [ServerEvents.PeersSnapshot, ServerEvents.ObjectsSnapshot, ServerEvents.SeatsSnapshot]) {
+      s1.on(event, () => received.push(event));
+    }
+    expect(await join(s1)).toEqual({ ok: true });
+    await waitFor(() => received.length === 3, "the three join snapshots to arrive");
+
+    // Behavior unchanged: the joiner got all three.
+    expect(received.sort()).toEqual([ServerEvents.ObjectsSnapshot, ServerEvents.PeersSnapshot, ServerEvents.SeatsSnapshot].sort());
+    // And each was timed on the direct path.
+    const keys = Object.keys(tail.snapshot().byKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        `direct|${ServerEvents.PeersSnapshot}`,
+        `direct|${ServerEvents.ObjectsSnapshot}`,
+        `direct|${ServerEvents.SeatsSnapshot}`,
+      ]),
+    );
   });
 
   it("does not hand a joiner a room that is mid-eviction (flush in progress)", async () => {

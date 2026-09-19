@@ -90,11 +90,29 @@ type EventLoopUtilization = ReturnType<typeof performance.eventLoopUtilization>;
  *  largest number of different users whose moves were rejected within the
  *  same 10ms server instant in that window. */
 export interface TickWindowSample {
+  /** performance.now() at the END of the window — the shared clock that tail
+   *  emits and GC pauses are stamped with, so they can be lined up. */
+  atMs: number;
   windowMs: number;
   elu: number;
   cpuWallRatio: number;
   tickMs: number;
   maxClusterUsers: number;
+  /** Emit calls made inside this window's tick, and the time spent in them. */
+  emitCount: number;
+  emitMs: number;
+  /** Largest event-loop delay sample seen since the previous window (raw
+   *  histogram value, includes its ~10ms sampling interval). */
+  loopMaxMs: number;
+}
+
+/** Diagnostics hooks the tick calls; supplied by server.ts, absent in tests
+ *  that do not care. Read-only: none of them may change what the tick does. */
+export interface TickDiagnostics {
+  beginTick(): void;
+  endTick(): { emitCount: number; emitMs: number };
+  /** Largest loop-delay sample since the last call, then resets. */
+  takeLoopMaxMs(): number;
 }
 
 export interface MoveValidationSample {
@@ -342,8 +360,16 @@ export class RoomManager implements ActiveParticipantCounter {
     return {
       accepted: [...this.acceptedMoveSamples],
       rejected: [...this.rejectedMoveSamples],
-      windows: [...this.tickWindows],
+      windows: this.tickWindowsOldestFirst(),
     };
+  }
+
+  /** Once the ring is full, the next write position is also where the oldest
+   *  window lives, so a plain copy would hand back a rotated array. */
+  private tickWindowsOldestFirst(): TickWindowSample[] {
+    if (this.tickWindows.length < RoomManager.MAX_TICK_WINDOWS) return [...this.tickWindows];
+    const oldest = this.tickWindowWriteIndex % RoomManager.MAX_TICK_WINDOWS;
+    return [...this.tickWindows.slice(oldest), ...this.tickWindows.slice(0, oldest)];
   }
 
   /** Diagnostics only. One sample per tick window (the span since the previous
@@ -364,6 +390,7 @@ export class RoomManager implements ActiveParticipantCounter {
     private readonly instanceId: string,
     private readonly leaseRefreshIntervalMs = 10_000,
     objectRepository: ObjectRepository = noopObjectRepository,
+    private readonly diagnostics?: TickDiagnostics,
   ) {
     // Owned internally (not injected as a whole) because it needs a
     // `getObject` closure over this.rooms — constructing it here, rather
@@ -1003,7 +1030,16 @@ export class RoomManager implements ActiveParticipantCounter {
   private tick(roomId: string): void {
     const start = performance.now();
     this.tickEmitCountThisTick = 0;
-    const phases = this.tickBody(roomId);
+    this.diagnostics?.beginTick();
+    let phases: TickPhaseTimings | undefined;
+    let emitTick: { emitCount: number; emitMs: number } | undefined;
+    try {
+      phases = this.tickBody(roomId);
+    } finally {
+      // Always closed, even if the tick throws, so the recorder never stays
+      // stuck "inside a tick".
+      emitTick = this.diagnostics?.endTick();
+    }
     this.recordSample(this.tickDurationsMs, performance.now() - start);
     this.recordSample(this.tickPairCounts, this.tickPairCount);
     this.recordSample(this.tickEmitCounts, this.tickEmitCountThisTick);
@@ -1014,10 +1050,13 @@ export class RoomManager implements ActiveParticipantCounter {
       this.recordSample(this.tickAudioEmitMs, phases.audioEmitMs);
     }
     this.tickWriteIndex++;
-    this.recordTickWindow(performance.now() - start);
+    this.recordTickWindow(performance.now() - start, emitTick);
   }
 
-  private recordTickWindow(tickMs: number): void {
+  private recordTickWindow(tickMs: number, emitTick: { emitCount: number; emitMs: number } | undefined): void {
+    // Read (and reset) every tick, including the baseline one, so the first
+    // real window does not inherit delay from before it started.
+    const loopMaxMs = this.diagnostics?.takeLoopMaxMs() ?? 0;
     const wallMs = performance.now();
     const cpuUsage = process.cpuUsage();
     const elu = performance.eventLoopUtilization();
@@ -1032,11 +1071,15 @@ export class RoomManager implements ActiveParticipantCounter {
     let maxClusterUsers = 0;
     for (const users of buckets.values()) maxClusterUsers = Math.max(maxClusterUsers, users.size);
     const sample: TickWindowSample = {
+      atMs: wallMs,
       windowMs,
       elu: performance.eventLoopUtilization(elu, prev.elu).utilization,
       cpuWallRatio: windowMs > 0 ? cpuMs / windowMs : 0,
       tickMs,
       maxClusterUsers,
+      emitCount: emitTick?.emitCount ?? 0,
+      emitMs: emitTick?.emitMs ?? 0,
+      loopMaxMs,
     };
     if (this.tickWindows.length < RoomManager.MAX_TICK_WINDOWS) {
       this.tickWindows.push(sample);
