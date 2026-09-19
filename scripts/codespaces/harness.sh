@@ -53,9 +53,15 @@ echo "Port forward started at: $FORWARD_STARTED_AT"
 # competing with the loaded run for the tunnel.
 echo
 echo "--- tunnel canary (raw TCP, no app traffic, ~120s) ---"
+# Phase 12 bug #2: `npx tsx apps/realtime/src/scripts/tunnelCanary.ts` failed
+# in the Codespace — npx there resolves to a pnpm-backed shim that runs with
+# cwd set to the workspace package, so the repo-root-relative path doubled
+# into apps/realtime/apps/realtime/... (ERR_MODULE_NOT_FOUND). Going through
+# a package script instead, exactly like load-harness two commands below,
+# resolves deterministically regardless of npx's cwd behavior.
 CANARY_STATUS=0
 REALTIME_URL=http://localhost:4001 \
-  npx tsx apps/realtime/src/scripts/tunnelCanary.ts || CANARY_STATUS=$?
+  pnpm --filter @cosmos/realtime run tunnel-canary || CANARY_STATUS=$?
 echo "--- end tunnel canary (exit $CANARY_STATUS) ---"
 echo
 

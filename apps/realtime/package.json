@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "load-harness": "tsx src/scripts/loadHarness.ts"
+    "load-harness": "tsx src/scripts/loadHarness.ts",
+    "tunnel-canary": "tsx src/scripts/tunnelCanary.ts"
   },
   "dependencies": {
     "@cosmos/db": "workspace:*",
