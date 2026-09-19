@@ -18,10 +18,18 @@ LABEL=$4
 : "${AUTH_SECRET:?Set AUTH_SECRET first (same value as codespace A)}"
 cd "$(dirname "$0")/../.."
 
-FORWARD_LOG=$(mktemp)
+# Phase 12: this file used to be deleted on every exit. It's the single
+# most direct evidence available for what `gh codespace ports forward`
+# itself did during a run — if it reconnects, rotates, or errors partway
+# through, this is where that would show up. Keep it in a stable location
+# (not a throwaway mktemp) and print it after the run, pass or fail.
+FORWARD_LOG="apps/realtime/load-results/${4}-forward.log"
+mkdir -p apps/realtime/load-results
+: >"$FORWARD_LOG"
+FORWARD_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 gh codespace ports forward 4001:4001 -c "$SERVER_CODESPACE" >"$FORWARD_LOG" 2>&1 &
 FORWARD_PID=$!
-trap 'kill "$FORWARD_PID" 2>/dev/null || true; rm -f "$FORWARD_LOG"' EXIT
+trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
 
 for attempt in $(seq 1 60); do
   if curl -sf http://localhost:4001/health >/dev/null; then break; fi
@@ -35,6 +43,21 @@ for attempt in $(seq 1 60); do
 done
 
 echo "Harness CPU: $(nproc) cores. Server reachable via port forward."
+echo "Port forward started at: $FORWARD_STARTED_AT"
+
+# Phase 12: a pure-transport canary, no Socket.IO and no app traffic —
+# opens raw TCP connections through the SAME forwarded port and just holds
+# them, so a mass disconnect here can only be explained by the relay itself,
+# never by anything the realtime server or the load it generates is doing.
+# Runs BEFORE the loaded harness so its longer hold window (120s) isn't
+# competing with the loaded run for the tunnel.
+echo
+echo "--- tunnel canary (raw TCP, no app traffic, ~120s) ---"
+CANARY_STATUS=0
+REALTIME_URL=http://localhost:4001 \
+  npx tsx apps/realtime/src/scripts/tunnelCanary.ts || CANARY_STATUS=$?
+echo "--- end tunnel canary (exit $CANARY_STATUS) ---"
+echo
 
 env -u DATABASE_URL -u REDIS_URL \
   REALTIME_URL=http://localhost:4001 \
@@ -45,4 +68,10 @@ env -u DATABASE_URL -u REDIS_URL \
   pnpm --filter @cosmos/realtime run load-harness || STATUS=$?
 
 ls -1 apps/realtime/load-results/"$LABEL"-"$N"-*.json 2>/dev/null || true
+
+echo
+echo "--- gh codespace ports forward log ($FORWARD_LOG) ---"
+cat "$FORWARD_LOG"
+echo "--- end forward log ---"
+
 exit "${STATUS:-0}"

@@ -154,6 +154,13 @@ class RollingMsStats {
 }
 const joinDuration = new RollingMsStats();
 
+/** Phase 12: cumulative counts of every socket disconnect this instance has
+ *  seen, by Socket.IO's own reason string — see the "disconnect" handler
+ *  below for what each reason actually means. Exposed read-only via
+ *  /internal/metrics; nothing resets it, same treatment as roomManager's
+ *  lease-outcome counts. */
+const disconnectReasonCounts: Record<string, number> = {};
+
 app.get("/internal/metrics", async () => {
   const now = process.hrtime.bigint();
   const elapsedSeconds = Number(now - lastMetricsReadAt) / 1e9;
@@ -207,6 +214,7 @@ app.get("/internal/metrics", async () => {
     lease: roomManager.getLeaseStats(),
     join: joinDuration.snapshot(),
     transientDbRetryAttempts: transientRetryStats.attempts,
+    disconnectReasons: { ...disconnectReasonCounts },
   };
 });
 
@@ -506,7 +514,18 @@ io.on("connection", (socket) => {
     ack?.({ error: outcome.reason });
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason: string) => {
+    // Phase 12: the server's disconnect vocabulary is more specific than the
+    // client's, and distinguishes the cases the Phase 11 verification run
+    // could not tell apart. "ping timeout" means THIS server gave up waiting
+    // for a pong; "transport error" means the connection broke underneath
+    // it; "transport close" means it observed a clean close it did not
+    // initiate. All 100 sockets dying within 13ms of each other while having
+    // connected across ~5s already rules out a per-socket timeout, so a
+    // tally of "ping timeout" here would be the surprise, not the
+    // expectation — see the Phase 12 plan's reading table.
+    disconnectReasonCounts[reason] = (disconnectReasonCounts[reason] ?? 0) + 1;
+
     const roomId = socket.data.roomId as string | undefined;
     // Fire-and-forget: removePeer is async since it may flush pending object
     // writes on eviction, but a disconnecting socket has nothing left to

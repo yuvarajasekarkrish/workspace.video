@@ -50,6 +50,11 @@ const MOVE_INTERVAL_MS = 50;
 // a teleport; 400px/s is well under maxSpeedPxPerSec.
 const WANDER_SPEED_PX_PER_SEC = 400;
 const LABEL = process.env.LOAD_HARNESS_LABEL ?? "local";
+// Phase 12: a handful of sockets that join but never claim a seat or send a
+// move — see the Phase 12 plan's "idle canary" diagnostic. If these die in
+// the same instant as the busy sockets, the cut is time-based, not induced
+// by the traffic the busy sockets generate.
+const IDLE_CANARY_COUNT = Math.max(0, Number(process.env.LOAD_HARNESS_IDLE_CANARIES ?? "3"));
 const RESULTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "load-results");
 
 const GATE = {
@@ -93,6 +98,10 @@ interface Metrics {
   eventLoop: { p50Ms: number; p99Ms: number; maxMs: number };
   emitRates: Record<string, { emitsPerSec: number; avgBytesPerEmit: number; bytesPerSecEstimate: number }>;
   redisPublishesPerSec: number;
+  lease?: { renewed: number; reclaimed: number; lost: number; errors: number };
+  join?: { sampleCount: number; avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
+  transientDbRetryAttempts?: number;
+  disconnectReasons?: Record<string, number>;
 }
 
 interface IntervalSample {
@@ -197,6 +206,17 @@ interface ConnectedSocket {
    *  would have named its own cause (a lease eviction) instead of the
    *  investigation needing three rounds of instrumentation to find it. */
   ownerChangedAtMs: number | null;
+  /** Phase 12: timestamp of the most recently received engine.io "ping"
+   *  packet (the server->client heartbeat). Used to compute the gap between
+   *  the last ping this socket actually saw and its eventual disconnect —
+   *  if that gap is small (pings were flowing normally right up to the
+   *  drop), a ping-timeout explanation is dead regardless of what the
+   *  disconnect reason string says. */
+  lastPingAtMs: number | null;
+  /** Phase 12: true for a small set of sockets that join but never send a
+   *  `move` — see IDLE_CANARY_COUNT. If these die in the same instant as
+   *  the busy sockets, the cause is time-based, not traffic-induced. */
+  isIdleCanary: boolean;
 }
 
 function connectSocket(
@@ -269,12 +289,15 @@ function attachCounters(entry: ConnectedSocket): void {
     }
   });
 
-  const engine = (entry.socket.io as unknown as { engine?: { on(event: string, cb: (packet: { data?: unknown }) => void): void } }).engine;
+  const engine = (entry.socket.io as unknown as { engine?: { on(event: string, cb: (packet: { type?: string; data?: unknown }) => void): void } }).engine;
   engine?.on("packet", (packet) => {
     if (typeof packet.data === "string") entry.bytesReceived += packet.data.length;
     else if (packet.data && typeof (packet.data as { length?: number }).length === "number") {
       entry.bytesReceived += (packet.data as { length: number }).length;
     }
+    // Phase 12: engine.io's own heartbeat packet, distinct from any
+    // application-level event above — see lastPingAtMs's docs.
+    if (packet.type === "ping") entry.lastPingAtMs = performance.now();
   });
 }
 
@@ -447,6 +470,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               disconnectedAtMs: null,
               disconnectReason: null,
               ownerChangedAtMs: null,
+              lastPingAtMs: null,
+              // The first IDLE_CANARY_COUNT successfully-joined sockets never
+              // get a moveTimer below — see the walkers filter.
+              isIdleCanary: connected.length < IDLE_CANARY_COUNT,
             };
             attachCounters(entry);
             connected.push(entry);
@@ -467,13 +494,17 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       console.log(`  join latency: avg ${fmt(joinLatency.avg, 1)}ms, p95 ${fmt(joinLatency.p95, 1)}ms, max ${fmt(joinLatency.max, 1)}ms`);
     }
 
-    const seatTargets = openOffice1.seats.slice(0, Math.min(connected.length, Math.floor(n / 2), openOffice1.seats.length));
-    const seatedUserIndices = new Set(seatTargets.map((_, i) => i));
+    // Phase 12: idle canaries never claim a seat or move — see IDLE_CANARY_COUNT.
+    const seatCandidates = connected.filter((c) => !c.isIdleCanary);
+    const seatTargets = openOffice1.seats.slice(0, Math.min(seatCandidates.length, Math.floor(n / 2), openOffice1.seats.length));
+    const seatedSockets = new Set<ConnectedSocket>();
     await Promise.all(
       seatTargets.map(
         (seat, i) =>
           new Promise<void>((resolve) => {
-            connected[i]!.socket.emit("seat:claim", { seatId: seat.id }, () => resolve());
+            const candidate = seatCandidates[i]!;
+            seatedSockets.add(candidate);
+            candidate.socket.emit("seat:claim", { seatId: seat.id }, () => resolve());
           }),
       ),
     );
@@ -492,7 +523,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     const poller = startMetricsPoller(windowStartAt, roomId);
 
     let movesSent = 0;
-    const walkers = connected.filter((_, i) => !seatedUserIndices.has(i));
+    const walkers = connected.filter((c) => !seatedSockets.has(c) && !c.isIdleCanary);
     const clusterCenter = walkers[0]?.spawnPosition ?? { x: 880, y: 880 };
     const moveTimers = walkers.map((c) => {
       let { x, y } = scenario === "cluster" ? clusterCenter : c.spawnPosition;
@@ -512,6 +543,12 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     moveTimers.forEach(clearInterval);
     const windowElapsedSec = (performance.now() - windowStartAt) / 1000;
     const { samples: intervals, pollAttempts, metricsPollFailures } = await poller.stop();
+    // Phase 11/12: one last read for the server's own bookkeeping — lease
+    // outcomes, server-side join latency, DB retry attempts, and disconnect
+    // reasons — taken right after the window closes so it reflects this run,
+    // not a future one. Best-effort: a failed fetch here doesn't fail the
+    // run, it just leaves these fields absent from the report.
+    const finalMetrics = await fetchMetrics();
 
     const totalEvents = connected.reduce((sum, c) => sum + Object.values(c.eventCounts).reduce((a, b) => a + b, 0), 0);
     const corrections = connected.reduce((sum, c) => sum + c.corrections, 0);
@@ -533,12 +570,38 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
         // transport-level failure. A drop with this null and a transport-
         // level reason is a different failure mode entirely.
         ownerChangedAtSec: c.ownerChangedAtMs !== null ? (c.ownerChangedAtMs - windowStartAt) / 1000 : null,
+        // Phase 12: the gap between the last engine.io ping this socket
+        // actually received and its disconnect. Small for all of them means
+        // pings were flowing normally right up to the drop — a ping-timeout
+        // explanation requires this gap to be large (>= pingTimeout, 20s by
+        // default) for the sockets that time out.
+        msSinceLastPing: c.lastPingAtMs !== null ? c.disconnectedAtMs! - c.lastPingAtMs : null,
+        isIdleCanary: c.isIdleCanary,
       }));
     const ownerChangedCount = connected.filter((c) => c.ownerChangedAtMs !== null).length;
+
+    // Phase 12: the discriminator that actually matters — how TIGHT is the
+    // disconnect cluster, not just how many dropped. A per-socket cause
+    // (ping timeout, individual network blip) spreads disconnects out over
+    // roughly the same span the sockets connected over; a single shared
+    // external event (e.g. the port-forward relay closing its tunneled
+    // connections) collapses them into a spread of milliseconds regardless
+    // of how spread out the connects were. See the Phase 12 plan's reading
+    // table for exact thresholds.
+    const dropTimesSec = droppedSockets.map((d) => d.disconnectedAtSec);
+    const dropSpread =
+      dropTimesSec.length > 1
+        ? { minSec: Math.min(...dropTimesSec), maxSec: Math.max(...dropTimesSec), spreadMs: (Math.max(...dropTimesSec) - Math.min(...dropTimesSec)) * 1000 }
+        : null;
+    const idleCanaryDropped = droppedSockets.filter((d) => d.isIdleCanary).length;
+    const idleCanaryTotal = connected.filter((c) => c.isIdleCanary).length;
+
     const socketSurvival = {
       initial: connected.length,
       survivedWindow: connected.length - droppedSockets.length,
       ownerChangedCount,
+      dropSpread,
+      idleCanary: { total: idleCanaryTotal, dropped: idleCanaryDropped },
       dropped: droppedSockets,
     };
 
@@ -605,10 +668,42 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       `  socket survival: ${socketSurvival.survivedWindow}/${socketSurvival.initial} still connected at window end` +
         (droppedSockets.length > 0 ? `  <-- ${droppedSockets.length} DROPPED mid-run: ${JSON.stringify(droppedSockets.slice(0, 5))}${droppedSockets.length > 5 ? "…" : ""}` : ""),
     );
+    if (dropSpread) {
+      console.log(
+        `  drop spread: ${fmt(dropSpread.spreadMs, 1)}ms (first at ${fmt(dropSpread.minSec, 3)}s, last at ${fmt(dropSpread.maxSec, 3)}s)` +
+          (dropSpread.spreadMs < 1000
+            ? "  <-- SIMULTANEOUS: rules out a per-socket cause (e.g. ping timeout); points to one shared external event"
+            : ""),
+      );
+    }
+    if (idleCanaryTotal > 0) {
+      console.log(
+        `  idle canaries (no seat, no move): ${idleCanaryTotal - idleCanaryDropped}/${idleCanaryTotal} survived` +
+          (idleCanaryDropped > 0 && idleCanaryDropped === idleCanaryTotal
+            ? "  <-- idle sockets died too: the cut is TIME-based, not traffic-induced"
+            : idleCanaryDropped === 0 && droppedSockets.length > 0
+              ? "  <-- idle sockets survived while busy ones dropped: points to traffic/load, not a fixed timeout"
+              : ""),
+      );
+    }
     console.log(
       `  owner:changed received: ${ownerChangedCount}/${socketSurvival.initial}` +
         (ownerChangedCount > 0 ? "  <-- the SERVER evicted this room (lease lost) — see /internal/metrics's lease counters" : ""),
     );
+    if (finalMetrics?.lease) {
+      const l = finalMetrics.lease;
+      console.log(`  server lease outcomes (cumulative): renewed ${l.renewed} · reclaimed ${l.reclaimed} · lost ${l.lost} · errors ${l.errors}`);
+    }
+    if (finalMetrics?.join) {
+      const j = finalMetrics.join;
+      console.log(`  server-side join latency: avg ${fmt(j.avgMs, 1)}ms  p50 ${fmt(j.p50Ms, 1)}ms  p95 ${fmt(j.p95Ms, 1)}ms  p99 ${fmt(j.p99Ms, 1)}ms  (n=${j.sampleCount}, <= 200ms avg target)`);
+    }
+    if (finalMetrics?.disconnectReasons && Object.keys(finalMetrics.disconnectReasons).length > 0) {
+      console.log(`  server-observed disconnect reasons (cumulative): ${JSON.stringify(finalMetrics.disconnectReasons)}`);
+    }
+    if (finalMetrics?.transientDbRetryAttempts) {
+      console.log(`  Postgres transient-retry attempts (cumulative, process lifetime): ${finalMetrics.transientDbRetryAttempts}`);
+    }
     if (intervals.length > 0) {
       const occSamples = intervals.filter((s) => s.occupancyActive !== null);
       if (occSamples.length > 0) {
@@ -672,6 +767,12 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       metricsPollFailures,
       socketSurvival,
       intervals,
+      // Phase 11/12 diagnostics — server's own bookkeeping, read once right
+      // after the window closes (see finalMetrics's docs above).
+      serverLease: finalMetrics?.lease ?? null,
+      serverJoinLatency: finalMetrics?.join ?? null,
+      serverDisconnectReasons: finalMetrics?.disconnectReasons ?? null,
+      serverTransientDbRetryAttempts: finalMetrics?.transientDbRetryAttempts ?? null,
     });
 
     if (n === 200 && !limitOverrideNote) {
