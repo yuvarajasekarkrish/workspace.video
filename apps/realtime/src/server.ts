@@ -161,6 +161,47 @@ const joinDuration = new RollingMsStats();
  *  lease-outcome counts. */
 const disconnectReasonCounts: Record<string, number> = {};
 
+/** Phase 14: the critical measurement for the mass-disconnect investigation
+ *  — the actual Engine.IO heartbeat exchange, not just its eventual failure.
+ *  Verified against the installed engine.io@6.6.10 (socket.js): the server
+ *  sends "ping" via schedulePing()'s sendPacket("ping"), which emits
+ *  "packetCreate" on socket.conn; the client's "pong" arrives through
+ *  onPacket, which emits "packet" on socket.conn. Both are observable from
+ *  outside engine.io without patching anything. Splits a heartbeat failure
+ *  three ways: pingsSent with no matching pongsReceived means the pong never
+ *  arrived (transport/client/path problem); pongsReceived close behind
+ *  pingsSent with high maxPongLatencyMs means it arrived too late (a stall,
+ *  not a loss); pingsSent itself failing to grow under load would mean the
+ *  server never got to schedule the ping (a server-side scheduling problem)
+ *  — see the Phase 14 plan.
+ *
+ *  Sampled across a fixed number of connections, not all of them — this is
+ *  diagnostic instrumentation for a load test, not a production feature, and
+ *  a handful of samples answers the mechanism question just as well as 100
+ *  would while keeping the per-connection listener overhead negligible. */
+const HEARTBEAT_SAMPLE_LIMIT = Number(process.env.HEARTBEAT_SAMPLE_LIMIT ?? "20");
+let heartbeatSampledCount = 0;
+const heartbeatStats = { pingsSent: 0, pongsReceived: 0, maxPongLatencyMs: 0 };
+
+function maybeSampleHeartbeat(socket: { conn: { on(event: string, cb: (packet: { type?: string }) => void): void } }): void {
+  if (heartbeatSampledCount >= HEARTBEAT_SAMPLE_LIMIT) return;
+  heartbeatSampledCount++;
+
+  let lastPingSentAt: number | null = null;
+  socket.conn.on("packetCreate", (packet) => {
+    if (packet.type !== "ping") return;
+    lastPingSentAt = performance.now();
+    heartbeatStats.pingsSent++;
+  });
+  socket.conn.on("packet", (packet) => {
+    if (packet.type !== "pong" || lastPingSentAt === null) return;
+    const latencyMs = performance.now() - lastPingSentAt;
+    heartbeatStats.pongsReceived++;
+    heartbeatStats.maxPongLatencyMs = Math.max(heartbeatStats.maxPongLatencyMs, latencyMs);
+    lastPingSentAt = null;
+  });
+}
+
 app.get("/internal/metrics", async () => {
   const now = process.hrtime.bigint();
   const elapsedSeconds = Number(now - lastMetricsReadAt) / 1e9;
@@ -215,6 +256,7 @@ app.get("/internal/metrics", async () => {
     join: joinDuration.snapshot(),
     transientDbRetryAttempts: transientRetryStats.attempts,
     disconnectReasons: { ...disconnectReasonCounts },
+    heartbeat: { ...heartbeatStats, sampledConnections: heartbeatSampledCount },
   };
 });
 
@@ -259,6 +301,7 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   const user = socket.data.user as { userId: string; email: string };
+  maybeSampleHeartbeat(socket);
 
   socket.on(ClientEvents.JoinRoom, async (raw, ack?: (res: unknown) => void) => {
     const joinStartedAt = performance.now();
