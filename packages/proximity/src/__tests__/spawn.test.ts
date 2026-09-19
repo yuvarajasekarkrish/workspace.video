@@ -24,7 +24,7 @@ describe("spawnPositionForUser", () => {
 
   it("clamps into bounds when the base point sits near an edge", () => {
     const nearEdge = { x: 10, y: 10 };
-    const bounds = { clientThrottleMs: 50, maxSpeedPxPerSec: 2000, roomWidthPx: 8000, roomHeightPx: 8000 };
+    const bounds = { clientThrottleMs: 50, maxSpeedPxPerSec: 2000, maxBurstMs: 200, roomWidthPx: 8000, roomHeightPx: 8000 };
     const p = spawnPositionForUser("user-1", nearEdge, 60, bounds);
     expect(p.x).toBeGreaterThanOrEqual(0);
     expect(p.y).toBeGreaterThanOrEqual(0);

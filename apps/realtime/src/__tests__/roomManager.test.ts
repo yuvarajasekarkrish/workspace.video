@@ -358,18 +358,18 @@ describe("RoomManager", () => {
         const first = rm.applyMove("room1", "u1", { x: 20, y: 0 }, 5_000);
         expect(first?.accepted).toBe(true);
 
-        // The next 20px step, emitted 50ms later by the client (clientTs
-        // 5050) but arriving 1ms after the previous one. elapsed 1ms allows
-        // 2px, so this legitimate move is rejected.
+        // A 200px step, emitted 50ms later by the client (clientTs 5050) but
+        // arriving 1ms after the previous one. Even with the credit banked
+        // from the first move (~40ms => 82px), that is too far: rejected.
         vi.setSystemTime(10_051);
-        const second = rm.applyMove("room1", "u1", { x: 40, y: 0 }, 5_050);
+        const second = rm.applyMove("room1", "u1", { x: 220, y: 0 }, 5_050);
         expect(second?.accepted).toBe(false);
 
         const { rejected } = rm.getMoveValidationStats();
         expect(rejected).toHaveLength(1);
         expect(rejected[0]).toMatchObject({
           elapsedMs: 1,
-          distancePx: 20,
+          distancePx: 200,
           serverGapMs: 1,
           clientGapMs: 50,
           atMs: 10_051,
@@ -377,7 +377,27 @@ describe("RoomManager", () => {
         });
         // Finite, not Infinity (which would serialise to null).
         expect(Number.isFinite(rejected[0]!.impliedSpeedPxPerSec)).toBe(true);
-        expect(rejected[0]!.impliedSpeedPxPerSec).toBe(20_000);
+        expect(rejected[0]!.impliedSpeedPxPerSec).toBe(200_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("accepts a legitimate 20px step that a server stall delivers 1ms after the previous one", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1");
+        rm.admitAndAddPeer("room1", peer, 100);
+
+        vi.setSystemTime(10_050);
+        expect(rm.applyMove("room1", "u1", { x: 20, y: 0 }, 5_000)?.accepted).toBe(true);
+        // The measured production failure: emitted 50ms apart, delivered 1ms apart.
+        vi.setSystemTime(10_051);
+        expect(rm.applyMove("room1", "u1", { x: 40, y: 0 }, 5_050)?.accepted).toBe(true);
+        expect(rm.getMoveValidationStats().rejected).toHaveLength(0);
       } finally {
         vi.useRealTimers();
       }

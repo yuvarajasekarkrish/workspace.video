@@ -36,7 +36,7 @@ export function pointInTileRect(point: Point, rect: TileRect): boolean {
  *  defaults; only the room dimensions are layout-specific. */
 export function movementConfigForLayout(
   layout: RoomLayout,
-  base: Pick<MovementConfig, "clientThrottleMs" | "maxSpeedPxPerSec">,
+  base: Pick<MovementConfig, "clientThrottleMs" | "maxSpeedPxPerSec" | "maxBurstMs">,
 ): MovementConfig {
   return {
     ...base,

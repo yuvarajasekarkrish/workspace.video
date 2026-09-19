@@ -28,6 +28,12 @@ export const MovementConfigSchema = z.object({
   clientThrottleMs: z.number().positive().default(50),
   /** Maximum plausible avatar speed, in px/second, used to reject teleport-like moves. */
   maxSpeedPxPerSec: z.number().positive().default(2000),
+  /** Most unused movement allowance (in ms of full-speed travel) that carries
+   *  from one accepted move to the next. Server-side delay — an event-loop
+   *  stall that delivers two moves together — is not the user's doing, so a
+   *  little unspent allowance is banked rather than discarded; this cap keeps
+   *  a cheater from banking a long-idle allowance into a teleport. */
+  maxBurstMs: z.number().nonnegative().default(200),
   /** Room bounds a position must fall within. */
   roomWidthPx: z.number().positive().default(8000),
   roomHeightPx: z.number().positive().default(8000),

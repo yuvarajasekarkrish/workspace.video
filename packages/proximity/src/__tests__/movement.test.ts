@@ -59,3 +59,57 @@ describe("validateMove", () => {
     expect(r.accepted).toBe(false);
   });
 });
+
+/** Drives validateMove the way RoomManager.applyMove does: on an accept the
+ *  position and acceptedAtMs advance and the returned credit is carried; on a
+ *  reject nothing changes. */
+function walk(moves: { atMs: number; x: number }[], start = { x: 0, atMs: 0 }) {
+  let state = { position: { x: start.x, y: 0 }, acceptedAtMs: start.atMs, creditMs: 0 };
+  return moves.map((m) => {
+    const r = validateMove({ x: m.x, y: 0 }, state, m.atMs, cfg);
+    if (r.accepted) {
+      state = {
+        position: r.position,
+        acceptedAtMs: m.atMs,
+        creditMs: (r as { nextCreditMs?: number }).nextCreditMs ?? 0,
+      };
+    }
+    return r.accepted;
+  });
+}
+
+describe("validateMove: server stalls are not charged to the user", () => {
+  it("accepts two legitimate 20px moves that arrive 7ms apart after a stall", () => {
+    // Emitted 50ms apart by the client; a server stall delivers them together.
+    // This is the measured production failure: 20px in 7ms reads as ~2857px/s.
+    expect(walk([{ atMs: 60, x: 20 }, { atMs: 67, x: 40 }])).toEqual([true, true]);
+  });
+
+  it("accepts steady 20px-per-50ms walking (400px/s) indefinitely", () => {
+    const moves = Array.from({ length: 100 }, (_, i) => ({ atMs: (i + 1) * 50, x: (i + 1) * 20 }));
+    expect(walk(moves).every(Boolean)).toBe(true);
+  });
+
+  it("still rejects sustained speed well over the limit (200px per 50ms = 4000px/s)", () => {
+    const moves = Array.from({ length: 12 }, (_, i) => ({ atMs: (i + 1) * 50, x: (i + 1) * 200 }));
+    const results = walk(moves);
+    // Credit only builds from moves that were accepted, so a cheater who
+    // never walks legitimately never earns any: nothing sustained gets through.
+    expect(results.slice(-3)).toEqual([false, false, false]);
+  });
+
+  it("drains carried credit: after legitimate walking, 200px per 50ms is accepted only briefly", () => {
+    const legit = Array.from({ length: 20 }, (_, i) => ({ atMs: (i + 1) * 50, x: (i + 1) * 20 }));
+    const cheat = Array.from({ length: 12 }, (_, i) => ({ atMs: 1000 + (i + 1) * 50, x: 400 + (i + 1) * 200 }));
+    const results = walk([...legit, ...cheat]).slice(legit.length);
+    expect(results[0], "stored credit lets the first fast moves through").toBe(true);
+    expect(results.slice(-3), "but the credit runs out").toEqual([false, false, false]);
+  });
+
+  it("caps carried credit: a 500px move 7ms after an idle-then-small move is rejected", () => {
+    // Idle for a long time, one small accepted move, then a huge move almost
+    // immediately. Credit is capped at maxBurstMs (200ms => (7+200)*2 = 414px).
+    const results = walk([{ atMs: 10_000, x: 1 }, { atMs: 10_007, x: 501 }]);
+    expect(results).toEqual([true, false]);
+  });
+});

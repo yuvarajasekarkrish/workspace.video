@@ -4,7 +4,7 @@ import { DEFAULT_MOVEMENT_CONFIG, type MovementConfig } from "@cosmos/shared";
 export type MoveRejectionReason = "out_of_bounds" | "max_speed_exceeded" | "invalid";
 
 export type MoveValidationResult =
-  | { accepted: true; position: Point }
+  | { accepted: true; position: Point; nextCreditMs: number }
   | { accepted: false; reason: MoveRejectionReason; correctedPosition: Point };
 
 /**
@@ -20,7 +20,7 @@ export type MoveValidationResult =
  */
 export function validateMove(
   proposed: Point,
-  previous: { position: Point; acceptedAtMs: number },
+  previous: { position: Point; acceptedAtMs: number; creditMs?: number },
   nowMs: number,
   config: MovementConfig = DEFAULT_MOVEMENT_CONFIG,
 ): MoveValidationResult {
@@ -41,7 +41,13 @@ export function validateMove(
     return { accepted: false, reason: "out_of_bounds", correctedPosition: clamped };
   }
 
-  const elapsedSec = Math.max(0, (nowMs - previous.acceptedAtMs) / 1000);
+  // Elapsed time is measured on the SERVER's clock, so a server stall that
+  // delivers two moves together makes the second look impossibly fast even
+  // though the user did nothing wrong. `creditMs` is the unspent allowance
+  // banked from earlier accepted moves (capped at config.maxBurstMs), added
+  // to the elapsed time so a short stall does not read as a speed violation.
+  const budgetMs = Math.max(0, nowMs - previous.acceptedAtMs) + (previous.creditMs ?? 0);
+  const elapsedSec = budgetMs / 1000;
   const dx = proposed.x - previous.position.x;
   const dy = proposed.y - previous.position.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -58,5 +64,9 @@ export function validateMove(
     };
   }
 
-  return { accepted: true, position: proposed };
+  // What this move actually cost, at full speed; the rest of the budget is
+  // banked for the next move, up to the cap.
+  const consumedMs = (dist / config.maxSpeedPxPerSec) * 1000;
+  const nextCreditMs = Math.min(config.maxBurstMs, Math.max(0, budgetMs - consumedMs));
+  return { accepted: true, position: proposed, nextCreditMs };
 }

@@ -172,6 +172,10 @@ interface PeerState {
   socketId: string;
   position: Point;
   acceptedAtMs: number;
+  /** Unspent movement allowance carried from the last accepted move (ms of
+   *  full-speed travel, capped by MovementConfig.maxBurstMs) — see
+   *  validateMove. Absent means 0. */
+  moveCreditMs?: number;
   /** Phase 15 Part B diagnostics ONLY — never read by validateMove. Server
    *  receipt time and the client's own clientTs of this peer's previous
    *  `move`, accepted or not (acceptedAtMs above only advances on ACCEPTED
@@ -669,7 +673,7 @@ export class RoomManager implements ActiveParticipantCounter {
     const nowMs = Date.now();
     const result = validateMove(
       proposed,
-      { position: peer.position, acceptedAtMs: peer.acceptedAtMs },
+      { position: peer.position, acceptedAtMs: peer.acceptedAtMs, creditMs: peer.moveCreditMs },
       nowMs,
       room.movementConfig,
     );
@@ -725,6 +729,7 @@ export class RoomManager implements ActiveParticipantCounter {
     if (result.accepted) {
       peer.position = result.position;
       peer.acceptedAtMs = nowMs;
+      peer.moveCreditMs = result.nextCreditMs;
       room.index.move(userId, peer.position);
     }
 
@@ -773,6 +778,9 @@ export class RoomManager implements ActiveParticipantCounter {
       room.seatOf.set(userId, seatId);
       peer.position = seat!.anchor;
       peer.acceptedAtMs = Date.now();
+      // A teleport starts a fresh movement window: banked credit must not
+      // let a stale queued move be validated against extra allowance.
+      peer.moveCreditMs = 0;
       room.index.move(userId, peer.position);
       this.broadcaster.to(roomId).emit(ServerEvents.SeatUpdate, { seatId, userId });
     }

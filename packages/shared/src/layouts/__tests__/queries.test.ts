@@ -64,7 +64,7 @@ describe("seatById / hitTestSeats", () => {
 
 describe("movementConfigForLayout", () => {
   it("derives room bounds from the layout's floor size", () => {
-    const config = movementConfigForLayout(openOffice1, { clientThrottleMs: 50, maxSpeedPxPerSec: 2000 });
+    const config = movementConfigForLayout(openOffice1, { clientThrottleMs: 50, maxSpeedPxPerSec: 2000, maxBurstMs: 200 });
     expect(config.roomWidthPx).toBe(openOffice1.floor.cols * TILE_PX);
     expect(config.roomHeightPx).toBe(openOffice1.floor.rows * TILE_PX);
     expect(config.clientThrottleMs).toBe(50);
