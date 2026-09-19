@@ -20,6 +20,11 @@
  *   LOAD_HARNESS_ONLY_N          run a single N instead of 50/100/200
  *   LOAD_HARNESS_ONLY_SCENARIO   spread | cluster
  *   LOAD_HARNESS_INCLUDE_500=1   also run N=500 (server needs LOAD_HARNESS_LIMIT_OVERRIDE=500)
+ *   LOAD_HARNESS_RECONNECT_COUNT  default 0. That many walkers re-join on a NEW socket a third of
+ *                                the way through the window and only then drop the old one — the
+ *                                order a browser reconnect produces. Checks the room still
+ *                                holds every user afterwards and that the server ignored the
+ *                                stale disconnects. Everything else stays reconnection: false.
  *
  * During the window /internal/metrics is polled every 10s; CPU and
  * event-loop values are "since last read" deltas, tick percentiles cover the
@@ -56,6 +61,7 @@ const LABEL = process.env.LOAD_HARNESS_LABEL ?? "local";
 // the same instant as the busy sockets, the cut is time-based, not induced
 // by the traffic the busy sockets generate.
 const IDLE_CANARY_COUNT = Math.max(0, Number(process.env.LOAD_HARNESS_IDLE_CANARIES ?? "3"));
+const RECONNECT_COUNT = Math.max(0, Number(process.env.LOAD_HARNESS_RECONNECT_COUNT ?? "0"));
 const RESULTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "load-results");
 
 const GATE = {
@@ -105,6 +111,7 @@ interface Metrics {
   disconnectReasons?: Record<string, number>;
   heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
   moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[]; windows?: TickWindowSample[] };
+  staleDisconnectsIgnored?: number;
 }
 
 /** Mirrors the server's TickWindowSample (apps/realtime/src/roomManager.ts). */
@@ -305,6 +312,10 @@ interface ConnectedSocket {
    *  `move` — see IDLE_CANARY_COUNT. If these die in the same instant as
    *  the busy sockets, the cause is time-based, not traffic-induced. */
   isIdleCanary: boolean;
+  /** Set after a reconnect re-join: the server resets a re-joined peer to its
+   *  spawn point, so the walker must restart from there or its first move
+   *  would be a teleport the server rightly rejects. */
+  resyncTo: Point | null;
 }
 
 function connectSocket(
@@ -584,6 +595,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               // The first IDLE_CANARY_COUNT successfully-joined sockets never
               // get a moveTimer below — see the walkers filter.
               isIdleCanary: connected.length < IDLE_CANARY_COUNT,
+              resyncTo: null,
             };
             attachCounters(entry);
             connected.push(entry);
@@ -643,6 +655,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       let { x, y } = scenario === "cluster" ? clusterCenter : c.spawnPosition;
       let lastSentAt = performance.now();
       return setInterval(() => {
+        if (c.resyncTo) {
+          ({ x, y } = c.resyncTo);
+          c.resyncTo = null;
+        }
         const now = performance.now();
         const { dx, dy } = randomStep(Math.max(0, (now - lastSentAt) / 1000));
         lastSentAt = now;
@@ -653,7 +669,53 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       }, MOVE_INTERVAL_MS);
     });
 
+    // Reconnect churn: a third of the way into the window, so there is steady
+    // state on both sides of it. The new socket is joined BEFORE the old one
+    // is dropped, which is the order that exposes a stale-disconnect bug.
+    const churn = {
+      requested: Math.min(RECONNECT_COUNT, walkers.length),
+      performed: 0,
+      failed: 0,
+      occupancyAfter: null as number | null,
+    };
+    const churnPromise: Promise<void> =
+      churn.requested > 0
+        ? new Promise<void>((resolve) => {
+            setTimeout(() => {
+              void (async () => {
+                for (const c of walkers.slice(0, churn.requested)) {
+                  const user = users.find((u) => u.id === c.userId)!;
+                  try {
+                    const next = await connectSocket(mintToken(user.id, user.email), user.id, roomId);
+                    if (!(next.ack as { ok?: boolean })?.ok) {
+                      churn.failed++;
+                      next.socket.disconnect();
+                      continue;
+                    }
+                    const old = c.socket;
+                    c.socket = next.socket;
+                    c.resyncTo = next.spawnPosition ?? c.spawnPosition;
+                    attachCounters(c);
+                    // The drop below is deliberate, not a failure to report.
+                    old.off("disconnect");
+                    old.disconnect();
+                    churn.performed++;
+                  } catch (err) {
+                    churn.failed++;
+                    console.error(`  reconnect failed for ${user.email}:`, (err as Error).message);
+                  }
+                }
+                // Let the server process the old sockets' disconnects.
+                await new Promise((r) => setTimeout(r, 1500));
+                churn.occupancyAfter = (await fetchOccupancy(roomId))?.active ?? null;
+                resolve();
+              })();
+            }, WINDOW_MS / 3);
+          })
+        : Promise.resolve();
+
     await new Promise((resolve) => setTimeout(resolve, WINDOW_MS));
+    await churnPromise;
     moveTimers.forEach(clearInterval);
     const windowElapsedSec = (performance.now() - windowStartAt) / 1000;
     const { samples: intervals, pollAttempts, metricsPollFailures } = await poller.stop();
@@ -763,6 +825,18 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       // Too few intervals to judge growth (short windows) is not a failure.
       rssStable: rss.stable !== false,
       hasIntervals: intervals.length > 0,
+      // Only when churn was requested, so ordinary runs are judged as before.
+      // Occupancy must be back at n (an old socket's stale disconnect deleting
+      // the live peer would leave it short), every requested reconnect must
+      // have happened, and the server must report having ignored stale
+      // disconnects — 0 would mean the race was never actually exercised.
+      ...(churn.requested > 0
+        ? {
+            reconnectOccupancy:
+              churn.performed === churn.requested && churn.failed === 0 && churn.occupancyAfter === n,
+            staleGuardFired: (finalMetrics?.staleDisconnectsIgnored ?? 0) > 0,
+          }
+        : {}),
     };
     passed = Object.values(checks).every(Boolean);
 
@@ -811,6 +885,11 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     if (finalMetrics?.join) {
       const j = finalMetrics.join;
       console.log(`  server-side join latency: avg ${fmt(j.avgMs, 1)}ms  p50 ${fmt(j.p50Ms, 1)}ms  p95 ${fmt(j.p95Ms, 1)}ms  p99 ${fmt(j.p99Ms, 1)}ms  (n=${j.sampleCount}, <= 200ms avg target)`);
+    }
+    if (churn.requested > 0) {
+      console.log(
+        `  reconnect churn: ${churn.performed}/${churn.requested} performed (failed ${churn.failed}) · occupancy after churn ${churn.occupancyAfter ?? "n/a"} (expected ${n}) ${mark(checks.reconnectOccupancy === true)} · server stale disconnects ignored ${finalMetrics?.staleDisconnectsIgnored ?? "n/a"} ${mark(checks.staleGuardFired === true)}`,
+      );
     }
     if (finalMetrics?.disconnectReasons && Object.keys(finalMetrics.disconnectReasons).length > 0) {
       console.log(`  server-observed disconnect reasons (cumulative): ${JSON.stringify(finalMetrics.disconnectReasons)}`);
@@ -931,6 +1010,9 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       serverJoinLatency: finalMetrics?.join ?? null,
       serverDisconnectReasons: finalMetrics?.disconnectReasons ?? null,
       serverTransientDbRetryAttempts: finalMetrics?.transientDbRetryAttempts ?? null,
+      // Phase 16: reconnect churn and the server's stale-disconnect counter.
+      reconnectChurn: churn,
+      serverStaleDisconnectsIgnored: finalMetrics?.staleDisconnectsIgnored ?? null,
       // Phase 15 Part A diagnostic.
       rejectionSamples,
       // Phase 14 heartbeat instrumentation, finally surfaced (it was added
