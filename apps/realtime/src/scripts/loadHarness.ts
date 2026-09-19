@@ -43,6 +43,9 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import jwt from "jsonwebtoken";
 import { io as ioClient, type Socket } from "socket.io-client";
 import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, ServerEvents, type Point } from "@cosmos/shared";
+import type { EmitTailSnapshot } from "../emitTailRecorder";
+import type { GcSnapshot } from "../gcRecorder";
+import { formatStallReport } from "../stallReport";
 
 const ROOM_MOVEMENT_CONFIG = movementConfigForLayout(openOffice1, DEFAULT_MOVEMENT_CONFIG);
 
@@ -112,15 +115,22 @@ interface Metrics {
   heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
   moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[]; windows?: TickWindowSample[] };
   staleDisconnectsIgnored?: number;
+  /** Phase 17 diagnostics. */
+  emitTail?: EmitTailSnapshot;
+  gc?: GcSnapshot;
 }
 
 /** Mirrors the server's TickWindowSample (apps/realtime/src/roomManager.ts). */
 interface TickWindowSample {
+  atMs: number;
   windowMs: number;
   elu: number;
   cpuWallRatio: number;
   tickMs: number;
   maxClusterUsers: number;
+  emitCount: number;
+  emitMs: number;
+  loopMaxMs: number;
 }
 
 /** Mirrors the server's MoveValidationSample (apps/realtime/src/roomManager.ts)
@@ -935,6 +945,13 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
         );
       }
     }
+    for (const line of formatStallReport({
+      windows: finalMetrics?.moveValidation?.windows ?? [],
+      emitTail: finalMetrics?.emitTail,
+      gc: finalMetrics?.gc,
+    })) {
+      console.log(line);
+    }
     if (intervals.length > 0) {
       const occSamples = intervals.filter((s) => s.occupancyActive !== null);
       if (occSamples.length > 0) {
@@ -1020,6 +1037,9 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       serverHeartbeat: finalMetrics?.heartbeat ?? null,
       // Phase 15 Part B diagnostic — raw samples for offline inspection.
       serverMoveValidation: finalMetrics?.moveValidation ?? null,
+      // Phase 17: raw emit-tail and GC records, for offline analysis.
+      serverEmitTail: finalMetrics?.emitTail ?? null,
+      serverGc: finalMetrics?.gc ?? null,
       rejectedMoveSummary:
         finalMetrics?.moveValidation && finalMetrics.moveValidation.rejected.length > 0
           ? summarizeRejections(finalMetrics.moveValidation.rejected)

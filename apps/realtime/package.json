@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "load-harness": "tsx src/scripts/loadHarness.ts",
-    "tunnel-canary": "tsx src/scripts/tunnelCanary.ts"
+    "tunnel-canary": "tsx src/scripts/tunnelCanary.ts",
+    "analyze-stalls": "tsx src/scripts/analyzeStalls.ts"
   },
   "dependencies": {
     "@cosmos/db": "workspace:*",

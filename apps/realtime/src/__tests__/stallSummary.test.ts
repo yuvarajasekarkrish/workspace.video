@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summarizeStalls, type StallWindow } from "../stallSummary.js";
+import { summarizeStalls, summarizeStallsCovered, type StallWindow } from "../stallSummary.js";
 
 // A window ends at atMs and spans windowMs before it: [atMs - windowMs, atMs].
 const win = (atMs: number, loopMaxMs: number, extra: Partial<StallWindow> = {}): StallWindow => ({
@@ -62,6 +62,22 @@ describe("summarizeStalls", () => {
     expect(s.stalled.medianEmitMs).toBe(12);
     const empty = summarizeStalls([], [], []);
     expect(empty.stalled).toMatchObject({ windows: 0, medianTickMs: null, medianEmitMs: null });
+  });
+
+  it("analyzes every window when no ring is full", () => {
+    const windows = [win(1000, 60), win(1100, 5)];
+    const s = summarizeStallsCovered(windows, [{ atMs: 1050, durationMs: 30 }], [], { ops: 200, pauses: 100 });
+    expect(s).toMatchObject({ totalWindows: 2, analyzedWindows: 2, truncated: false });
+  });
+
+  it("drops windows that start before a FULL ring's oldest entry, so absence is not misread", () => {
+    // Ring of 2 is full and its oldest op is at 1500: windows before that
+    // cannot be judged "no slow emit".
+    const windows = [win(1000, 60), win(1400, 60), win(1600, 60)];
+    const ops = [{ atMs: 1500, durationMs: 30 }, { atMs: 1590, durationMs: 30 }];
+    const s = summarizeStallsCovered(windows, ops, [], { ops: 2, pauses: 100 });
+    expect(s).toMatchObject({ totalWindows: 3, analyzedWindows: 1, truncated: true });
+    expect(s.stalled.windows).toBe(1);
   });
 
   it("does not depend on the order the windows arrive in", () => {

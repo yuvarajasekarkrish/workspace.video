@@ -73,6 +73,38 @@ function summarizeGroup(windows: StallWindow[], emits: Span[], gcs: Span[]): Sta
   };
 }
 
+export interface CoveredStallSummary extends StallSummary {
+  totalWindows: number;
+  /** Windows actually analyzed: those inside the time range every ring covers. */
+  analyzedWindows: number;
+  /** True when a full ring dropped older entries, so earlier windows were skipped. */
+  truncated: boolean;
+}
+
+/** The rings keep only the newest N entries, so an op or pause older than the
+ *  ring's oldest entry may have existed without being kept. Counting a window
+ *  from before that point as "no slow emit" would be wrong, so windows that
+ *  start before the coverage of any FULL ring are left out. */
+export function summarizeStallsCovered(
+  windows: StallWindow[],
+  tailOps: Span[],
+  gcPauses: Span[],
+  ringSizes: { ops: number; pauses: number },
+  options: { stallMs?: number; overlapMs?: number } = {},
+): CoveredStallSummary {
+  const start = Math.max(
+    tailOps.length >= ringSizes.ops ? tailOps[0]!.atMs : -Infinity,
+    gcPauses.length >= ringSizes.pauses ? gcPauses[0]!.atMs : -Infinity,
+  );
+  const analyzed = windows.filter((w) => w.atMs - w.windowMs >= start);
+  return {
+    ...summarizeStalls(analyzed, tailOps, gcPauses, options),
+    totalWindows: windows.length,
+    analyzedWindows: analyzed.length,
+    truncated: analyzed.length < windows.length,
+  };
+}
+
 export function summarizeStalls(
   windows: StallWindow[],
   tailOps: Span[],
