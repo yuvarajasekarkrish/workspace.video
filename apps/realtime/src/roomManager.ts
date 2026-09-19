@@ -255,6 +255,32 @@ export class RoomManager implements ActiveParticipantCounter {
     return { ...this.leaseOutcomeCounts };
   }
 
+  /** Phase 15 Part B: raw samples of elapsed-since-last-accepted-move for
+   *  BOTH accepted and rejected moves, sampled 1-in-20 (same convention as
+   *  CountingBroadcaster's payload-byte sampling) — see applyMove below.
+   *  This exists to test, not assume, the "double-drain" hypothesis for the
+   *  correction rate: if a server event-loop stall lets two moves from the
+   *  same user land in one drain, the second is validated against an
+   *  acceptedAtMs just set microseconds earlier, so its elapsed collapses
+   *  toward 0 while its real (legitimate) distance does not — producing an
+   *  enormous implied speed and a rejection, even though the user did
+   *  nothing wrong. Comparing the accepted-move distribution (expected to
+   *  cluster near the client's real move interval) against the rejected one
+   *  is what would show that collapse directly, rather than inferring it
+   *  from an unrelated aggregate like tick or event-loop timing — see the
+   *  Phase 15 plan's explicit guard against that inference. */
+  private static readonly MAX_MOVE_SAMPLES = 200;
+  private readonly acceptedMoveSamples: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[] = [];
+  private readonly rejectedMoveSamples: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[] = [];
+  private moveSampleCounter = 0;
+
+  getMoveValidationStats(): {
+    accepted: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
+    rejected: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
+  } {
+    return { accepted: [...this.acceptedMoveSamples], rejected: [...this.rejectedMoveSamples] };
+  }
+
   private readonly objectPersistence: ObjectPersistence;
 
   constructor(
@@ -288,6 +314,16 @@ export class RoomManager implements ActiveParticipantCounter {
     workspaceId: string,
     movementConfig: MovementConfig = DEFAULT_MOVEMENT_CONFIG,
     layout: RoomLayout = resolveLayout(DEFAULT_LAYOUT_ID)!,
+    // Phase 15 Part A: passed in, not defaulted to 0 and set later by
+    // admitAndAddPeer. getRoomInfo(roomId) returning a record is meant to
+    // mean that record is FULLY initialised — server.ts's join fast path
+    // trusts participantLimit without re-deriving it. A room that started
+    // at 0 and was only corrected after the slow path's DB round trips left
+    // a real window where a concurrent joiner's fast path read limit 0 and
+    // was wrongly refused workspace_full. Callers that don't have a limit
+    // yet (existing tests) get 0, matching the old default and its
+    // fail-closed behavior — this only removes the LATER, silent overwrite.
+    participantLimit = 0,
   ): void {
     if (this.rooms.has(roomId)) return;
 
@@ -352,7 +388,7 @@ export class RoomManager implements ActiveParticipantCounter {
       lastEmittedAudio: new Map(),
       audienceOf: new Map(),
       objects: new Map(),
-      participantLimit: 0,
+      participantLimit,
       objectsHydration: null,
       tickTimer,
       leaseRefreshTimer,
@@ -542,16 +578,34 @@ export class RoomManager implements ActiveParticipantCounter {
     // is idempotent, so whichever order they arrive in is safe.
     this.releaseSeat(roomId, userId);
 
+    const nowMs = Date.now();
     const result = validateMove(
       proposed,
       { position: peer.position, acceptedAtMs: peer.acceptedAtMs },
-      Date.now(),
+      nowMs,
       room.movementConfig,
     );
 
+    // Phase 15 Part B: sampled 1-in-20, before acceptedAtMs is overwritten
+    // below — elapsedMs and distancePx must describe the SAME move that was
+    // just validated, using the SAME "since this user's last accepted move"
+    // basis validateMove itself used (movement.ts's `previous.acceptedAtMs`).
+    this.moveSampleCounter++;
+    if (this.moveSampleCounter % 20 === 0) {
+      const elapsedMs = nowMs - peer.acceptedAtMs;
+      const dx = proposed.x - peer.position.x;
+      const dy = proposed.y - peer.position.y;
+      const distancePx = Math.sqrt(dx * dx + dy * dy);
+      const impliedSpeedPxPerSec = elapsedMs > 0 ? (distancePx / elapsedMs) * 1000 : Infinity;
+      const sample = { elapsedMs, distancePx, impliedSpeedPxPerSec };
+      const target = result.accepted ? this.acceptedMoveSamples : this.rejectedMoveSamples;
+      target.push(sample);
+      if (target.length > RoomManager.MAX_MOVE_SAMPLES) target.shift();
+    }
+
     if (result.accepted) {
       peer.position = result.position;
-      peer.acceptedAtMs = Date.now();
+      peer.acceptedAtMs = nowMs;
       room.index.move(userId, peer.position);
     }
 

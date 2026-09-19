@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { RoomLease } from "@cosmos/realtime-core";
-import { openOffice1, type ObjectState } from "@cosmos/shared";
+import { openOffice1, DEFAULT_MOVEMENT_CONFIG, DEFAULT_LAYOUT_ID, resolveLayout, type ObjectState } from "@cosmos/shared";
 import { RoomManager, type RoomBroadcaster } from "../roomManager.js";
 import type { ObjectRepository } from "../objectPersistence.js";
 
@@ -321,6 +321,24 @@ describe("RoomManager", () => {
     rm.ensureRoom("room1", "ws1");
 
     expect(rm.snapshot("room1")).toHaveLength(1);
+  });
+
+  it("ensureRoom's participant limit is available immediately, never a 0 that a concurrent join could see", () => {
+    // Phase 15 Part A: getRoomInfo(roomId) returning a record is supposed to
+    // mean that record is FULLY initialised — server.ts's join fast path
+    // trusts this without re-deriving anything. Before this fix, ensureRoom
+    // always started a room at participantLimit: 0 and only admitAndAddPeer
+    // (called later, after the slow path's own DB round trips) set the real
+    // value — so a second joiner arriving in that window took the fast path
+    // and read limit 0, getting wrongly refused workspace_full on an
+    // otherwise-empty room. Passing the real limit into ensureRoom itself
+    // closes that window: there is no observable moment where the room
+    // exists but its limit doesn't.
+    const { broadcaster } = fakeBroadcaster();
+    const rm = createManager(broadcaster, fakeLease(), "instance-a");
+    rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, resolveLayout(DEFAULT_LAYOUT_ID)!, 42);
+
+    expect(rm.getRoomInfo("room1")?.participantLimit).toBe(42);
   });
 
   it("disposeAll clears every room's timers so no interval outlives the manager", async () => {

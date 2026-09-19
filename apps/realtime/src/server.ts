@@ -257,6 +257,7 @@ app.get("/internal/metrics", async () => {
     transientDbRetryAttempts: transientRetryStats.attempts,
     disconnectReasons: { ...disconnectReasonCounts },
     heartbeat: { ...heartbeatStats, sampledConnections: heartbeatSampledCount },
+    moveValidation: roomManager.getMoveValidationStats(),
   };
 });
 
@@ -360,34 +361,38 @@ io.on("connection", (socket) => {
       layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
       movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
 
-      // Claim-or-confirm ownership. This is the guard against a split room:
-      // if this instance is not (or is no longer) the authoritative owner,
-      // refuse the join and tell the client to re-resolve its endpoint from
-      // scratch — never silently serve a second copy of the room's state.
-      const owner = await roomLease.claimOrRead(instanceId, roomId);
-      if (owner !== instanceId) {
-        socket.emit(ServerEvents.OwnerChanged, { roomId });
-        return finish({ error: "not_owner", roomId });
-      }
-
-      roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout);
-
-      // Independent of each other (hydration reads only roomId; the limit
-      // lookup reads only workspaceId) — no data dependency, so they run
-      // concurrently instead of one queuing behind the other's round trip.
-      // hydrateObjects must still complete before any object read/mutation
-      // for this room, including this very join's objects:snapshot below —
-      // otherwise a joining client could be sent an incomplete (still-
-      // loading) object list. Concurrent joins for the same room all await
-      // the same in-flight load rather than racing separate ones (see
-      // RoomManager.hydrateObjects's docs).
-      [, limit] = await Promise.all([
-        roomManager.hydrateObjects(roomId),
+      // Claim-or-confirm ownership (Redis) and resolve the participant limit
+      // (Postgres) concurrently — independent of each other, both only need
+      // workspaceId. Phase 15 Part A: the limit is resolved BEFORE
+      // ensureRoom and passed in, rather than defaulting the room to
+      // participantLimit: 0 and correcting it afterwards — a concurrent
+      // joiner's fast path (see getRoomInfo above) trusts that value the
+      // instant the room exists, so a room that briefly existed at limit 0
+      // let that joiner be wrongly refused workspace_full. This costs
+      // nothing extra: it was already a round trip that had to complete
+      // before this join's own admission check.
+      let owner: string;
+      [owner, limit] = await Promise.all([
+        roomLease.claimOrRead(instanceId, roomId),
         // Resolved from Workspace.plan today; a future billing system swaps
         // only this provider (see ParticipantLimitProvider in
         // @cosmos/shared) — the rest of this flow is unaffected.
         loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId),
       ]);
+      if (owner !== instanceId) {
+        socket.emit(ServerEvents.OwnerChanged, { roomId });
+        return finish({ error: "not_owner", roomId });
+      }
+
+      roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout, limit);
+
+      // Must complete before any object read/mutation for this room,
+      // including this very join's objects:snapshot below — otherwise a
+      // joining client could be sent an incomplete (still-loading) object
+      // list. Concurrent joins for the same room all await the same
+      // in-flight load rather than racing separate ones (see
+      // RoomManager.hydrateObjects's docs).
+      await roomManager.hydrateObjects(roomId);
     }
 
     const spawnZone = zoneById(layout, layout.spawnZoneId)!;

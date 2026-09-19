@@ -103,6 +103,11 @@ interface Metrics {
   join?: { sampleCount: number; avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
   transientDbRetryAttempts?: number;
   disconnectReasons?: Record<string, number>;
+  heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
+  moveValidation?: {
+    accepted: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
+    rejected: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
+  };
 }
 
 interface IntervalSample {
@@ -475,6 +480,11 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
   const joinLatencies: number[] = [];
   let rejectedCount = 0;
   let joinFailures = 0;
+  // Phase 15 Part A: previously discarded — a rejected join told us nothing
+  // beyond "it was rejected," so a spurious workspace_full couldn't be told
+  // apart from a real one. Sampled to a handful of entries; the count above
+  // already carries the volume.
+  const rejectionSamples: unknown[] = [];
   let passed = false;
 
   try {
@@ -507,6 +517,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
             connected.push(entry);
           } else {
             rejectedCount += 1;
+            if (rejectionSamples.length < 5) rejectionSamples.push(ack);
             socket.disconnect();
           }
         } else {
@@ -516,7 +527,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       });
     }
 
-    console.log(`  joined: ${connected.length}/${n} (rejected: ${rejectedCount}, failed: ${joinFailures})`);
+    console.log(
+      `  joined: ${connected.length}/${n} (rejected: ${rejectedCount}, failed: ${joinFailures})` +
+        (rejectionSamples.length > 0 ? `  rejection reasons: ${JSON.stringify(rejectionSamples)}` : ""),
+    );
     const joinLatency = joinLatencies.length > 0 ? summarizeLatencies(joinLatencies) : null;
     if (joinLatency) {
       console.log(`  join latency: avg ${fmt(joinLatency.avg, 1)}ms, p95 ${fmt(joinLatency.p95, 1)}ms, max ${fmt(joinLatency.max, 1)}ms`);
@@ -732,6 +746,31 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     if (finalMetrics?.transientDbRetryAttempts) {
       console.log(`  Postgres transient-retry attempts (cumulative, process lifetime): ${finalMetrics.transientDbRetryAttempts}`);
     }
+    if (finalMetrics?.heartbeat) {
+      const hb = finalMetrics.heartbeat;
+      console.log(
+        `  server heartbeat (sampled ${hb.sampledConnections} conn, cumulative): pings sent ${hb.pingsSent} · pongs received ${hb.pongsReceived} · max pong latency ${fmt(hb.maxPongLatencyMs, 1)}ms` +
+          (hb.pongsReceived < hb.pingsSent ? "  <-- some pings never got a pong back" : ""),
+      );
+    }
+    if (finalMetrics?.moveValidation) {
+      // Phase 15 Part B: NOT evidence on its own for what's causing
+      // rejections — see the Phase 15 plan's explicit guard. This is the
+      // direct per-move observation the guard calls for: comparing the
+      // elapsed-since-last-accepted-move distribution for accepted vs
+      // rejected moves is what would show the "double-drain" collapse
+      // (rejected elapsed near 0 while accepted elapsed clusters near the
+      // real move interval), not any aggregate tick/event-loop number.
+      const { accepted, rejected } = finalMetrics.moveValidation;
+      const summarize = (samples: { elapsedMs: number }[]) => {
+        if (samples.length === 0) return "n=0";
+        const sorted = [...samples.map((s) => s.elapsedMs)].sort((a, b) => a - b);
+        const mid = sorted[Math.floor(sorted.length / 2)]!;
+        return `n=${sorted.length} elapsedMs min=${fmt(sorted[0]!, 1)} median=${fmt(mid, 1)} max=${fmt(sorted[sorted.length - 1]!, 1)}`;
+      };
+      console.log(`  move validation samples (1-in-20) — accepted: ${summarize(accepted)}`);
+      console.log(`  move validation samples (1-in-20) — rejected: ${summarize(rejected)}`);
+    }
     if (intervals.length > 0) {
       const occSamples = intervals.filter((s) => s.occupancyActive !== null);
       if (occSamples.length > 0) {
@@ -807,6 +846,13 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       serverJoinLatency: finalMetrics?.join ?? null,
       serverDisconnectReasons: finalMetrics?.disconnectReasons ?? null,
       serverTransientDbRetryAttempts: finalMetrics?.transientDbRetryAttempts ?? null,
+      // Phase 15 Part A diagnostic.
+      rejectionSamples,
+      // Phase 14 heartbeat instrumentation, finally surfaced (it was added
+      // to /internal/metrics but never read here — see the Phase 15 plan).
+      serverHeartbeat: finalMetrics?.heartbeat ?? null,
+      // Phase 15 Part B diagnostic — raw samples for offline inspection.
+      serverMoveValidation: finalMetrics?.moveValidation ?? null,
     });
 
     if (n === 200 && !limitOverrideNote) {
