@@ -231,6 +231,7 @@ app.get("/internal/metrics", async () => {
     emitRates,
     redisPublishesPerSec,
     lease: roomManager.getLeaseStats(),
+    staleDisconnectsIgnored: roomManager.getStaleDisconnectsIgnored(),
     join: joinDuration.snapshot(),
     transientDbRetryAttempts: transientRetryStats.attempts,
     disconnectReasons: { ...disconnectReasonCounts },

@@ -152,6 +152,10 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
           return finish({ error: "not_owner", roomId });
         }
 
+        // ensureRoom no-ops while a record for this room still exists, and an
+        // emptied room's record lives until its object flush finishes — wait
+        // it out so this join gets a fresh room, not the one being deleted.
+        await roomManager.awaitEviction(roomId);
         roomManager.ensureRoom(roomId, workspaceId, movementConfig, layout, limit);
 
         // Must complete before any object read/mutation for this room,
@@ -349,7 +353,9 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // wait on the result for. A crash between now and flush completion can
       // still lose at most one debounce window of edits — the same documented
       // limitation as the debounce itself (see objectPersistence.ts).
-      if (roomId) void roomManager.removePeer(roomId, user.userId);
+      // socket.id so a stale socket's disconnect can't remove a peer that has
+      // since re-joined on a newer one — see RoomManager.removePeer.
+      if (roomId) void roomManager.removePeer(roomId, user.userId, socket.id);
     });
   });
 }

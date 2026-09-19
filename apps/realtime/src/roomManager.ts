@@ -298,6 +298,14 @@ export class RoomManager implements ActiveParticipantCounter {
    *  callback below for why that no longer happens. */
   private leaseOutcomeCounts = { renewed: 0, reclaimed: 0, lost: 0, errors: 0 };
 
+  /** Disconnects ignored because they came from a socket the peer had
+   *  already replaced by re-joining — see removePeer. Non-zero means the
+   *  reconnect race actually happened and the guard actually fired. */
+  private staleDisconnectsIgnored = 0;
+  getStaleDisconnectsIgnored(): number {
+    return this.staleDisconnectsIgnored;
+  }
+
   getLeaseStats(): { renewed: number; reclaimed: number; lost: number; errors: number } {
     return { ...this.leaseOutcomeCounts };
   }
@@ -546,9 +554,23 @@ export class RoomManager implements ActiveParticipantCounter {
    *  care about eviction actually completing — including a pending object
    *  flush — can await it; server.ts's disconnect handler does not need to
    *  and does not. */
-  async removePeer(roomId: string, userId: string): Promise<void> {
+  async removePeer(roomId: string, userId: string, expectedSocketId?: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
+
+    // A disconnect from a socket the peer has since re-joined on (a browser
+    // reconnect gets a NEW socket id, and admitAndAddPeer overwrites the
+    // record with it) must not remove the live peer — the dead socket's ping
+    // timeout can fire up to ~45s after the user is already back. Only checked
+    // when the caller says which socket is disconnecting.
+    if (expectedSocketId !== undefined) {
+      const current = room.peers.get(userId);
+      if (!current) return;
+      if (current.socketId !== expectedSocketId) {
+        this.staleDisconnectsIgnored++;
+        return;
+      }
+    }
 
     // Unconditional, regardless of how many peers remain — evictRoom only
     // fires once the room is EMPTY, which a busy room may never reach, so
@@ -1254,7 +1276,32 @@ export class RoomManager implements ActiveParticipantCounter {
     }
   }
 
-  private async evictRoom(roomId: string, opts: { notifyOwnerChanged: boolean }): Promise<void> {
+  /** Rooms whose eviction is in flight (awaiting the object flush). The record
+   *  stays in `this.rooms` for that whole time — the flush reads pending
+   *  objects through it — so without this a join could take the fast path
+   *  into a room that is deleted moments later, with its timers already
+   *  cleared. A second evictRoom for the same room joins the in-flight one. */
+  private readonly evictions = new Map<string, Promise<void>>();
+
+  /** Resolves once any in-flight eviction of this room has completed (or
+   *  immediately if there is none). join_room's slow path awaits this before
+   *  ensureRoom, which would otherwise no-op on the doomed record. Never
+   *  rejects: another room's flush failure is not this join's problem. */
+  awaitEviction(roomId: string): Promise<void> {
+    return (this.evictions.get(roomId) ?? Promise.resolve()).catch(() => {});
+  }
+
+  private evictRoom(roomId: string, opts: { notifyOwnerChanged: boolean }): Promise<void> {
+    const inFlight = this.evictions.get(roomId);
+    if (inFlight) return inFlight;
+    if (!this.rooms.has(roomId)) return Promise.resolve();
+
+    const run = this.runEviction(roomId, opts).finally(() => this.evictions.delete(roomId));
+    this.evictions.set(roomId, run);
+    return run;
+  }
+
+  private async runEviction(roomId: string, opts: { notifyOwnerChanged: boolean }): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
 
@@ -1282,7 +1329,7 @@ export class RoomManager implements ActiveParticipantCounter {
   }
 
   isOwnedLocally(roomId: string): boolean {
-    return this.rooms.has(roomId);
+    return this.rooms.has(roomId) && !this.evictions.has(roomId);
   }
 
   /** Phase 11 Part B: everything join_room needs about a room it ALREADY
@@ -1299,7 +1346,7 @@ export class RoomManager implements ActiveParticipantCounter {
     roomId: string,
   ): { workspaceId: string; layout: RoomLayout; movementConfig: MovementConfig; participantLimit: number } | null {
     const room = this.rooms.get(roomId);
-    if (!room) return null;
+    if (!room || this.evictions.has(roomId)) return null;
     return {
       workspaceId: room.workspaceId,
       layout: room.layout,
