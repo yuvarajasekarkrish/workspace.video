@@ -26,13 +26,48 @@ cd "$(dirname "$0")/../.."
 FORWARD_LOG="apps/realtime/load-results/${4}-forward.log"
 mkdir -p apps/realtime/load-results
 : >"$FORWARD_LOG"
+
+# Phase 13: refuse to run against a forward this script did not start.
+# A previous run's `gh codespace ports forward` can outlive it (an aborted
+# run never reaches the EXIT trap that kills it), and the old code would
+# then silently adopt that stale tunnel: our own forward failed to bind with
+# "address already in use", the health check below passed against the
+# leftover one anyway, and a whole 60s measurement ran through a tunnel of
+# unknown age and condition. We only ever kill the PID we started ourselves
+# (see the trap), so a pre-existing listener is reported, not killed — it
+# may belong to another session and is not ours to terminate.
+if curl -sf http://localhost:4001/health >/dev/null 2>&1; then
+  echo "ABORT: something is already listening on localhost:4001 before this script started a forward." >&2
+  echo "That is almost certainly a leaked 'gh codespace ports forward' from an earlier run. Results measured" >&2
+  echo "through it cannot be trusted, so this script will not adopt it. Find and stop it, e.g.:" >&2
+  echo "    pgrep -af 'gh codespace ports forward'" >&2
+  echo "    kill <pid>" >&2
+  exit 1
+fi
+
 FORWARD_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 gh codespace ports forward 4001:4001 -c "$SERVER_CODESPACE" >"$FORWARD_LOG" 2>&1 &
 FORWARD_PID=$!
 trap 'kill "$FORWARD_PID" 2>/dev/null || true' EXIT
 
+# Confirm OUR forward actually bound before trusting anything downstream of
+# it. Without this, a bind failure falls through into the health-check wait
+# below, which is exactly how the stale tunnel got adopted last time — this
+# loop fails fast on either a bind error or the process dying, instead of
+# just waiting out the full 60-attempt timeout and reporting a generic
+# "not reachable".
 for attempt in $(seq 1 60); do
-  if curl -sf http://localhost:4001/health >/dev/null; then break; fi
+  if grep -qiE 'address already in use|failed to listen' "$FORWARD_LOG"; then
+    echo "ABORT: our own port forward failed to bind. Forward log:" >&2
+    cat "$FORWARD_LOG" >&2
+    exit 1
+  fi
+  if ! kill -0 "$FORWARD_PID" 2>/dev/null; then
+    echo "ABORT: the port-forward process exited immediately. Forward log:" >&2
+    cat "$FORWARD_LOG" >&2
+    exit 1
+  fi
+  if curl -sf http://localhost:4001/health >/dev/null 2>&1; then break; fi
   if [ "$attempt" -eq 60 ]; then
     echo "Realtime server not reachable through the port forward. Forward log:" >&2
     cat "$FORWARD_LOG" >&2

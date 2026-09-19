@@ -34,6 +34,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import jwt from "jsonwebtoken";
 import { io as ioClient, type Socket } from "socket.io-client";
 import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, ServerEvents, type Point } from "@cosmos/shared";
@@ -123,6 +124,16 @@ interface IntervalSample {
   /** Phase 10c diagnostic fields — null when that poll's fetch failed. */
   occupancyActive: number | null;
   occupancyLimit: number | null;
+  /** Phase 13: the LOAD GENERATOR's own event-loop delay for this interval —
+   *  same "since last read" histogram-reset contract as server.ts's
+   *  eventLoop fields, but measuring this 2-core box driving 100 sockets,
+   *  not the server. Only the server's event loop was ever measured before;
+   *  this is what separates "the harness box is starving its own Socket.IO
+   *  heartbeats" from "the tunnel can't carry this traffic" when sockets
+   *  drop with ping timeout but the SERVER's own event loop is healthy. */
+  harnessEventLoopP50Ms: number;
+  harnessEventLoopP99Ms: number;
+  harnessEventLoopMaxMs: number;
 }
 
 async function fetchMetrics(): Promise<Metrics | null> {
@@ -333,6 +344,7 @@ function toIntervalSample(
   occ: OccupancySnapshot | null,
   atSec: number,
   durationSec: number,
+  harnessEventLoop: { p50Ms: number; p99Ms: number; maxMs: number },
 ): IntervalSample {
   return {
     atSec,
@@ -357,6 +369,9 @@ function toIntervalSample(
     redisPublishesPerSec: m.redisPublishesPerSec,
     occupancyActive: occ?.active ?? null,
     occupancyLimit: occ?.limit ?? null,
+    harnessEventLoopP50Ms: harnessEventLoop.p50Ms,
+    harnessEventLoopP99Ms: harnessEventLoop.p99Ms,
+    harnessEventLoopMaxMs: harnessEventLoop.maxMs,
   };
 }
 
@@ -380,12 +395,24 @@ function startMetricsPoller(
   let timer: NodeJS.Timeout | undefined;
   let inFlight: Promise<void> = Promise.resolve();
 
+  // Phase 13: this box's own event-loop delay, same resolution and
+  // reset-on-read contract as server.ts's histogram — see harnessEventLoop*
+  // fields' docs on IntervalSample.
+  const eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
+  eventLoopDelay.enable();
+
   const poll = async () => {
     pollAttempts++;
     const [m, occ] = await Promise.all([fetchMetrics(), fetchOccupancy(roomId)]);
     const now = performance.now();
+    const harnessEventLoop = {
+      p50Ms: eventLoopDelay.percentile(50) / 1e6,
+      p99Ms: eventLoopDelay.percentile(99) / 1e6,
+      maxMs: eventLoopDelay.max / 1e6,
+    };
+    eventLoopDelay.reset();
     if (m) {
-      samples.push(toIntervalSample(m, occ, (now - windowStartAt) / 1000, (now - lastAt) / 1000));
+      samples.push(toIntervalSample(m, occ, (now - windowStartAt) / 1000, (now - lastAt) / 1000, harnessEventLoop));
     } else {
       metricsPollFailures++;
     }
@@ -408,6 +435,7 @@ function startMetricsPoller(
       if (timer) clearTimeout(timer);
       await inFlight;
       await poll(); // final partial interval up to the end of the window
+      eventLoopDelay.disable(); // must not outlive the run
       return { samples, pollAttempts, metricsPollFailures };
     },
   };
@@ -718,6 +746,12 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     console.log(`  tick p95  median ${fmt(mid((s) => s.tickP95Ms))}ms  worst ${fmt(gate.tickP95.worstMs)}ms  (<= ${GATE.tickP95Ms}) ${mark(checks.tickP95)}`);
     console.log(`  tick p99  median ${fmt(mid((s) => s.tickP99Ms))}ms  worst ${fmt(gate.tickP99.worstMs)}ms  (<= ${GATE.tickP99Ms}) ${mark(checks.tickP99)}`);
     console.log(`  event-loop p99  median ${fmt(mid((s) => s.eventLoopP99Ms))}ms  worst ${fmt(gate.eventLoopP99.worstMs)}ms  (<= ${GATE.eventLoopP99Ms}) ${mark(checks.eventLoopP99)}`);
+    console.log(
+      `  harness event-loop (this box, NOT the server) p50 median ${fmt(mid((s) => s.harnessEventLoopP50Ms))}ms  p99 median ${fmt(mid((s) => s.harnessEventLoopP99Ms))}ms  worst ${fmt(worst((s) => s.harnessEventLoopMaxMs))}ms` +
+        (worst((s) => s.harnessEventLoopMaxMs) > 1000
+          ? "  <-- this 2-core box's own event loop is stalling for seconds — a likely cause of missed Socket.IO heartbeats, separate from the server or the tunnel"
+          : ""),
+    );
     console.log(
       `  moves sent ${movesSent.toLocaleString("en-US")} · corrections ${corrections.toLocaleString("en-US")} · rate ${correctionRatePct.toFixed(4)}%  (<= ${GATE.correctionRatePct}%) ${mark(checks.corrections)}`,
     );
