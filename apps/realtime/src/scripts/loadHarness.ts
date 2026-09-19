@@ -104,9 +104,72 @@ interface Metrics {
   transientDbRetryAttempts?: number;
   disconnectReasons?: Record<string, number>;
   heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
-  moveValidation?: {
-    accepted: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
-    rejected: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
+  moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[] };
+}
+
+/** Mirrors the server's MoveValidationSample (apps/realtime/src/roomManager.ts)
+ *  — duplicated because this script talks to the server only over HTTP. */
+interface MoveValidationSample {
+  elapsedMs: number;
+  distancePx: number;
+  impliedSpeedPxPerSec: number;
+  serverGapMs: number | null;
+  clientGapMs: number | null;
+  atMs: number;
+  userId: string;
+}
+
+const medianOrNull = (values: number[]): number | null => (values.length === 0 ? null : median(values));
+
+/** Numbers only, deliberately no verdict text: this feeds the Phase 15
+ *  question of WHY rejected moves arrive with ~0 elapsed, and an automatic
+ *  "this proves X" line is exactly what the plan warns against. The reading
+ *  guide lives in the Phase 15 plan, next to the evidence it needs.
+ *
+ *  Clustering: rejections are bucketed by server receipt time (10ms). If
+ *  rejections from DIFFERENT users land in the same bucket more often than
+ *  chance, something shared hit them together; if not, it looks
+ *  per-connection. "Expected by chance" places the same number of
+ *  rejections uniformly at random over the same time span, so the observed
+ *  figure has something to be compared against. */
+function summarizeRejections(rejected: MoveValidationSample[]): {
+  serverGapMedianMs: number | null;
+  clientGapMedianMs: number | null;
+  samplesWithGaps: number;
+  clustering: { bucketMs: number; spanMs: number; observedSharedSamples: number; expectedSharedByChance: number; largestBucketDistinctUsers: number };
+} {
+  const BUCKET_MS = 10;
+  const withGaps = rejected.filter((s) => s.serverGapMs !== null && s.clientGapMs !== null);
+  const buckets = new Map<number, Set<string>>();
+  const perBucketCount = new Map<number, number>();
+  for (const s of rejected) {
+    const key = Math.floor(s.atMs / BUCKET_MS);
+    if (!buckets.has(key)) buckets.set(key, new Set());
+    buckets.get(key)!.add(s.userId);
+    perBucketCount.set(key, (perBucketCount.get(key) ?? 0) + 1);
+  }
+  let observedShared = 0;
+  let largest = 0;
+  for (const [key, users] of buckets) {
+    largest = Math.max(largest, users.size);
+    if (users.size >= 2) observedShared += perBucketCount.get(key)!;
+  }
+  const times = rejected.map((s) => s.atMs);
+  const spanMs = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0;
+  const bucketCount = Math.max(1, Math.floor(spanMs / BUCKET_MS));
+  const n = rejected.length;
+  const expectedShared = n <= 1 ? 0 : n * (1 - Math.pow(1 - 1 / bucketCount, n - 1));
+  return {
+    serverGapMedianMs: medianOrNull(withGaps.map((s) => s.serverGapMs!)),
+    clientGapMedianMs: medianOrNull(withGaps.map((s) => s.clientGapMs!)),
+    samplesWithGaps: withGaps.length,
+    clustering: {
+      bucketMs: BUCKET_MS,
+      spanMs,
+      observedSharedSamples: observedShared,
+      expectedSharedByChance: expectedShared,
+      largestBucketDistinctUsers: largest,
+    },
   };
 }
 
@@ -768,8 +831,17 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
         const mid = sorted[Math.floor(sorted.length / 2)]!;
         return `n=${sorted.length} elapsedMs min=${fmt(sorted[0]!, 1)} median=${fmt(mid, 1)} max=${fmt(sorted[sorted.length - 1]!, 1)}`;
       };
-      console.log(`  move validation samples (1-in-20) — accepted: ${summarize(accepted)}`);
-      console.log(`  move validation samples (1-in-20) — rejected: ${summarize(rejected)}`);
+      console.log(`  move validation samples — accepted (1-in-20): ${summarize(accepted)}`);
+      console.log(`  move validation samples — rejected (all, newest ${rejected.length}): ${summarize(rejected)}`);
+      if (rejected.length > 0) {
+        const r = summarizeRejections(rejected);
+        console.log(
+          `  rejected moves, arrival vs emit gap (n=${r.samplesWithGaps}): server gap median ${r.serverGapMedianMs === null ? "n/a" : fmt(r.serverGapMedianMs, 1) + "ms"} · client gap median ${r.clientGapMedianMs === null ? "n/a" : fmt(r.clientGapMedianMs, 1) + "ms"}`,
+        );
+        console.log(
+          `  rejected moves sharing a ${r.clustering.bucketMs}ms server instant with a different user: ${r.clustering.observedSharedSamples}/${rejected.length} observed · ${fmt(r.clustering.expectedSharedByChance, 1)} expected by chance (span ${fmt(r.clustering.spanMs / 1000, 1)}s) · largest bucket ${r.clustering.largestBucketDistinctUsers} distinct users`,
+        );
+      }
     }
     if (intervals.length > 0) {
       const occSamples = intervals.filter((s) => s.occupancyActive !== null);
@@ -853,6 +925,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       serverHeartbeat: finalMetrics?.heartbeat ?? null,
       // Phase 15 Part B diagnostic — raw samples for offline inspection.
       serverMoveValidation: finalMetrics?.moveValidation ?? null,
+      rejectedMoveSummary:
+        finalMetrics?.moveValidation && finalMetrics.moveValidation.rejected.length > 0
+          ? summarizeRejections(finalMetrics.moveValidation.rejected)
+          : null,
     });
 
     if (n === 200 && !limitOverrideNote) {

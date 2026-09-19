@@ -341,6 +341,94 @@ describe("RoomManager", () => {
     expect(rm.getRoomInfo("room1")?.participantLimit).toBe(42);
   });
 
+  describe("move validation samples (Phase 15 Part B diagnostics)", () => {
+    const peer = { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } };
+
+    it("records a rejection whose moves were emitted 50ms apart but arrived 1ms apart", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1");
+        rm.admitAndAddPeer("room1", peer, 100);
+
+        // 20px in 50ms = 400px/s, well inside the 2000px/s budget: accepted.
+        vi.setSystemTime(10_050);
+        const first = rm.applyMove("room1", "u1", { x: 20, y: 0 }, 5_000);
+        expect(first?.accepted).toBe(true);
+
+        // The next 20px step, emitted 50ms later by the client (clientTs
+        // 5050) but arriving 1ms after the previous one. elapsed 1ms allows
+        // 2px, so this legitimate move is rejected.
+        vi.setSystemTime(10_051);
+        const second = rm.applyMove("room1", "u1", { x: 40, y: 0 }, 5_050);
+        expect(second?.accepted).toBe(false);
+
+        const { rejected } = rm.getMoveValidationStats();
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0]).toMatchObject({
+          elapsedMs: 1,
+          distancePx: 20,
+          serverGapMs: 1,
+          clientGapMs: 50,
+          atMs: 10_051,
+          userId: "u1",
+        });
+        // Finite, not Infinity (which would serialise to null).
+        expect(Number.isFinite(rejected[0]!.impliedSpeedPxPerSec)).toBe(true);
+        expect(rejected[0]!.impliedSpeedPxPerSec).toBe(20_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reports null gaps for a user's first move, and when clientTs is not supplied", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1");
+        rm.admitAndAddPeer("room1", peer, 100);
+
+        // Same instant as admission and 20px away: rejected, and it is this
+        // user's first move so there is no previous arrival to compare to.
+        rm.applyMove("room1", "u1", { x: 20, y: 0 });
+        const { rejected } = rm.getMoveValidationStats();
+        expect(rejected[0]).toMatchObject({ serverGapMs: null, clientGapMs: null });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("samples every rejection but only 1 in 20 accepted moves", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(10_000);
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1");
+        rm.admitAndAddPeer("room1", peer, 100);
+
+        // 40 accepted 1px steps, 100ms apart.
+        for (let i = 1; i <= 40; i++) {
+          vi.setSystemTime(10_000 + i * 100);
+          expect(rm.applyMove("room1", "u1", { x: i, y: 0 }, i * 100)?.accepted).toBe(true);
+        }
+        expect(rm.getMoveValidationStats().accepted).toHaveLength(2);
+
+        // Every rejection is kept.
+        for (let i = 0; i < 5; i++) {
+          expect(rm.applyMove("room1", "u1", { x: 4_000 + i, y: 0 }, 9_999 + i)?.accepted).toBe(false);
+        }
+        expect(rm.getMoveValidationStats().rejected).toHaveLength(5);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("disposeAll clears every room's timers so no interval outlives the manager", async () => {
     const { broadcaster } = fakeBroadcaster();
     const rm = createManager(broadcaster, fakeLease(), "instance-a");

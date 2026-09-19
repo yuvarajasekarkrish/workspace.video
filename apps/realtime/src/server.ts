@@ -454,7 +454,8 @@ io.on("connection", (socket) => {
     const parsed = MoveEventSchema.safeParse(raw);
     if (!parsed.success) return;
 
-    const result = roomManager.applyMove(roomId, user.userId, parsed.data.position);
+    // clientTs is passed for diagnostics only — see RoomManager.applyMove.
+    const result = roomManager.applyMove(roomId, user.userId, parsed.data.position, parsed.data.clientTs);
     if (result && !result.accepted) {
       socket.emit(ServerEvents.MoveCorrection, {
         position: result.correctedPosition,

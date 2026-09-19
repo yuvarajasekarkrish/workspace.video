@@ -82,6 +82,32 @@ export interface TickPhaseTimings {
   audioEmitMs: number;
 }
 
+/** One sampled `move` validation, for diagnosing the correction rate — see
+ *  RoomManager.applyMove. Every field describes the SAME move. */
+export interface MoveValidationSample {
+  /** Since this user's last ACCEPTED move — the exact basis validateMove
+   *  divides by, so this is what determines the speed budget. */
+  elapsedMs: number;
+  distancePx: number;
+  impliedSpeedPxPerSec: number;
+  /** Server-side gap since this user's previous move ARRIVED (accepted or
+   *  not); null for a user's first move. */
+  serverGapMs: number | null;
+  /** The same gap as the client's own clientTs values report it; null when
+   *  unavailable. Compared with serverGapMs: a client gap near the move
+   *  interval against a server gap near 0 means the moves were emitted
+   *  apart but arrived together, i.e. compression happened after the emit.
+   *  A client gap near 0 would mean the sender itself emitted them
+   *  together. Gaps are differences of two client timestamps, so they are
+   *  independent of any clock offset between client and server. */
+  clientGapMs: number | null;
+  /** Server receipt time (ms epoch) and the user, so a later analysis can
+   *  test whether rejections from DIFFERENT users cluster at the same
+   *  instant (a server-wide event) or not (a per-connection effect). */
+  atMs: number;
+  userId: string;
+}
+
 /** Minimal emitter surface RoomManager needs from Socket.IO — narrowed so
  *  unit tests can pass a lightweight fake instead of a real server. */
 export interface RoomBroadcaster {
@@ -133,6 +159,14 @@ interface PeerState {
   socketId: string;
   position: Point;
   acceptedAtMs: number;
+  /** Phase 15 Part B diagnostics ONLY — never read by validateMove. Server
+   *  receipt time and the client's own clientTs of this peer's previous
+   *  `move`, accepted or not (acceptedAtMs above only advances on ACCEPTED
+   *  moves, so it can't give the gap between consecutive arrivals). The
+   *  clientTs stays untrusted: it is stored as a number for comparison in
+   *  diagnostic samples and is deliberately never used to decide anything. */
+  lastMoveReceivedAtMs?: number;
+  lastMoveClientTs?: number;
 }
 
 /**
@@ -269,15 +303,13 @@ export class RoomManager implements ActiveParticipantCounter {
    *  is what would show that collapse directly, rather than inferring it
    *  from an unrelated aggregate like tick or event-loop timing — see the
    *  Phase 15 plan's explicit guard against that inference. */
-  private static readonly MAX_MOVE_SAMPLES = 200;
-  private readonly acceptedMoveSamples: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[] = [];
-  private readonly rejectedMoveSamples: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[] = [];
+  private static readonly MAX_ACCEPTED_MOVE_SAMPLES = 200;
+  private static readonly MAX_REJECTED_MOVE_SAMPLES = 300;
+  private readonly acceptedMoveSamples: MoveValidationSample[] = [];
+  private readonly rejectedMoveSamples: MoveValidationSample[] = [];
   private moveSampleCounter = 0;
 
-  getMoveValidationStats(): {
-    accepted: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
-    rejected: { elapsedMs: number; distancePx: number; impliedSpeedPxPerSec: number }[];
-  } {
+  getMoveValidationStats(): { accepted: MoveValidationSample[]; rejected: MoveValidationSample[] } {
     return { accepted: [...this.acceptedMoveSamples], rejected: [...this.rejectedMoveSamples] };
   }
 
@@ -567,6 +599,9 @@ export class RoomManager implements ActiveParticipantCounter {
     roomId: string,
     userId: string,
     proposed: Point,
+    /** Diagnostics only — see PeerState.lastMoveClientTs. Never used to
+     *  validate; a client-supplied timestamp is a teleport vector. */
+    clientTs?: number,
   ): ReturnType<typeof validateMove> | undefined {
     const room = this.rooms.get(roomId);
     const peer = room?.peers.get(userId);
@@ -586,22 +621,44 @@ export class RoomManager implements ActiveParticipantCounter {
       room.movementConfig,
     );
 
-    // Phase 15 Part B: sampled 1-in-20, before acceptedAtMs is overwritten
-    // below — elapsedMs and distancePx must describe the SAME move that was
-    // just validated, using the SAME "since this user's last accepted move"
-    // basis validateMove itself used (movement.ts's `previous.acceptedAtMs`).
+    // Phase 15 Part B, diagnostics only. Runs before acceptedAtMs is
+    // overwritten below — elapsedMs and distancePx must describe the SAME
+    // move that was just validated, on the SAME "since this user's last
+    // accepted move" basis validateMove itself used.
+    //
+    // Every REJECTION is sampled; accepted moves 1-in-20. Rejections are
+    // rare enough to keep whole, and testing whether they cluster at the
+    // same instant across different users needs them dense — 1-in-20 would
+    // thin a cluster into noise. Accepted moves only need to establish what
+    // "normal" elapsed looks like, so a thin sample is enough there.
     this.moveSampleCounter++;
-    if (this.moveSampleCounter % 20 === 0) {
+    const sampled = !result.accepted || this.moveSampleCounter % 20 === 0;
+    if (sampled) {
       const elapsedMs = nowMs - peer.acceptedAtMs;
       const dx = proposed.x - peer.position.x;
       const dy = proposed.y - peer.position.y;
       const distancePx = Math.sqrt(dx * dx + dy * dy);
-      const impliedSpeedPxPerSec = elapsedMs > 0 ? (distancePx / elapsedMs) * 1000 : Infinity;
-      const sample = { elapsedMs, distancePx, impliedSpeedPxPerSec };
-      const target = result.accepted ? this.acceptedMoveSamples : this.rejectedMoveSamples;
+      const sample: MoveValidationSample = {
+        elapsedMs,
+        distancePx,
+        // Floored at 1ms like validateMove's own denominator. An unfloored
+        // elapsed of 0 would give Infinity, which JSON serialises as null —
+        // blanking exactly the case this instrumentation exists to show.
+        impliedSpeedPxPerSec: (distancePx / Math.max(elapsedMs, 1)) * 1000,
+        serverGapMs: peer.lastMoveReceivedAtMs === undefined ? null : nowMs - peer.lastMoveReceivedAtMs,
+        clientGapMs:
+          clientTs === undefined || peer.lastMoveClientTs === undefined ? null : clientTs - peer.lastMoveClientTs,
+        atMs: nowMs,
+        userId,
+      };
+      const accepted = result.accepted;
+      const target = accepted ? this.acceptedMoveSamples : this.rejectedMoveSamples;
+      const cap = accepted ? RoomManager.MAX_ACCEPTED_MOVE_SAMPLES : RoomManager.MAX_REJECTED_MOVE_SAMPLES;
       target.push(sample);
-      if (target.length > RoomManager.MAX_MOVE_SAMPLES) target.shift();
+      if (target.length > cap) target.shift();
     }
+    peer.lastMoveReceivedAtMs = nowMs;
+    if (clientTs !== undefined) peer.lastMoveClientTs = clientTs;
 
     if (result.accepted) {
       peer.position = result.position;
