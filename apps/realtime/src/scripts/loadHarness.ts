@@ -104,7 +104,16 @@ interface Metrics {
   transientDbRetryAttempts?: number;
   disconnectReasons?: Record<string, number>;
   heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
-  moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[] };
+  moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[]; windows?: TickWindowSample[] };
+}
+
+/** Mirrors the server's TickWindowSample (apps/realtime/src/roomManager.ts). */
+interface TickWindowSample {
+  windowMs: number;
+  elu: number;
+  cpuWallRatio: number;
+  tickMs: number;
+  maxClusterUsers: number;
 }
 
 /** Mirrors the server's MoveValidationSample (apps/realtime/src/roomManager.ts)
@@ -824,7 +833,11 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       // rejected moves is what would show the "double-drain" collapse
       // (rejected elapsed near 0 while accepted elapsed clusters near the
       // real move interval), not any aggregate tick/event-loop number.
-      const { accepted, rejected } = finalMetrics.moveValidation;
+      const { accepted, rejected, windows = [] } = finalMetrics.moveValidation;
+      const groupLine = (label: string, group: TickWindowSample[]) =>
+        `  tick windows ${label}: n=${group.length} · median ELU ${group.length ? fmt(median(group.map((w) => w.elu)), 3) : "n/a"} · median cpu/wall ${group.length ? fmt(median(group.map((w) => w.cpuWallRatio)), 3) : "n/a"} · median tick ${group.length ? fmt(median(group.map((w) => w.tickMs)), 2) + "ms" : "n/a"}`;
+      console.log(groupLine("WITH cluster (>=2 users, same 10ms)", windows.filter((w) => w.maxClusterUsers >= 2)));
+      console.log(groupLine("WITHOUT cluster", windows.filter((w) => w.maxClusterUsers < 2)));
       const summarize = (samples: { elapsedMs: number }[]) => {
         if (samples.length === 0) return "n=0";
         const sorted = [...samples.map((s) => s.elapsedMs)].sort((a, b) => a - b);

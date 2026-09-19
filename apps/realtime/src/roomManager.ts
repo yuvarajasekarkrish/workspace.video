@@ -84,6 +84,19 @@ export interface TickPhaseTimings {
 
 /** One sampled `move` validation, for diagnosing the correction rate — see
  *  RoomManager.applyMove. Every field describes the SAME move. */
+type EventLoopUtilization = ReturnType<typeof performance.eventLoopUtilization>;
+
+/** Diagnostics only: process-wide load over one tick window, next to the
+ *  largest number of different users whose moves were rejected within the
+ *  same 10ms server instant in that window. */
+export interface TickWindowSample {
+  windowMs: number;
+  elu: number;
+  cpuWallRatio: number;
+  tickMs: number;
+  maxClusterUsers: number;
+}
+
 export interface MoveValidationSample {
   /** Since this user's last ACCEPTED move — the exact basis validateMove
    *  divides by, so this is what determines the speed budget. */
@@ -309,9 +322,27 @@ export class RoomManager implements ActiveParticipantCounter {
   private readonly rejectedMoveSamples: MoveValidationSample[] = [];
   private moveSampleCounter = 0;
 
-  getMoveValidationStats(): { accepted: MoveValidationSample[]; rejected: MoveValidationSample[] } {
-    return { accepted: [...this.acceptedMoveSamples], rejected: [...this.rejectedMoveSamples] };
+  getMoveValidationStats(): {
+    accepted: MoveValidationSample[];
+    rejected: MoveValidationSample[];
+    windows: TickWindowSample[];
+  } {
+    return {
+      accepted: [...this.acceptedMoveSamples],
+      rejected: [...this.rejectedMoveSamples],
+      windows: [...this.tickWindows],
+    };
   }
+
+  /** Diagnostics only. One sample per tick window (the span since the previous
+   *  tick finished), piggybacking on the existing tick — no extra timer. The
+   *  window is instance-wide, not per-room, matching the tick samples above.
+   *  Fixed-size ring, 400 windows ≈ 40s at the 100ms tick. */
+  private static readonly MAX_TICK_WINDOWS = 400;
+  private readonly tickWindows: TickWindowSample[] = [];
+  private tickWindowWriteIndex = 0;
+  private windowBaseline: { wallMs: number; cpuUsage: NodeJS.CpuUsage; elu: EventLoopUtilization } | null = null;
+  private windowRejectBuckets = new Map<number, Set<string>>();
 
   private readonly objectPersistence: ObjectPersistence;
 
@@ -657,6 +688,15 @@ export class RoomManager implements ActiveParticipantCounter {
       target.push(sample);
       if (target.length > cap) target.shift();
     }
+    if (!result.accepted) {
+      const bucket = Math.floor(nowMs / 10);
+      let users = this.windowRejectBuckets.get(bucket);
+      if (!users) {
+        users = new Set();
+        this.windowRejectBuckets.set(bucket, users);
+      }
+      users.add(userId);
+    }
     peer.lastMoveReceivedAtMs = nowMs;
     if (clientTs !== undefined) peer.lastMoveClientTs = clientTs;
 
@@ -944,6 +984,36 @@ export class RoomManager implements ActiveParticipantCounter {
       this.recordSample(this.tickAudioEmitMs, phases.audioEmitMs);
     }
     this.tickWriteIndex++;
+    this.recordTickWindow(performance.now() - start);
+  }
+
+  private recordTickWindow(tickMs: number): void {
+    const wallMs = performance.now();
+    const cpuUsage = process.cpuUsage();
+    const elu = performance.eventLoopUtilization();
+    const prev = this.windowBaseline;
+    const buckets = this.windowRejectBuckets;
+    this.windowRejectBuckets = new Map();
+    this.windowBaseline = { wallMs, cpuUsage, elu };
+    if (!prev) return;
+
+    const windowMs = wallMs - prev.wallMs;
+    const cpuMs = (cpuUsage.user - prev.cpuUsage.user + (cpuUsage.system - prev.cpuUsage.system)) / 1000;
+    let maxClusterUsers = 0;
+    for (const users of buckets.values()) maxClusterUsers = Math.max(maxClusterUsers, users.size);
+    const sample: TickWindowSample = {
+      windowMs,
+      elu: performance.eventLoopUtilization(elu, prev.elu).utilization,
+      cpuWallRatio: windowMs > 0 ? cpuMs / windowMs : 0,
+      tickMs,
+      maxClusterUsers,
+    };
+    if (this.tickWindows.length < RoomManager.MAX_TICK_WINDOWS) {
+      this.tickWindows.push(sample);
+    } else {
+      this.tickWindows[this.tickWindowWriteIndex % RoomManager.MAX_TICK_WINDOWS] = sample;
+    }
+    this.tickWindowWriteIndex++;
   }
 
   private tickBody(roomId: string): TickPhaseTimings | undefined {
