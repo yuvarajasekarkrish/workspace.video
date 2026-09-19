@@ -40,6 +40,7 @@ import { verifySessionToken, assertRoomMembership } from "./auth";
 import { RoomManager, broadcasterFromSocketServer } from "./roomManager";
 import { CountingBroadcaster } from "./countingBroadcaster";
 import { maybeRegisterLoadHarnessRoutes } from "./loadHarnessRoutes";
+import { provisionLoadHarnessWorkspace, teardownLoadHarnessWorkspace } from "./loadHarnessFixtures";
 import { spawnPositionForUser } from "@cosmos/proximity";
 
 const app = Fastify({ logger: true });
@@ -169,7 +170,16 @@ app.get("/internal/metrics", async () => {
   };
 });
 
-if (maybeRegisterLoadHarnessRoutes(app, process.env)) {
+if (
+  maybeRegisterLoadHarnessRoutes(app, process.env, {
+    provision: provisionLoadHarnessWorkspace,
+    teardown: teardownLoadHarnessWorkspace,
+    // Closes over the `let roomManager` binding declared above, not a
+    // value — same trick /internal/metrics uses, since roomManager isn't
+    // constructed until after app.listen() below.
+    getOccupancy: (roomId) => roomManager.occupancy(roomId),
+  })
+) {
   app.log.warn("LOAD_HARNESS_ENABLED=1: /internal/load-harness/* fixture routes are active (dev/test only)");
 }
 

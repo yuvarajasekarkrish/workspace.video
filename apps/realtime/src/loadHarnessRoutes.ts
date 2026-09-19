@@ -10,6 +10,16 @@ const MAX_N = 1000;
 export interface LoadHarnessFixtureDeps {
   provision(n: number): Promise<LoadHarnessWorkspace>;
   teardown(workspaceId: string, userIds: string[]): Promise<void>;
+  /** Phase 10c diagnostic: live occupancy for a room, so the harness can
+   *  poll the server's own idea of "who's really still here" during a
+   *  sustained run and compare it against the socket list it thinks it
+   *  still holds. Mirrors RoomManager.occupancy's own contract: an unknown/
+   *  unowned room returns {active:0, limit:0} rather than throwing — which
+   *  is itself diagnostic (the room silently stopped being owned locally).
+   *  Optional because it needs a constructed RoomManager (server.ts wires
+   *  it in after construction; tests that only exercise provision/teardown
+   *  don't need it). Missing entirely -> 501. */
+  getOccupancy?(roomId: string): { active: number; limit: number };
 }
 
 const defaultDeps: LoadHarnessFixtureDeps = {
@@ -52,6 +62,14 @@ export function maybeRegisterLoadHarnessRoutes(
     }
     await deps.teardown(workspaceId, userIds);
     return { ok: true };
+  });
+
+  app.get<{ Params: { roomId: string } }>("/internal/load-harness/occupancy/:roomId", async (req, reply) => {
+    if (!deps.getOccupancy) {
+      reply.code(501);
+      return { error: "getOccupancy not wired up" };
+    }
+    return deps.getOccupancy(req.params.roomId);
   });
 
   return true;

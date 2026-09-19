@@ -111,6 +111,9 @@ interface IntervalSample {
   avgEmits: number;
   serverEmitBytesPerSec: number;
   redisPublishesPerSec: number;
+  /** Phase 10c diagnostic fields — null when that poll's fetch failed. */
+  occupancyActive: number | null;
+  occupancyLimit: number | null;
 }
 
 async function fetchMetrics(): Promise<Metrics | null> {
@@ -118,6 +121,27 @@ async function fetchMetrics(): Promise<Metrics | null> {
     const res = await fetch(METRICS_URL);
     if (!res.ok) return null;
     return (await res.json()) as Metrics;
+  } catch {
+    return null;
+  }
+}
+
+interface OccupancySnapshot {
+  active: number;
+  limit: number;
+}
+
+/** Phase 10c diagnostic: the server's own idea of "how many are really
+ *  here" for this specific room, polled alongside /internal/metrics — see
+ *  loadHarnessRoutes.ts's /internal/load-harness/occupancy/:roomId. Best
+ *  effort: a failure here doesn't fail the poll, it just leaves this
+ *  interval's occupancy fields null (itself diagnostic — see
+ *  metricsPollOk below for the equivalent on the metrics side). */
+async function fetchOccupancy(roomId: string): Promise<OccupancySnapshot | null> {
+  try {
+    const res = await fetch(`${REALTIME_URL}/internal/load-harness/occupancy/${roomId}`);
+    if (!res.ok) return null;
+    return (await res.json()) as OccupancySnapshot;
   } catch {
     return null;
   }
@@ -159,6 +183,14 @@ interface ConnectedSocket {
   eventCounts: Record<string, number>;
   corrections: number;
   bytesReceived: number;
+  /** Phase 10c diagnostic: null while connected. Set the moment this socket
+   *  disconnects for ANY reason after joining — reconnection is disabled
+   *  (see connectSocket), so this is permanent once set. Absolute
+   *  performance.now() timestamp; converted to "seconds into the
+   *  measurement window" when the report is built, since a disconnect can
+   *  happen during setup too. */
+  disconnectedAtMs: number | null;
+  disconnectReason: string | null;
 }
 
 function connectSocket(
@@ -208,6 +240,18 @@ function attachCounters(entry: ConnectedSocket): void {
     entry.corrections++;
   });
 
+  // Phase 10c diagnostic: with reconnection disabled, this fires exactly
+  // once, permanently, the moment a socket the harness still thinks is
+  // "connected" actually drops — the gap the N=200 anomaly investigation
+  // needs visibility into (see loadHarness.ts's file header and the Phase
+  // 10c plan). Never previously tracked, so a mid-run drop was invisible.
+  entry.socket.on("disconnect", (reason: string) => {
+    if (entry.disconnectedAtMs === null) {
+      entry.disconnectedAtMs = performance.now();
+      entry.disconnectReason = reason;
+    }
+  });
+
   const engine = (entry.socket.io as unknown as { engine?: { on(event: string, cb: (packet: { data?: unknown }) => void): void } }).engine;
   engine?.on("packet", (packet) => {
     if (typeof packet.data === "string") entry.bytesReceived += packet.data.length;
@@ -244,7 +288,12 @@ function summarizeLatencies(values: number[]): { avg: number; p95: number; max: 
   return { avg: average(values), p95, max: sorted[sorted.length - 1]! };
 }
 
-function toIntervalSample(m: Metrics, atSec: number, durationSec: number): IntervalSample {
+function toIntervalSample(
+  m: Metrics,
+  occ: OccupancySnapshot | null,
+  atSec: number,
+  durationSec: number,
+): IntervalSample {
   return {
     atSec,
     durationSec,
@@ -266,23 +315,40 @@ function toIntervalSample(m: Metrics, atSec: number, durationSec: number): Inter
     avgEmits: m.tick.avgEmits,
     serverEmitBytesPerSec: Object.values(m.emitRates).reduce((sum, r) => sum + r.bytesPerSecEstimate, 0),
     redisPublishesPerSec: m.redisPublishesPerSec,
+    occupancyActive: occ?.active ?? null,
+    occupancyLimit: occ?.limit ?? null,
   };
 }
 
-/** Polls /internal/metrics every POLL_INTERVAL_MS until stop() is called. A
- *  self-scheduling setTimeout chain (never overlapping polls) that stops
- *  itself, rather than a free-running interval. */
-function startMetricsPoller(windowStartAt: number): { stop(): Promise<IntervalSample[]> } {
+/** Polls /internal/metrics (+ this room's occupancy — Phase 10c diagnostic)
+ *  every POLL_INTERVAL_MS until stop() is called. A self-scheduling
+ *  setTimeout chain (never overlapping polls) that stops itself, rather
+ *  than a free-running interval. Tracks poll attempts vs successes
+ *  separately from the samples array, since a fully-failed poll produces
+ *  no sample at all but is itself diagnostic (see the Phase 10c plan's
+ *  "log poll failures explicitly" item — N=100's run silently got half the
+ *  expected polls). */
+function startMetricsPoller(
+  windowStartAt: number,
+  roomId: string,
+): { stop(): Promise<{ samples: IntervalSample[]; pollAttempts: number; metricsPollFailures: number }> } {
   const samples: IntervalSample[] = [];
+  let pollAttempts = 0;
+  let metricsPollFailures = 0;
   let lastAt = windowStartAt;
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
   let inFlight: Promise<void> = Promise.resolve();
 
   const poll = async () => {
-    const m = await fetchMetrics();
+    pollAttempts++;
+    const [m, occ] = await Promise.all([fetchMetrics(), fetchOccupancy(roomId)]);
     const now = performance.now();
-    if (m) samples.push(toIntervalSample(m, (now - windowStartAt) / 1000, (now - lastAt) / 1000));
+    if (m) {
+      samples.push(toIntervalSample(m, occ, (now - windowStartAt) / 1000, (now - lastAt) / 1000));
+    } else {
+      metricsPollFailures++;
+    }
     lastAt = now;
   };
 
@@ -302,7 +368,7 @@ function startMetricsPoller(windowStartAt: number): { stop(): Promise<IntervalSa
       if (timer) clearTimeout(timer);
       await inFlight;
       await poll(); // final partial interval up to the end of the window
-      return samples;
+      return { samples, pollAttempts, metricsPollFailures };
     },
   };
 }
@@ -361,6 +427,8 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               eventCounts: {},
               corrections: 0,
               bytesReceived: 0,
+              disconnectedAtMs: null,
+              disconnectReason: null,
             };
             attachCounters(entry);
             connected.push(entry);
@@ -403,7 +471,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     for (const key of Object.keys(correctionReasons)) delete correctionReasons[key];
     await fetchMetrics();
     const windowStartAt = performance.now();
-    const poller = startMetricsPoller(windowStartAt);
+    const poller = startMetricsPoller(windowStartAt, roomId);
 
     let movesSent = 0;
     const walkers = connected.filter((_, i) => !seatedUserIndices.has(i));
@@ -425,12 +493,29 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     await new Promise((resolve) => setTimeout(resolve, WINDOW_MS));
     moveTimers.forEach(clearInterval);
     const windowElapsedSec = (performance.now() - windowStartAt) / 1000;
-    const intervals = await poller.stop();
+    const { samples: intervals, pollAttempts, metricsPollFailures } = await poller.stop();
 
     const totalEvents = connected.reduce((sum, c) => sum + Object.values(c.eventCounts).reduce((a, b) => a + b, 0), 0);
     const corrections = connected.reduce((sum, c) => sum + c.corrections, 0);
     const bytesReceived = connected.reduce((sum, c) => sum + c.bytesReceived, 0);
     const correctionRatePct = movesSent > 0 ? (corrections / movesSent) * 100 : 0;
+
+    // Phase 10c diagnostic: how many of the sockets the harness still
+    // believes are "connected" actually survived the whole window. Any
+    // entry here disconnected for real — reconnection is disabled, so this
+    // is not a reconnect-and-recover situation, it's permanent.
+    const droppedSockets = connected
+      .filter((c) => c.disconnectedAtMs !== null)
+      .map((c) => ({
+        userId: c.userId,
+        disconnectedAtSec: (c.disconnectedAtMs! - windowStartAt) / 1000,
+        reason: c.disconnectReason,
+      }));
+    const socketSurvival = {
+      initial: connected.length,
+      survivedWindow: connected.length - droppedSockets.length,
+      dropped: droppedSockets,
+    };
 
     const worst = (pick: (s: IntervalSample) => number) => (intervals.length ? Math.max(...intervals.map(pick)) : 0);
     const mid = (pick: (s: IntervalSample) => number) => median(intervals.map(pick));
@@ -487,7 +572,25 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     };
 
     const mark = (ok: boolean) => (ok ? "PASS" : "FAIL");
-    console.log(`  intervals sampled: ${intervals.length} over ${fmt(windowElapsedSec, 1)}s`);
+    console.log(
+      `  intervals sampled: ${intervals.length}/${pollAttempts} polls over ${fmt(windowElapsedSec, 1)}s` +
+        (metricsPollFailures > 0 ? `  <-- ${metricsPollFailures} metrics poll(s) FAILED` : ""),
+    );
+    console.log(
+      `  socket survival: ${socketSurvival.survivedWindow}/${socketSurvival.initial} still connected at window end` +
+        (droppedSockets.length > 0 ? `  <-- ${droppedSockets.length} DROPPED mid-run: ${JSON.stringify(droppedSockets.slice(0, 5))}${droppedSockets.length > 5 ? "…" : ""}` : ""),
+    );
+    if (intervals.length > 0) {
+      const occSamples = intervals.filter((s) => s.occupancyActive !== null);
+      if (occSamples.length > 0) {
+        const activeValues = occSamples.map((s) => s.occupancyActive!);
+        console.log(
+          `  server-reported occupancy over window: min ${Math.min(...activeValues)} · max ${Math.max(...activeValues)} · last ${activeValues[activeValues.length - 1]} (expected ${n})`,
+        );
+      } else {
+        console.log("  server-reported occupancy: no successful polls (occupancy route unreachable or not wired up)");
+      }
+    }
     console.log(`  tick p95  median ${fmt(mid((s) => s.tickP95Ms))}ms  worst ${fmt(gate.tickP95.worstMs)}ms  (<= ${GATE.tickP95Ms}) ${mark(checks.tickP95)}`);
     console.log(`  tick p99  median ${fmt(mid((s) => s.tickP99Ms))}ms  worst ${fmt(gate.tickP99.worstMs)}ms  (<= ${GATE.tickP99Ms}) ${mark(checks.tickP99)}`);
     console.log(`  event-loop p99  median ${fmt(mid((s) => s.eventLoopP99Ms))}ms  worst ${fmt(gate.eventLoopP99.worstMs)}ms  (<= ${GATE.eventLoopP99Ms}) ${mark(checks.eventLoopP99)}`);
@@ -535,6 +638,10 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       eventsReceivedPerSec: totalEvents / windowElapsedSec,
       clientBytesPerSec: bytesReceived / windowElapsedSec,
       phaseAvgMedians: phaseMedians,
+      // Phase 10c diagnostics — see the plan for what these are checking.
+      pollAttempts,
+      metricsPollFailures,
+      socketSurvival,
       intervals,
     });
 

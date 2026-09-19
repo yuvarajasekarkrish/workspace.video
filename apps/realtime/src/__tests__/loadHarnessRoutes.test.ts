@@ -35,10 +35,29 @@ describe("load-harness routes guard", () => {
       url: "/internal/load-harness/teardown",
       payload: { workspaceId: "w", userIds: [] },
     });
+    const o = await app.inject({ method: "GET", url: "/internal/load-harness/occupancy/room1" });
     expect(p.statusCode).toBe(404);
     expect(t.statusCode).toBe(404);
+    expect(o.statusCode).toBe(404);
     expect(provision).not.toHaveBeenCalled();
     expect(teardown).not.toHaveBeenCalled();
+  });
+
+  it("returns 501 for occupancy when getOccupancy isn't wired up, even though the flag is enabled", async () => {
+    app = Fastify();
+    maybeRegisterLoadHarnessRoutes(app, { LOAD_HARNESS_ENABLED: "1" }, { provision: vi.fn(), teardown: vi.fn() });
+    const res = await app.inject({ method: "GET", url: "/internal/load-harness/occupancy/room1" });
+    expect(res.statusCode).toBe(501);
+  });
+
+  it("returns the getOccupancy result when wired up", async () => {
+    app = Fastify();
+    const getOccupancy = vi.fn().mockReturnValue({ active: 42, limit: 200 });
+    maybeRegisterLoadHarnessRoutes(app, { LOAD_HARNESS_ENABLED: "1" }, { provision: vi.fn(), teardown: vi.fn(), getOccupancy });
+    const res = await app.inject({ method: "GET", url: "/internal/load-harness/occupancy/room1" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ active: 42, limit: 200 });
+    expect(getOccupancy).toHaveBeenCalledWith("room1");
   });
 
   it("validates n and the teardown body when enabled", async () => {
