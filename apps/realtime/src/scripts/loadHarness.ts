@@ -20,6 +20,10 @@
  *   LOAD_HARNESS_ONLY_N          run a single N instead of 50/100/200
  *   LOAD_HARNESS_ONLY_SCENARIO   spread | cluster
  *   LOAD_HARNESS_INCLUDE_500=1   also run N=500 (server needs LOAD_HARNESS_LIMIT_OVERRIDE=500)
+ *   LOAD_HARNESS_PROXIMITY_BATCH  default off. 1 = every client declares proximityBatch in join_room and
+ *                                 receives proximity:batch (one frame per tick) instead of one
+ *                                 proximity:update per change. The report prints frames AND updates
+ *                                 received, and checks updates received against what the server sent.
  *   LOAD_HARNESS_RECONNECT_COUNT  default 0. That many walkers re-join on a NEW socket a third of
  *                                the way through the window and only then drop the old one — the
  *                                order a browser reconnect produces. Checks the room still
@@ -46,6 +50,7 @@ import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, ServerEv
 import type { EmitTailSnapshot } from "../emitTailRecorder";
 import type { GcSnapshot } from "../gcRecorder";
 import { formatStallReport } from "../stallReport";
+import { checkProximityDelivery } from "../proximityDelivery";
 
 const ROOM_MOVEMENT_CONFIG = movementConfigForLayout(openOffice1, DEFAULT_MOVEMENT_CONFIG);
 
@@ -65,6 +70,7 @@ const LABEL = process.env.LOAD_HARNESS_LABEL ?? "local";
 // by the traffic the busy sockets generate.
 const IDLE_CANARY_COUNT = Math.max(0, Number(process.env.LOAD_HARNESS_IDLE_CANARIES ?? "3"));
 const RECONNECT_COUNT = Math.max(0, Number(process.env.LOAD_HARNESS_RECONNECT_COUNT ?? "0"));
+const PROXIMITY_BATCH = process.env.LOAD_HARNESS_PROXIMITY_BATCH === "1";
 const RESULTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "load-results");
 
 const GATE = {
@@ -115,6 +121,8 @@ interface Metrics {
   heartbeat?: { pingsSent: number; pongsReceived: number; maxPongLatencyMs: number; sampledConnections: number };
   moveValidation?: { accepted: MoveValidationSample[]; rejected: MoveValidationSample[]; windows?: TickWindowSample[] };
   staleDisconnectsIgnored?: number;
+  /** Cumulative since server start; the harness uses window deltas. */
+  proximityBatch?: { updatesTotal: number; batchedUpdatesTotal: number; batchFramesTotal: number; legacyFramesTotal: number };
   /** Phase 17 diagnostics. */
   emitTail?: EmitTailSnapshot;
   gc?: GcSnapshot;
@@ -295,6 +303,9 @@ interface ConnectedSocket {
   userId: string;
   spawnPosition: Point;
   eventCounts: Record<string, number>;
+  /** Proximity updates received in the window, counted per update whichever
+   *  format carried them (one per proximity:update, N per proximity:batch). */
+  proximityUpdatesReceived: number;
   corrections: number;
   bytesReceived: number;
   /** Phase 10c diagnostic: null while connected. Set the moment this socket
@@ -348,7 +359,7 @@ function connectSocket(
 
     socket.on("connect", () => {
       const start = performance.now();
-      socket.emit("join_room", { roomId }, (ack: unknown) => {
+      socket.emit("join_room", { roomId, ...(PROXIMITY_BATCH ? { proximityBatch: true } : {}) }, (ack: unknown) => {
         clearTimeout(timer);
         resolve({ socket, joinLatencyMs: performance.now() - start, ack, spawnPosition });
       });
@@ -364,9 +375,11 @@ function connectSocket(
 const correctionReasons: Record<string, number> = {};
 
 function attachCounters(entry: ConnectedSocket): void {
-  for (const event of ["peers:delta", "proximity:update", "occupancy:update", "seat:update", "zone:changed"]) {
-    entry.socket.on(event, () => {
+  for (const event of ["peers:delta", "proximity:update", "proximity:batch", "occupancy:update", "seat:update", "zone:changed"]) {
+    entry.socket.on(event, (payload: { updates?: unknown[] }) => {
       entry.eventCounts[event] = (entry.eventCounts[event] ?? 0) + 1;
+      if (event === "proximity:update") entry.proximityUpdatesReceived += 1;
+      if (event === "proximity:batch") entry.proximityUpdatesReceived += payload?.updates?.length ?? 0;
     });
   }
   entry.socket.on("move:correction", (payload: { reason?: string }) => {
@@ -596,6 +609,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               userId: user.id,
               spawnPosition: spawnPosition ?? { x: 0, y: 0 },
               eventCounts: {},
+              proximityUpdatesReceived: 0,
               corrections: 0,
               bytesReceived: 0,
               disconnectedAtMs: null,
@@ -650,11 +664,12 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     // below describes only the steady-state window.
     for (const c of connected) {
       c.eventCounts = {};
+      c.proximityUpdatesReceived = 0;
       c.corrections = 0;
       c.bytesReceived = 0;
     }
     for (const key of Object.keys(correctionReasons)) delete correctionReasons[key];
-    await fetchMetrics();
+    const startMetrics = await fetchMetrics();
     const windowStartAt = performance.now();
     const poller = startMetricsPoller(windowStartAt, roomId);
 
@@ -739,6 +754,26 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     const totalEvents = connected.reduce((sum, c) => sum + Object.values(c.eventCounts).reduce((a, b) => a + b, 0), 0);
     const corrections = connected.reduce((sum, c) => sum + c.corrections, 0);
     const bytesReceived = connected.reduce((sum, c) => sum + c.bytesReceived, 0);
+    // Proximity delivery, counted per UPDATE so batched and per-peer runs are
+    // comparable: what clients received against what the server decided to send
+    // in the same window. A validity check on the run, not a success metric.
+    const clientProximityUpdates = connected.reduce((sum, c) => sum + c.proximityUpdatesReceived, 0);
+    const clientProximityFrames = {
+      batch: connected.reduce((sum, c) => sum + (c.eventCounts["proximity:batch"] ?? 0), 0),
+      update: connected.reduce((sum, c) => sum + (c.eventCounts["proximity:update"] ?? 0), 0),
+    };
+    const serverProximity =
+      startMetrics?.proximityBatch && finalMetrics?.proximityBatch
+        ? {
+            updates: finalMetrics.proximityBatch.updatesTotal - startMetrics.proximityBatch.updatesTotal,
+            batchedUpdates: finalMetrics.proximityBatch.batchedUpdatesTotal - startMetrics.proximityBatch.batchedUpdatesTotal,
+            batchFrames: finalMetrics.proximityBatch.batchFramesTotal - startMetrics.proximityBatch.batchFramesTotal,
+            legacyFrames: finalMetrics.proximityBatch.legacyFramesTotal - startMetrics.proximityBatch.legacyFramesTotal,
+          }
+        : null;
+    const proximityDelivery = serverProximity
+      ? checkProximityDelivery({ serverUpdates: serverProximity.updates, clientUpdates: clientProximityUpdates })
+      : null;
     const correctionRatePct = movesSent > 0 ? (corrections / movesSent) * 100 : 0;
 
     // Phase 10c diagnostic: how many of the sockets the harness still
@@ -847,6 +882,8 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
             staleGuardFired: (finalMetrics?.staleDisconnectsIgnored ?? 0) > 0,
           }
         : {}),
+      // Whenever the server reports the counters: updates received must match updates sent.
+      ...(proximityDelivery ? { proximityDelivery: proximityDelivery.ok } : {}),
     };
     passed = Object.values(checks).every(Boolean);
 
@@ -895,6 +932,11 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     if (finalMetrics?.join) {
       const j = finalMetrics.join;
       console.log(`  server-side join latency: avg ${fmt(j.avgMs, 1)}ms  p50 ${fmt(j.p50Ms, 1)}ms  p95 ${fmt(j.p95Ms, 1)}ms  p99 ${fmt(j.p99Ms, 1)}ms  (n=${j.sampleCount}, <= 200ms avg target)`);
+    }
+    if (serverProximity && proximityDelivery) {
+      console.log(
+        `  proximity (mode: ${PROXIMITY_BATCH ? "batched" : "per-peer"}): server sent ${serverProximity.updates} updates in ${serverProximity.batchFrames + serverProximity.legacyFrames} frames (batch ${serverProximity.batchFrames} carrying ${serverProximity.batchedUpdates}, per-peer ${serverProximity.legacyFrames}) · clients received ${clientProximityUpdates} updates in ${clientProximityFrames.batch + clientProximityFrames.update} frames (batch ${clientProximityFrames.batch}, per-peer ${clientProximityFrames.update}) · received/sent ${proximityDelivery.ratio === null ? "n/a" : proximityDelivery.ratio.toFixed(4)} ${mark(proximityDelivery.ok)} (validity check: a FAIL means this run's numbers do not count)`,
+      );
     }
     if (churn.requested > 0) {
       console.log(
@@ -1030,6 +1072,8 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       // Phase 16: reconnect churn and the server's stale-disconnect counter.
       reconnectChurn: churn,
       serverStaleDisconnectsIgnored: finalMetrics?.staleDisconnectsIgnored ?? null,
+      proximityMode: PROXIMITY_BATCH ? "batched" : "per-peer",
+      proximityDelivery: serverProximity && proximityDelivery ? { server: serverProximity, clientUpdates: clientProximityUpdates, clientFrames: clientProximityFrames, ...proximityDelivery } : null,
       // Phase 15 Part A diagnostic.
       rejectionSamples,
       // Phase 14 heartbeat instrumentation, finally surfaced (it was added
