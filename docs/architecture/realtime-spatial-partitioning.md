@@ -487,3 +487,37 @@ p95/p99, corrections, survival, occupancy, join latency, RSS). No threshold was 
 `analyze-stalls` (result JSON overlap report), `analyze-profile` (`.cpuprofile`: busy time inside
 vs after each tick, by library, `--callers=<fn>`), the load harness's reconnect churn
 (`LOAD_HARNESS_RECONNECT_COUNT`), emit-tail and GC recorders exposed on `/internal/metrics`.
+
+## Phase 18: proximity batching, Phase 1 (server + shared + harness clients)
+
+Opt-in: a client declares `proximityBatch: true` in `join_room` and receives one `proximity:batch`
+per tick instead of one `proximity:update` per change. The existing dedup still decides what is an
+update; only the framing changes. The flag is stored on the peer record next to the socket id, so a
+reconnect re-declares it. `PROXIMITY_BATCH=off` makes the server ignore every opt-in. The web client
+does not opt in yet (Phase 2), so no real user is affected.
+
+Codespace A, N=100, 60s, spread, 20 reconnects, co-located, fresh server, harness opted in. The
+baselines are the two earlier per-peer runs (different commits, not a back-to-back run).
+
+| | per-peer run A | per-peer run B | batched |
+|---|---|---|---|
+| post-tick burst p50 / p90 / p99 | 23.2 / 31.6 / 42.0 ms | 22.8 / 31.5 / 41.9 ms | **1.6 / 2.9 / 7.7 ms** |
+| windows with tick+burst >= 50ms | 56/400 | 49/400 | **0/400** |
+| event-loop p99 (median / worst) | 62.21 / 66.78 ms | 59.13 / 64.98 ms | **24.73 / 26.18 ms** |
+| tick p50 / p95 / p99 | 16.8 / 22.8 / 27.2 ms | 15.4 / 21.7 / 27.9 ms | 11.1 / 15.2 / 18.0 ms |
+| audioEmit phase | 11.9 ms | 10.8 ms | 6.2 ms |
+| server CPU, % of one core (median) | 43.6 | 42.3 | 20.2 |
+| emit calls | 1,403,256 | 1,248,379 | 63,298 (59,114 batch frames) |
+
+- Delivery validity: the server queued 1,329,900 updates and clients received 1,329,900 (22.5 per
+  frame): received/sent 1.0000. That volume matches the earlier runs' ~1.25-1.4M emit calls, so the
+  workload is comparable.
+- The event-loop p99 tracks tick + burst as the earlier reading predicted (before: ~63-66ms against
+  59-62ms; now: 22.3ms against 24.7ms).
+- Other gates and corrections unchanged (3 corrections, 0.0053%; occupancy 100 after 20 reconnects).
+- Observed, not explained: RSS ended at 341MB (262 -> 341, last interval +32MB) against 197 -> 266
+  in an earlier run; minor GC pauses were fewer but longer (max 10.2ms, 8 at or above 5ms; total
+  265ms against ~170-185ms). No pause reached 20ms. One run each.
+- Not established: cost on the client side (the harness client parses one event per tick; the web
+  client is Phase 2), behavior with clients on another machine (loopback caveat stands), and the
+  flag-off path on this commit under load (covered by tests and a local smoke only).
