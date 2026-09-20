@@ -13,3 +13,7 @@ build/
 coverage/
 *.tsbuildinfo
 /apps/realtime/load-results/
+
+# Generated deploy-time configs contain secrets and must never be committed
+deploy/**/*.generated.*
+deploy/**/_smoke/
