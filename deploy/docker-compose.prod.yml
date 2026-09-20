@@ -1,0 +1,61 @@
+# The app box, for staging and production (the same recipe; only .env differs).
+# The media server (LiveKit) runs on its own machine; the database is a managed
+# Postgres (DATABASE_URL in .env). Started by deploy/deploy.sh, which sets IMAGE_TAG.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d web realtime caddy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_ADDRESS: ${APP_ADDRESS:?set APP_ADDRESS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - realtime
+
+  web:
+    image: ${REGISTRY:?}/workspace-video-web:${IMAGE_TAG:?}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "3000"
+
+  realtime:
+    image: ${REGISTRY:?}/workspace-video-realtime:${IMAGE_TAG:?}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "4001"
+    expose:
+      - "4001"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  # Run on demand by the deploy script, before the new containers start:
+  #   docker compose run --rm migrate
+  migrate:
+    image: ${REGISTRY:?}/workspace-video-web:${IMAGE_TAG:?}
+    profiles: ["tools"]
+    restart: "no"
+    env_file: .env
+    command: ["pnpm", "--filter", "@workspace-video/db", "exec", "prisma", "migrate", "deploy"]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:
