@@ -72,7 +72,7 @@ jobs:
         run: bash scripts/check-no-old-name.sh
 
       - name: Deploy and script tests (config generator, report checker)
-        run: node --test deploy/livekit/render-config.test.mjs deploy/deploy.test.mjs scripts/check-test-report.test.mjs
+        run: node --test deploy/livekit/render-config.test.mjs deploy/deploy.test.mjs scripts/check-test-report.test.mjs scripts/check-backup-fresh.test.mjs
 
       - name: Typecheck
         run: pnpm -r run typecheck
