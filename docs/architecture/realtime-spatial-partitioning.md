@@ -407,18 +407,27 @@ So the p99 is a recurring structural pattern (about one long iteration in seven 
   23.2ms; the two agree loosely, profiler overhead and different run boundaries).
 - `strace -c` (server and children traced): **663,783 `writev` calls, 12.29s, ~18µs per call**;
   `write` 2,068; `sendto` 367. The two methods agree on the `writev` time within ~11%.
-- Against the ~1.25-1.4M emits of a comparable run (this run's own emit count was not captured):
-  roughly 0.5 `writev` per emit, ~2 packets per call, ~1,000 calls per tick (~10 per socket per
-  tick). Approximate.
+- The same strace run: 609,800 emit calls, 304 measured ticks (the ring was not full, so this is the
+  run's tick count). That is **1.09 `writev` per emit call, ~2,180 per tick, ~22 per socket per
+  tick**. The server was slowed by tracing (304 ticks in a ~60s window instead of ~600, median tick
+  23.4ms instead of ~15.5ms, emits about half of untraced runs), so the ratios describe the
+  traced run; the untraced per-call cost is implied to be lower (~10µs: 13.8s of profiled
+  `writev` over roughly the untraced emit count), an inference, not a measurement.
+- Library source (ws 8.21.3, engine.io 6.6.10): `Sender.sendFrame` corks, writes header and
+  payload, uncorks (one `writev` per WebSocket frame); the Engine.IO WebSocket transport sends
+  each packet as its own frame. So `writev` count tracks packets delivered, one per packet.
+  A room broadcast is encoded once but still costs one `writev` per recipient socket.
 
 ### Reading
 
-The burst is many small `writev` syscalls issued by Engine.IO's per-socket flush after each tick.
-The cost driver is the number of calls, not slow individual calls.
+The burst is one `writev` syscall per delivered packet (per WebSocket frame), flushed after each
+tick. The cost driver is the number of packets delivered per tick (~2,100-2,200 at N=100), not
+slow individual calls, and not a flush that fails to batch: the library does not batch at the
+syscall level by design.
 
 Not established:
-- why the flush is this fragmented (hypothesis: Engine.IO's write-ready cycle interacting with the
-  tick; ~20 small packets per socket per tick such as 98-byte `proximity:update`);
+- whether this holds for the untraced run at the same per-frame ratio (only the traced run has a
+  syscall count);
 - whether loopback co-location inflates the per-call cost (a receiver's network processing can run
   inside the sender's syscall). No run with clients on another machine exists;
 - whether this reproduces for real remote clients.
@@ -448,8 +457,9 @@ p95/p99, corrections, survival, occupancy, join latency, RSS). No threshold was 
 
 ### Open
 
-- Why the flush issues so many small writes; whether fewer or combined packets per tick would cut
-  the syscall count (a protocol/behavior change: needs its own plan, evidence and approval).
+- Whether sending fewer packets per socket per tick (~22 now, many of them 98-byte single-recipient
+  `proximity:update`) would cut the burst. That changes what clients receive: a protocol/behavior
+  change that needs its own plan, evidence, and a check of what the web client handles.
 - A run with the harness on a separate machine.
 - N=200 tick scaling (tick p50 4.0ms -> 14.9ms from N=100 to N=200 in the 8s matrix).
 - RSS plateau (~70MB per room), tick p95 marginal (24.8 vs 25 in one run; ~2ms is instrument
