@@ -1,5 +1,5 @@
-import { prisma } from "@cosmos/db";
-import { DEFAULT_LAYOUT_ID } from "@cosmos/shared";
+import { prisma } from "@workspace-video/db";
+import { DEFAULT_LAYOUT_ID } from "@workspace-video/shared";
 
 export interface LoadHarnessWorkspace {
   workspaceId: string;

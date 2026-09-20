@@ -1,12 +1,12 @@
 import { Application, Container } from "pixi.js";
-import type { Point, RoomLayout } from "@cosmos/shared";
+import type { Point, RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
   resolveLayout,
   DEFAULT_LAYOUT_ID,
   movementConfigForLayout,
   hitTestSeats,
-} from "@cosmos/shared";
+} from "@workspace-video/shared";
 import { peersStore, type PeersState } from "@/store/peersStore";
 import { objectsStore, type ObjectsState } from "@/store/objectsStore";
 import { seatsStore } from "@/store/seatsStore";

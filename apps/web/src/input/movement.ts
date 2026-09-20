@@ -1,4 +1,4 @@
-import { DEFAULT_MOVEMENT_CONFIG, type MovementConfig, type Point as Vec2 } from "@cosmos/shared";
+import { DEFAULT_MOVEMENT_CONFIG, type MovementConfig, type Point as Vec2 } from "@workspace-video/shared";
 
 /**
  * Client-side movement math, kept in lockstep with — but never exceeding —

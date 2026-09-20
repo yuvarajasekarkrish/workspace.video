@@ -10,7 +10,7 @@
  * and can run on a separate machine. JWTs are minted locally with the shared
  * REALTIME_JWT_SECRET.
  *
- *   pnpm --filter @cosmos/realtime run load-harness
+ *   pnpm --filter @workspace-video/realtime run load-harness
  *
  * Env:
  *   REALTIME_URL                 default http://localhost:4001
@@ -53,7 +53,7 @@ import {
   ServerEvents,
   DEV_REALTIME_JWT_SECRET,
   type Point,
-} from "@cosmos/shared";
+} from "@workspace-video/shared";
 import type { EmitTailSnapshot } from "../emitTailRecorder";
 import type { GcSnapshot } from "../gcRecorder";
 import { formatStallReport } from "../stallReport";

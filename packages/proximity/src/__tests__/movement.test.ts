@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateMove } from "../movement.js";
-import { DEFAULT_MOVEMENT_CONFIG } from "@cosmos/shared";
+import { DEFAULT_MOVEMENT_CONFIG } from "@workspace-video/shared";
 
 const cfg = DEFAULT_MOVEMENT_CONFIG; // maxSpeed=2000px/s, bounds 8000x8000
 

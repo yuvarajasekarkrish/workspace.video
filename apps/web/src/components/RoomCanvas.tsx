@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import type { Point, CanvasObjectType } from "@cosmos/shared";
+import type { Point, CanvasObjectType } from "@workspace-video/shared";
 import { PixiStage } from "@/canvas/PixiStage";
 import { SpatialAudioController } from "@/audio/SpatialAudioController";
 import { ConnectionBadge } from "./ConnectionBadge";

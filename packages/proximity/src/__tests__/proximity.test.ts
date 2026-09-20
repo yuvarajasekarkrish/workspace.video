@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeProximityState, tickProximity, pairKey } from "../proximity.js";
-import { DEFAULT_PROXIMITY_CONFIG } from "@cosmos/shared";
+import { DEFAULT_PROXIMITY_CONFIG } from "@workspace-video/shared";
 
 const cfg = DEFAULT_PROXIMITY_CONFIG; // video=200, audio=500, hysteresis=25
 

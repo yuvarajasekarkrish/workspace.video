@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 import { env } from "./env";
 
-export const SESSION_COOKIE_NAME = "cosmos_session";
+export const SESSION_COOKIE_NAME = "workspace_video_session";
 
 export interface SessionUser {
   userId: string;

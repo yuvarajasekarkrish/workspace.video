@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS, type PlanId } from "@cosmos/shared";
+import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS, type PlanId } from "@workspace-video/shared";
 
 /**
  * Every plan renders the identical office floor (openOffice@1) — this form
  * only chooses Workspace.plan, which controls the concurrent-participant
- * limit (see @cosmos/shared's plans.ts), never the layout. No payment is
+ * limit (see @workspace-video/shared's plans.ts), never the layout. No payment is
  * collected; any signed-in user may pick any plan until billing exists.
  */
 export function CreateWorkspaceForm() {

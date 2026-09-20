@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { objectsStore } from "../objectsStore";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
 function makeObject(overrides: Partial<ObjectState> = {}): ObjectState {
   return {

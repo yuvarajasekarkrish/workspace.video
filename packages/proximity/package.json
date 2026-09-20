@@ -1,5 +1,5 @@
 {
-  "name": "@cosmos/proximity",
+  "name": "@workspace-video/proximity",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cosmos/shared": "workspace:*"
+    "@workspace-video/shared": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

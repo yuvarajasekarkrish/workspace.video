@@ -1,4 +1,4 @@
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 3;

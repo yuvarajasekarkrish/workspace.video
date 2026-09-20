@@ -1,6 +1,6 @@
 import { prisma } from "./index";
 import { withTransientRetry } from "./membership";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 import type { CanvasObject, Prisma } from "@prisma/client";
 
 /**

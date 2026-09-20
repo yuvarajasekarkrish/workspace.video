@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@cosmos/db";
+import { prisma } from "@workspace-video/db";
 import { env } from "@/lib/env";
 import { signSessionToken, SESSION_COOKIE_NAME } from "@/lib/session";
 

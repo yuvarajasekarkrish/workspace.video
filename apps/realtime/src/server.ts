@@ -2,9 +2,9 @@ import Fastify from "fastify";
 import { Server as SocketIOServer } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { resolveRoomEndpoint } from "@cosmos/realtime-core";
-import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider, transientRetryStats } from "@cosmos/db";
-import type { ParticipantLimitProvider } from "@cosmos/shared";
+import { resolveRoomEndpoint } from "@workspace-video/realtime-core";
+import { loadRoomObjects, upsertObject, deleteObject, planParticipantLimitProvider, transientRetryStats } from "@workspace-video/db";
+import type { ParticipantLimitProvider } from "@workspace-video/shared";
 import { env } from "./env";
 import {
   instanceId,

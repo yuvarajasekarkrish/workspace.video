@@ -1,10 +1,10 @@
-import type { ZoneKind } from "@cosmos/shared";
+import type { ZoneKind } from "@workspace-video/shared";
 import type { ProximityState } from "./proximity";
 import { NOT_NEARBY } from "./proximity";
 
 /** The pieces of a LayoutZone that matter to the audio rule — a subset
  *  rather than the whole zone object, so this stays a plain data type
- *  independent of @cosmos/shared's layout module beyond ZoneKind itself. */
+ *  independent of @workspace-video/shared's layout module beyond ZoneKind itself. */
 export interface ZoneRef {
   id: string;
   kind: ZoneKind;

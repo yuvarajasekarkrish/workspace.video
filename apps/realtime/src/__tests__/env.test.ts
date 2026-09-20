@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 const REAL_SECRET = "a-different-realtime-secret-fedcba9876543210fedcba98765432";
-const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+const DEV_DATABASE_URL = "postgresql://workspace:workspace@localhost:5432/workspace_video";
 const REAL_DATABASE_URL = "postgresql://app:a-strong-password@db.internal:5432/workspace";
 
 function setVar(name: string, value: string | undefined) {

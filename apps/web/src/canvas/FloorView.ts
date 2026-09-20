@@ -1,6 +1,6 @@
 import { Container, Graphics, Text } from "pixi.js";
-import type { RoomLayout, FurniturePiece, LayoutZone } from "@cosmos/shared";
-import { tileRectToWorld } from "@cosmos/shared";
+import type { RoomLayout, FurniturePiece, LayoutZone } from "@workspace-video/shared";
+import { tileRectToWorld } from "@workspace-video/shared";
 
 /**
  * Static line-art rendering of a RoomLayout's furniture and zone

@@ -40,7 +40,7 @@ export function SignInForm() {
     <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-3">
       <h1 className="text-lg font-semibold">Sign in (dev)</h1>
       <p className="text-sm text-neutral-400">
-        Enter a seeded user&apos;s email. Run <code>pnpm --filter @cosmos/db run seed</code> first
+        Enter a seeded user&apos;s email. Run <code>pnpm --filter @workspace-video/db run seed</code> first
         if you haven&apos;t.
       </p>
       <input

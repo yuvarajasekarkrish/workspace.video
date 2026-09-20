@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertRoomMembership } from "@cosmos/db";
-import { resolveRoomEndpoint, NoLiveInstanceError, RoomOwnerResolutionError } from "@cosmos/realtime-core";
+import { assertRoomMembership } from "@workspace-video/db";
+import { resolveRoomEndpoint, NoLiveInstanceError, RoomOwnerResolutionError } from "@workspace-video/realtime-core";
 import { getSessionUser } from "@/lib/session";
 import { roomLease, instanceRegistry } from "@/lib/realtimeInfra";
 

@@ -7,7 +7,7 @@ import type {
   MovementConfig,
   RoomLayout,
   ProximityUpdateEvent,
-} from "@cosmos/shared";
+} from "@workspace-video/shared";
 import {
   ServerEvents,
   DEFAULT_MOVEMENT_CONFIG,
@@ -18,8 +18,8 @@ import {
   seatById,
   zoneAt,
   zoneById,
-} from "@cosmos/shared";
-import type { RoomLease } from "@cosmos/realtime-core";
+} from "@workspace-video/shared";
+import type { RoomLease } from "@workspace-video/realtime-core";
 import {
   validateMove,
   pairKey,
@@ -36,7 +36,7 @@ import {
   type ObjectDeleteOutcome,
   type SeatClaimResult,
   type ZoneRef,
-} from "@cosmos/proximity";
+} from "@workspace-video/proximity";
 
 /** Reused for every "no counterpart members" return in zoneRecheckCounterparts
  *  so that path doesn't allocate a fresh empty Set every call. Never mutated. */
@@ -245,7 +245,7 @@ export class RoomManager implements ActiveParticipantCounter {
     {
       workspaceId: string;
       /** This room's floor bounds, resolved once at ensureRoom() from its
-       *  layout (see @cosmos/shared's movementConfigForLayout) — applyMove
+       *  layout (see @workspace-video/shared's movementConfigForLayout) — applyMove
        *  validates against THIS, never the global DEFAULT_MOVEMENT_CONFIG,
        *  so a room's floor size is what actually bounds where a peer can
        *  walk. */

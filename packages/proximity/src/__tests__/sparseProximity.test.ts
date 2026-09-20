@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { SparseProximityTracker, tickProximity, pairKey, NOT_NEARBY, type ProximityState } from "../proximity";
 import { UniformGridIndex } from "../spatial-index";
-import { DEFAULT_PROXIMITY_CONFIG } from "@cosmos/shared";
-import type { Point } from "@cosmos/shared";
+import { DEFAULT_PROXIMITY_CONFIG } from "@workspace-video/shared";
+import type { Point } from "@workspace-video/shared";
 
 const cfg = DEFAULT_PROXIMITY_CONFIG;
 const CELL = cfg.audioRadiusPx + cfg.hysteresisPx;

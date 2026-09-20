@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ObjectInteractionController } from "../ObjectInteractionController";
 import { objectsStore } from "@/store/objectsStore";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
 function makeObject(overrides: Partial<ObjectState> = {}): ObjectState {
   return {

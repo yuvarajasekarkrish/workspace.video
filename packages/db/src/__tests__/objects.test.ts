@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "../index";
 import { loadRoomObjects, upsertObject, deleteObject } from "../objects";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
 /**
  * Integration test against a real local Postgres (docker-compose), not a

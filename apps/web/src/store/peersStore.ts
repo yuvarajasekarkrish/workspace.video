@@ -1,7 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useRef, useCallback, useSyncExternalStore } from "react";
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 /**
  * Roster + position state, read entirely outside React.

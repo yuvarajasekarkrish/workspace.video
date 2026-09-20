@@ -266,7 +266,7 @@ for a future multi-instance feature on those paths. Tests:
 
 Full JSON for both runs: `apps/realtime/load-results/same-machine-200-{spread,cluster}.json` and
 `after-local-emit-200-{spread,cluster}.json` (gitignored; regenerate with
-`LOAD_HARNESS_LABEL=<label> LOAD_HARNESS_ONLY_N=200 pnpm --filter @cosmos/realtime run load-harness`).
+`LOAD_HARNESS_LABEL=<label> LOAD_HARNESS_ONLY_N=200 pnpm --filter @workspace-video/realtime run load-harness`).
 
 **Per the plan's own decision gate** ("if it fails for another reason [than an emit phase over
 half the tick], stop and report the numbers — no further optimization without evidence"): with

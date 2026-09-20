@@ -5,7 +5,7 @@ export const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change
 
 /** Development fallback for DATABASE_URL (the local docker-compose database). It
  *  contains a password that is written in the repository, so production refuses it. */
-export const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+export const DEV_DATABASE_URL = "postgresql://workspace:workspace@localhost:5432/workspace_video";
 
 /**
  * Resolves a secret from the environment.

@@ -1,6 +1,6 @@
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
-/** Thin repository seam over @cosmos/db's object functions, so this module
+/** Thin repository seam over @workspace-video/db's object functions, so this module
  *  (and RoomManager, which owns it) can be unit-tested against an in-memory
  *  fake instead of a real Postgres connection. */
 export interface ObjectRepository {

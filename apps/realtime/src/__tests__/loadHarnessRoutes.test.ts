@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
-import { prisma } from "@cosmos/db";
+import { prisma } from "@workspace-video/db";
 import { loadHarnessRoutesEnabled, maybeRegisterLoadHarnessRoutes } from "../loadHarnessRoutes";
 import { provisionLoadHarnessWorkspace, teardownLoadHarnessWorkspace } from "../loadHarnessFixtures";
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@cosmos/db";
+import { prisma } from "@workspace-video/db";
 import { getSessionUser } from "@/lib/session";
 
 /** Returns the current user from the session cookie, or 401. Used by the

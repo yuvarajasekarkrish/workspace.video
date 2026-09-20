@@ -1,4 +1,4 @@
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 /**
  * Seam between the proximity engine and however peer positions happen to be

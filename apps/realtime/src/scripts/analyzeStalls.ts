@@ -3,7 +3,7 @@
  * GC and stall-overlap report the harness prints at the end of a run, from the
  * file on disk. Read-only, no server needed.
  *
- *   pnpm --filter @cosmos/realtime run analyze-stalls -- load-results/phase17-100-spread.json
+ *   pnpm --filter @workspace-video/realtime run analyze-stalls -- load-results/phase17-100-spread.json
  */
 import { readFileSync } from "node:fs";
 import { formatStallReport } from "../stallReport";

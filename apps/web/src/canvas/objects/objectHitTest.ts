@@ -1,4 +1,4 @@
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 /**
  * Pure hit-testing for canvas objects, sibling to viewportMath.ts and built

@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 
-export { assertRoomMembership, assertWorkspaceMembership } from "@cosmos/db";
+export { assertRoomMembership, assertWorkspaceMembership } from "@workspace-video/db";
 
 export interface AuthenticatedUser {
   userId: string;

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Server as SocketIOServer } from "socket.io";
 import { broadcasterFromSocketServer } from "../roomManager";
-import { ServerEvents } from "@cosmos/shared";
+import { ServerEvents } from "@workspace-video/shared";
 
 /** Fake shaped just enough like a socket.io Server for
  *  broadcasterFromSocketServer to exercise both the cross-instance-capable

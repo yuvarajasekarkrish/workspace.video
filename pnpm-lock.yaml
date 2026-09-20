@@ -20,21 +20,21 @@ importers:
 
   apps/realtime:
     dependencies:
-      '@cosmos/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@cosmos/proximity':
-        specifier: workspace:*
-        version: link:../../packages/proximity
-      '@cosmos/realtime-core':
-        specifier: workspace:*
-        version: link:../../packages/realtime-core
-      '@cosmos/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@socket.io/redis-adapter':
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.8)
+      '@workspace-video/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@workspace-video/proximity':
+        specifier: workspace:*
+        version: link:../../packages/proximity
+      '@workspace-video/realtime-core':
+        specifier: workspace:*
+        version: link:../../packages/realtime-core
+      '@workspace-video/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       fastify:
         specifier: ^5.2.0
         version: 5.12.4
@@ -69,16 +69,16 @@ importers:
 
   apps/web:
     dependencies:
-      '@cosmos/db':
+      '@workspace-video/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@cosmos/proximity':
+      '@workspace-video/proximity':
         specifier: workspace:*
         version: link:../../packages/proximity
-      '@cosmos/realtime-core':
+      '@workspace-video/realtime-core':
         specifier: workspace:*
         version: link:../../packages/realtime-core
-      '@cosmos/shared':
+      '@workspace-video/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       ioredis:
@@ -148,12 +148,12 @@ importers:
 
   packages/db:
     dependencies:
-      '@cosmos/shared':
-        specifier: workspace:*
-        version: link:../shared
       '@prisma/client':
         specifier: ^6.2.1
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@workspace-video/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       prisma:
         specifier: ^6.2.1
@@ -170,7 +170,7 @@ importers:
 
   packages/proximity:
     dependencies:
-      '@cosmos/shared':
+      '@workspace-video/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:

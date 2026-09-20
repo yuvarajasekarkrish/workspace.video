@@ -6,13 +6,13 @@ const nextConfig: NextConfig = {
   // transpile them rather than assume pre-built JS. Re-check this list if
   // any package ever gains a real build step.
   transpilePackages: [
-    "@cosmos/shared",
-    "@cosmos/proximity",
-    "@cosmos/db",
-    "@cosmos/realtime-core",
+    "@workspace-video/shared",
+    "@workspace-video/proximity",
+    "@workspace-video/db",
+    "@workspace-video/realtime-core",
   ],
   // Prisma's generated client and engine binaries should not be bundled by
-  // webpack/turbopack; @cosmos/db is server-only (route handlers / RSC).
+  // webpack/turbopack; @workspace-video/db is server-only (route handlers / RSC).
   serverExternalPackages: ["@prisma/client"],
 };
 

@@ -217,7 +217,7 @@ Outcome of the engineering review of Phase 0. The secrets work is already done (
 Lane A and Lane B do not share a directory; both wait for T1 because image names and package names change in it. Lane C needs nothing from T1 except script paths.
 
 ### Implementation tasks
-- [ ] **T1 (P1, human: ~1d / CC: ~1h)** Rename `@cosmos/*`, cookie, devcontainer, database user/name/volumes, and doc headings, in one structural commit. Verify: typecheck, full suites, a scripted check that no old name remains outside historical docs. Files: whole repo (98 files).
+- [ ] **T1 (P1, human: ~1d / CC: ~1h)** Rename `@cosmos/*` (to `@workspace-video/*`), cookie, devcontainer, database user/name/volumes, and doc headings, in one structural commit. Verify: typecheck, full suites, a scripted check that no old name remains outside historical docs. Files: whole repo (98 files).
 - [ ] **T2 (P1, ~2h / ~30min)** Regression tests first for existing untested behaviour: dev-signin 404 in production and flag off; `getSessionUser` cookie ok/none/bad; realtime-token 401 signed out and secret separation. Files: `apps/web/src/lib/__tests__`, `apps/web/src/app/api/auth`.
 - [ ] **T3 (P1, ~2wk / ~2-3d)** One-day Better Auth spike (gate), then email-link sign-in per 1A with the tests in section 9 test plan. Files: `apps/web`, `packages/db/prisma`.
 - [ ] **T4 (P1, ~1d / ~2h)** Protect `/internal` per 1E, with tests. Files: `apps/realtime/src/server.ts`, the proxy config.

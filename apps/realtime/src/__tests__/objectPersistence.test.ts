@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 import { ObjectPersistence, type ObjectRepository } from "../objectPersistence";
 
 function makeObject(overrides: Partial<ObjectState> = {}): ObjectState {

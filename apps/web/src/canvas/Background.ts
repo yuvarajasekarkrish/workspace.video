@@ -7,7 +7,7 @@ const BACKGROUND_COLOR = 0x11141c;
 
 /**
  * A visible world grid + bounds border, sized to the room's own floor
- * bounds (see @cosmos/shared's movementConfigForLayout) so what's drawn
+ * bounds (see @workspace-video/shared's movementConfigForLayout) so what's drawn
  * always matches where an avatar can actually go — never the global
  * DEFAULT_MOVEMENT_CONFIG, which would draw the wrong-sized floor for any
  * layout other than the 8000x8000 default. Built once as static Graphics —

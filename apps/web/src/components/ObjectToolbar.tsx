@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { CanvasObjectType } from "@cosmos/shared";
+import type { CanvasObjectType } from "@workspace-video/shared";
 import { useSelectedObject } from "@/store/objectsStore";
 
 export interface ObjectToolbarProps {

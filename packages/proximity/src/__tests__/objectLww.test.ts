@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 import { resolveObjectWrite, resolveObjectDelete, type ProposedObjectWrite } from "../objectLww";
 
 function makeProposal(overrides: Partial<ProposedObjectWrite> = {}): ProposedObjectWrite {

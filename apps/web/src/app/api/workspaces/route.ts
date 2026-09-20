@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@cosmos/db";
-import { PlanIdSchema, DEFAULT_LAYOUT_ID } from "@cosmos/shared";
+import { prisma } from "@workspace-video/db";
+import { PlanIdSchema, DEFAULT_LAYOUT_ID } from "@workspace-video/shared";
 import { getSessionUser } from "@/lib/session";
 
 // Not a full zod object schema here — apps/web has no direct zod dependency
-// (it only ever reaches zod indirectly through @cosmos/shared/@cosmos/db);
-// PlanIdSchema (already exported from @cosmos/shared) validates `plan`, and
+// (it only ever reaches zod indirectly through @workspace-video/shared/@workspace-video/db);
+// PlanIdSchema (already exported from @workspace-video/shared) validates `plan`, and
 // `name` gets the same manual check style dev-signin/route.ts already uses.
-function parseBody(body: unknown): { name: string; plan: import("@cosmos/shared").PlanId } | null {
+function parseBody(body: unknown): { name: string; plan: import("@workspace-video/shared").PlanId } | null {
   if (typeof body !== "object" || body === null) return null;
   const { name, plan } = body as { name?: unknown; plan?: unknown };
   if (typeof name !== "string") return null;

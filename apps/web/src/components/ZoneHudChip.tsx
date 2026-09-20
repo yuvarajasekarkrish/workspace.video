@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { resolveLayout, zoneAt } from "@cosmos/shared";
+import { resolveLayout, zoneAt } from "@workspace-video/shared";
 import { useZoneStore } from "@/store/zoneStore";
 import { peersStore, useRoster } from "@/store/peersStore";
 

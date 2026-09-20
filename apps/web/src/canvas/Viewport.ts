@@ -1,5 +1,5 @@
 import { Container } from "pixi.js";
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 import {
   exceedsDragThreshold,
   computeCursorAnchoredZoom,
@@ -24,7 +24,7 @@ export interface ViewportCallbacks {
   onObjectGestureEnd?: () => void;
   /** Consulted after onObjectGestureStart declines, in the same
    *  space-held-bypasses-everything / left-button-only slot — a hit on a
-   *  seat (see canvas/objects... no: @cosmos/shared's hitTestSeats over the
+   *  seat (see canvas/objects... no: @workspace-video/shared's hitTestSeats over the
    *  room's static layout). Unlike an object gesture, sitting is a discrete
    *  action with no drag/resize follow-through, so there is no matching
    *  move/end pair: returning true here only suppresses this press's pan

@@ -1,5 +1,5 @@
 import { Container, Graphics } from "pixi.js";
-import type { RoomLayout } from "@cosmos/shared";
+import type { RoomLayout } from "@workspace-video/shared";
 
 const MARKER_RADIUS = 10;
 const OCCUPIED_COLOR = 0x2e9e73;

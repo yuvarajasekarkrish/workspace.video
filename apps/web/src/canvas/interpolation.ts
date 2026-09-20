@@ -14,7 +14,7 @@
  * steps covering the same total elapsed time.
  */
 
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 export type Vec2 = Point;
 

@@ -1,5 +1,5 @@
 {
-  "name": "@cosmos/db",
+  "name": "@workspace-video/db",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cosmos/shared": "workspace:*",
+    "@workspace-video/shared": "workspace:*",
     "@prisma/client": "^6.2.1"
   },
   "devDependencies": {

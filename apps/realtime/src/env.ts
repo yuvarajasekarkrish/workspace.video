@@ -1,4 +1,4 @@
-import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
+import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
 
 /** Central place for realtime-server environment configuration and parsing. */
 

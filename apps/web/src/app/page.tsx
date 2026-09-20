@@ -1,4 +1,4 @@
-import { prisma } from "@cosmos/db";
+import { prisma } from "@workspace-video/db";
 import { getSessionUser } from "@/lib/session";
 import { SignInForm } from "@/components/SignInForm";
 import Link from "next/link";
@@ -28,7 +28,7 @@ export default async function HomePage() {
     <main className="mx-auto max-w-xl p-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="mb-1 text-xl font-semibold">Cosmos Workspace</h1>
+          <h1 className="mb-1 text-xl font-semibold">workspace.video</h1>
           <p className="text-sm text-neutral-400">Signed in as {session.email}</p>
         </div>
         <Link

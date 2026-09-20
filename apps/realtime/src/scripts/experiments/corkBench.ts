@@ -14,7 +14,7 @@
  * Numbers only, no verdict. Every started resource is closed at the end.
  *
  *   CORK_BENCH_SOCKETS=100 CORK_BENCH_FRAMES=22 CORK_BENCH_BLOCKS=5 CORK_BENCH_ROUNDS=60
- *   pnpm --filter @cosmos/realtime exec tsx src/scripts/experiments/corkBench.ts
+ *   pnpm --filter @workspace-video/realtime exec tsx src/scripts/experiments/corkBench.ts
  */
 import { fork } from "node:child_process";
 import { createServer } from "node:http";

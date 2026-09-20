@@ -1,6 +1,6 @@
 import { prisma } from "./index";
 import { withTransientRetry } from "./membership";
-import { PLAN_PARTICIPANT_LIMITS, type ParticipantLimitProvider } from "@cosmos/shared";
+import { PLAN_PARTICIPANT_LIMITS, type ParticipantLimitProvider } from "@workspace-video/shared";
 
 /**
  * Today's ParticipantLimitProvider implementation: reads Workspace.plan and

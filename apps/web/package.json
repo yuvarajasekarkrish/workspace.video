@@ -1,5 +1,5 @@
 {
-  "name": "@cosmos/web",
+  "name": "@workspace-video/web",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,10 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cosmos/db": "workspace:*",
-    "@cosmos/proximity": "workspace:*",
-    "@cosmos/realtime-core": "workspace:*",
-    "@cosmos/shared": "workspace:*",
+    "@workspace-video/db": "workspace:*",
+    "@workspace-video/proximity": "workspace:*",
+    "@workspace-video/realtime-core": "workspace:*",
+    "@workspace-video/shared": "workspace:*",
     "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
     "livekit-client": "^2.22.3",

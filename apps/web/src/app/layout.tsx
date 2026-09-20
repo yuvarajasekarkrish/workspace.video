@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Cosmos Workspace",
+  title: "workspace.video",
   description: "Spatial collaboration workspace — Milestone 1",
 };
 

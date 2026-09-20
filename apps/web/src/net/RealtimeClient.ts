@@ -16,7 +16,7 @@ import {
   type MoveEvent,
   type ObjectUpsertEvent,
   type ObjectDeleteEvent,
-} from "@cosmos/shared";
+} from "@workspace-video/shared";
 import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
 import { proximityStore } from "@/store/proximityStore";

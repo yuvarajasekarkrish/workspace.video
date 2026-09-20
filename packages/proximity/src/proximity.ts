@@ -1,5 +1,5 @@
-import type { Point } from "@cosmos/shared";
-import { DEFAULT_PROXIMITY_CONFIG, type ProximityConfig } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
+import { DEFAULT_PROXIMITY_CONFIG, type ProximityConfig } from "@workspace-video/shared";
 import type { SpatialIndex } from "./spatial-index";
 
 export interface ProximityState {

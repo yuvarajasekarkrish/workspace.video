@@ -6,7 +6,7 @@ import {
   shouldEmitMove,
   WALK_SPEED_PX_PER_SEC,
 } from "../movement";
-import { DEFAULT_MOVEMENT_CONFIG } from "@cosmos/shared";
+import { DEFAULT_MOVEMENT_CONFIG } from "@workspace-video/shared";
 
 describe("WALK_SPEED_PX_PER_SEC", () => {
   it("is comfortably under the server's max speed so ordinary play never trips a correction", () => {

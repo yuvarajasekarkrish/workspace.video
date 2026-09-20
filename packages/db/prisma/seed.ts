@@ -3,7 +3,7 @@
  * what Milestone 1's manual two-browser verification needs. Safe to re-run.
  */
 import { prisma } from "../src/index.js";
-import { PLAN_IDS } from "@cosmos/shared";
+import { PLAN_IDS } from "@workspace-video/shared";
 
 async function main() {
   const userA = await prisma.user.upsert({

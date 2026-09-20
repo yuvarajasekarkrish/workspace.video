@@ -11,7 +11,7 @@ if [ -z "${REALTIME_JWT_SECRET:-}" ] && [ -n "${AUTH_SECRET:-}" ]; then
   echo "AUTH_SECRET is no longer used here. Set REALTIME_JWT_SECRET instead (same value in codespace B)." >&2
 fi
 : "${REALTIME_JWT_SECRET:?Set REALTIME_JWT_SECRET first (use the same value in codespace B), e.g. export REALTIME_JWT_SECRET=\$(openssl rand -hex 32)}"
-export DATABASE_URL="${DATABASE_URL:-postgresql://cosmos:cosmos@localhost:5432/cosmos}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://workspace:workspace@localhost:5432/workspace_video}"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
 
 wait_for() {
@@ -25,15 +25,15 @@ wait_for() {
 }
 
 docker compose up -d postgres redis
-wait_for "Postgres" docker compose exec -T postgres pg_isready -U cosmos
+wait_for "Postgres" docker compose exec -T postgres pg_isready -U workspace
 wait_for "Redis" docker compose exec -T redis redis-cli ping
 
 # Explicit, not relying on devcontainer.json's postCreateCommand having run
 # (or run against the right schema) — generate is idempotent and cheap, so
 # always regenerating here makes this script self-sufficient on any codespace.
-pnpm --filter @cosmos/db run generate
-pnpm --filter @cosmos/db exec prisma migrate deploy
-pnpm --filter @cosmos/realtime run build
+pnpm --filter @workspace-video/db run generate
+pnpm --filter @workspace-video/db exec prisma migrate deploy
+pnpm --filter @workspace-video/realtime run build
 
 echo
 echo "Server codespace name (pass to harness.sh): ${CODESPACE_NAME:-unknown, run 'gh codespace list'}"

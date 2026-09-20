@@ -1,4 +1,4 @@
-import type { Point, ObjectUpsertEvent, ObjectDeleteEvent, CanvasObjectType, ObjectState } from "@cosmos/shared";
+import type { Point, ObjectUpsertEvent, ObjectDeleteEvent, CanvasObjectType, ObjectState } from "@workspace-video/shared";
 import { objectsStore, type ObjectRender } from "@/store/objectsStore";
 import { hitTestObjects, hitTestResizeHandle, applyResize, type ResizeHandle } from "./objectHitTest";
 import { shouldEmitObjectUpdate } from "./objectSync";

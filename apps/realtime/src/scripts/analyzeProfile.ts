@@ -9,8 +9,8 @@
  * it is printed next to the profile's run-length median as a cross-check.
  * Read-only.
  *
- *   pnpm --filter @cosmos/realtime run analyze-profile -- prof/ 23.2
- *   pnpm --filter @cosmos/realtime run analyze-profile -- prof/CPU.x.cpuprofile --callers=writev
+ *   pnpm --filter @workspace-video/realtime run analyze-profile -- prof/ 23.2
+ *   pnpm --filter @workspace-video/realtime run analyze-profile -- prof/CPU.x.cpuprofile --callers=writev
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

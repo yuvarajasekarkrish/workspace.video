@@ -1,5 +1,5 @@
 {
-  "name": "@cosmos/realtime",
+  "name": "@workspace-video/realtime",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -15,10 +15,10 @@
     "analyze-profile": "tsx src/scripts/analyzeProfile.ts"
   },
   "dependencies": {
-    "@cosmos/db": "workspace:*",
-    "@cosmos/proximity": "workspace:*",
-    "@cosmos/realtime-core": "workspace:*",
-    "@cosmos/shared": "workspace:*",
+    "@workspace-video/db": "workspace:*",
+    "@workspace-video/proximity": "workspace:*",
+    "@workspace-video/realtime-core": "workspace:*",
+    "@workspace-video/shared": "workspace:*",
     "@socket.io/redis-adapter": "^8.3.0",
     "fastify": "^5.2.0",
     "ioredis": "^5.4.2",

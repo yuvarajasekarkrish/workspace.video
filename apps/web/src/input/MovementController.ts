@@ -1,5 +1,5 @@
-import type { Point, MovementConfig } from "@cosmos/shared";
-import { DEFAULT_MOVEMENT_CONFIG } from "@cosmos/shared";
+import type { Point, MovementConfig } from "@workspace-video/shared";
+import { DEFAULT_MOVEMENT_CONFIG } from "@workspace-video/shared";
 import {
   integrateKeyboardMove,
   stepTowardWalkTarget,
@@ -58,7 +58,7 @@ export class MovementController {
   constructor(
     initialPosition: Point,
     private readonly callbacks: MovementControllerCallbacks,
-    /** The room's floor bounds (see @cosmos/shared's movementConfigForLayout) —
+    /** The room's floor bounds (see @workspace-video/shared's movementConfigForLayout) —
      *  defaults to the global bounds so every existing call site (which
      *  never passed this) is unaffected. Passed through to the same pure
      *  clamping functions the server's validateMove uses, so the local

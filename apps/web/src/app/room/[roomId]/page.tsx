@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma, assertRoomMembership } from "@cosmos/db";
-import { spawnPositionForUser } from "@cosmos/proximity";
+import { prisma, assertRoomMembership } from "@workspace-video/db";
+import { spawnPositionForUser } from "@workspace-video/proximity";
 import {
   parseRoomConfig,
   resolveLayout,
@@ -9,7 +9,7 @@ import {
   tileRectCenter,
   movementConfigForLayout,
   DEFAULT_MOVEMENT_CONFIG,
-} from "@cosmos/shared";
+} from "@workspace-video/shared";
 import { getSessionUser } from "@/lib/session";
 import { RoomCanvas } from "@/components/RoomCanvas";
 
@@ -41,7 +41,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   // Resolved from Room.config, falling back to the default layout for a
   // missing/unknown id — the identical rule the realtime server applies at
   // join_room, so client and server always agree on where the floor's
-  // bounds and spawn point are (see @cosmos/shared's layouts module).
+  // bounds and spawn point are (see @workspace-video/shared's layouts module).
   const { layoutId } = parseRoomConfig(room.config);
   const layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
   const spawnZone = zoneById(layout, layout.spawnZoneId)!;

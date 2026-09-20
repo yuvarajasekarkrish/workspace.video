@@ -1,4 +1,4 @@
-import { ProximityUpdateEventSchema } from "@cosmos/shared";
+import { ProximityUpdateEventSchema } from "@workspace-video/shared";
 import { proximityStore } from "@/store/proximityStore";
 
 /**

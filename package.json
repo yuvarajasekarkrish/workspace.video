@@ -1,5 +1,5 @@
 {
-  "name": "cosmos-workspace",
+  "name": "workspace-video",
   "private": true,
   "version": "0.0.1",
   "scripts": {
@@ -8,8 +8,8 @@
     "test": "pnpm -r run test",
     "lint": "pnpm -r run lint",
     "typecheck": "pnpm -r run typecheck",
-    "db:migrate": "pnpm --filter @cosmos/db run migrate",
-    "db:generate": "pnpm --filter @cosmos/db run generate"
+    "db:migrate": "pnpm --filter @workspace-video/db run migrate",
+    "db:generate": "pnpm --filter @workspace-video/db run generate"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

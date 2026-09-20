@@ -99,7 +99,7 @@ echo "--- tunnel canary (raw TCP, no app traffic, ~120s) ---"
 # resolves deterministically regardless of npx's cwd behavior.
 CANARY_STATUS=0
 REALTIME_URL=http://localhost:4001 \
-  pnpm --filter @cosmos/realtime run tunnel-canary || CANARY_STATUS=$?
+  pnpm --filter @workspace-video/realtime run tunnel-canary || CANARY_STATUS=$?
 echo "--- end tunnel canary (exit $CANARY_STATUS) ---"
 echo
 
@@ -109,7 +109,7 @@ env -u DATABASE_URL -u REDIS_URL \
   LOAD_HARNESS_ONLY_N="$N" \
   LOAD_HARNESS_ONLY_SCENARIO=spread \
   LOAD_HARNESS_WINDOW_SEC="$WINDOW_SEC" \
-  pnpm --filter @cosmos/realtime run load-harness || STATUS=$?
+  pnpm --filter @workspace-video/realtime run load-harness || STATUS=$?
 
 ls -1 apps/realtime/load-results/"$LABEL"-"$N"-*.json 2>/dev/null || true
 

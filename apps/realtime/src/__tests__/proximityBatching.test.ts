@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { RoomLease } from "@cosmos/realtime-core";
+import type { RoomLease } from "@workspace-video/realtime-core";
 import { RoomManager, type RoomBroadcaster } from "../roomManager.js";
 
 type Emitted = { target: string; event: string; payload: unknown };

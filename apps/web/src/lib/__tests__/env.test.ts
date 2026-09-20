@@ -8,7 +8,7 @@ const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 const DEV_LIVEKIT_KEY = "devkey";
 const DEV_LIVEKIT_SECRET = "dev-livekit-secret-change-me-32chars-min";
 
-const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+const DEV_DATABASE_URL = "postgresql://workspace:workspace@localhost:5432/workspace_video";
 
 const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL"] as const;
 type Key = (typeof KEYS)[number];

@@ -6,7 +6,7 @@ import { CanvasObjectTypeSchema, validateObjectData } from "./objectData";
 // an import cycle with its per-type data validation) and are re-exported to
 // package consumers via index.ts's `export * from "./objectData"` — not
 // re-exported here too, since two `export *` sources for the same name
-// would make it ambiguous (and silently absent) from "@cosmos/shared".
+// would make it ambiguous (and silently absent) from "@workspace-video/shared".
 
 /**
  * Single source of truth for the Socket.IO protocol between apps/web and apps/realtime.

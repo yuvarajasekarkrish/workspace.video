@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, Sprite, Assets, Texture } from "pixi.js";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 import type { ObjectRender } from "@/store/objectsStore";
 
 const SELECTION_COLOR = 0x4f8cff;

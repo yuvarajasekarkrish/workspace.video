@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { RoomLease } from "@cosmos/realtime-core";
-import { openOffice1, DEFAULT_MOVEMENT_CONFIG, DEFAULT_LAYOUT_ID, resolveLayout, type ObjectState } from "@cosmos/shared";
+import type { RoomLease } from "@workspace-video/realtime-core";
+import { openOffice1, DEFAULT_MOVEMENT_CONFIG, DEFAULT_LAYOUT_ID, resolveLayout, type ObjectState } from "@workspace-video/shared";
 import { RoomManager, type RoomBroadcaster } from "../roomManager.js";
 import type { ObjectRepository } from "../objectPersistence.js";
 
-/** In-memory fake standing in for @cosmos/db's real object functions, so
+/** In-memory fake standing in for @workspace-video/db's real object functions, so
  *  these tests never touch Postgres — matching fakeBroadcaster/fakeLease's
  *  role for their respective dependencies. */
 function fakeObjectRepository(seed: ObjectState[] = []): ObjectRepository & {

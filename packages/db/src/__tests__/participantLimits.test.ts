@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { prisma } from "../index";
 import { planParticipantLimitProvider } from "../participantLimits";
-import { PLAN_IDS, PLAN_PARTICIPANT_LIMITS, type PlanId } from "@cosmos/shared";
+import { PLAN_IDS, PLAN_PARTICIPANT_LIMITS, type PlanId } from "@workspace-video/shared";
 
 /**
  * Integration test against a real local Postgres, matching the precedent in

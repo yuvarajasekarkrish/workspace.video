@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: cosmos
-      POSTGRES_PASSWORD: cosmos
-      POSTGRES_DB: cosmos
+      POSTGRES_USER: workspace
+      POSTGRES_PASSWORD: workspace
+      POSTGRES_DB: workspace_video
     ports:
       - "5432:5432"
     volumes:
-      - cosmos_postgres_data:/var/lib/postgresql/data
+      - workspace_video_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cosmos"]
+      test: ["CMD-SHELL", "pg_isready -U workspace"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,7 +22,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - cosmos_redis_data:/data
+      - workspace_video_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -46,5 +46,5 @@ services:
       - "51000-51100:51000-51100/udp"
 
 volumes:
-  cosmos_postgres_data:
-  cosmos_redis_data:
+  workspace_video_postgres_data:
+  workspace_video_redis_data:

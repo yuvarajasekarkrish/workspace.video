@@ -1,4 +1,4 @@
-import type { CanvasObjectType, ObjectState } from "@cosmos/shared";
+import type { CanvasObjectType, ObjectState } from "@workspace-video/shared";
 
 /**
  * Server-authoritative last-write-wins resolution for canvas object edits.

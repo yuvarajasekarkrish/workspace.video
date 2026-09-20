@@ -1,4 +1,4 @@
-// Prisma schema for the Cosmos-like spatial workspace.
+// Prisma schema for the spatial workspace.
 // See D:\Workspace\packages\db\README.md and the project plan for the object
 // model rationale (versioned last-write-wins for CanvasObject, etc).
 

@@ -1,5 +1,5 @@
 import type { Server as SocketIOServer, Socket } from "socket.io";
-import type { RoomLease } from "@cosmos/realtime-core";
+import type { RoomLease } from "@workspace-video/realtime-core";
 import {
   ClientEvents,
   ServerEvents,
@@ -22,8 +22,8 @@ import {
   type RoomLayout,
   type MovementConfig,
   type ParticipantLimitProvider,
-} from "@cosmos/shared";
-import { spawnPositionForUser } from "@cosmos/proximity";
+} from "@workspace-video/shared";
+import { spawnPositionForUser } from "@workspace-video/proximity";
 import type * as Auth from "./auth";
 import type { RoomManager } from "./roomManager";
 import type { EmitTailRecorder } from "./emitTailRecorder";
@@ -137,7 +137,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
         // Resolved from Room.config, falling back to the default layout for a
         // missing/unknown id — the identical rule the room page applies
         // client-side, so client and server always agree on floor bounds and
-        // the spawn point (see @cosmos/shared's layouts module).
+        // the spawn point (see @workspace-video/shared's layouts module).
         const { layoutId } = parseRoomConfig(roomConfig);
         layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
         movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
@@ -157,7 +157,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
           roomLease.claimOrRead(instanceId, roomId),
           // Resolved from Workspace.plan today; a future billing system swaps
           // only this provider (see ParticipantLimitProvider in
-          // @cosmos/shared) — the rest of this flow is unaffected.
+          // @workspace-video/shared) — the rest of this flow is unaffected.
           loadHarnessLimitOverride.getWorkspaceParticipantLimit(workspaceId),
         ]);
         if (owner !== instanceId) {

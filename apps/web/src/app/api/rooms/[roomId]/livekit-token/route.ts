@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertRoomMembership } from "@cosmos/db";
+import { assertRoomMembership } from "@workspace-video/db";
 import { getSessionUser } from "@/lib/session";
 import { signLiveKitToken } from "@/lib/livekit";
 import { env } from "@/lib/env";

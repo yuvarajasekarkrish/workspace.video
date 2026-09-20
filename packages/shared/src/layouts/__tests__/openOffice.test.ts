@@ -78,7 +78,7 @@ describe("openOffice1", () => {
     for (const file of files) {
       const contents = fs.readFileSync(path.join(dir, file), "utf-8");
       expect(contents).not.toMatch(/from ["'].*plans["']/);
-      expect(contents).not.toMatch(/from ["']@cosmos\/shared["']/);
+      expect(contents).not.toMatch(/from ["']@workspace-video\/shared["']/);
     }
   });
 });

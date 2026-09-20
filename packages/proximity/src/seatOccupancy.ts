@@ -1,4 +1,4 @@
-import type { Point } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
 
 /**
  * Pure decision logic for a hot-desk seat claim — sibling to objectLww.ts

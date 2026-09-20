@@ -1,6 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
-import type { ZoneChangedEvent } from "@cosmos/shared";
+import type { ZoneChangedEvent } from "@workspace-video/shared";
 
 /**
  * The LOCAL user's own current zone (meeting room, cabin, stage, audience,

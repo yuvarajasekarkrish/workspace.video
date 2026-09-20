@@ -1,7 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useRef, useCallback, useSyncExternalStore } from "react";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
 /**
  * Canvas object state, read entirely outside React — the object-editing

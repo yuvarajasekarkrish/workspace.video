@@ -1,5 +1,5 @@
-import type { Point } from "@cosmos/shared";
-import { DEFAULT_MOVEMENT_CONFIG, type MovementConfig } from "@cosmos/shared";
+import type { Point } from "@workspace-video/shared";
+import { DEFAULT_MOVEMENT_CONFIG, type MovementConfig } from "@workspace-video/shared";
 
 /**
  * Deterministic per-user spawn offset so multiple avatars joining a room

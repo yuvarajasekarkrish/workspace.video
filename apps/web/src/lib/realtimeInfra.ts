@@ -1,6 +1,6 @@
 import "server-only";
 import { Redis } from "ioredis";
-import { RoomLease, InstanceRegistry } from "@cosmos/realtime-core";
+import { RoomLease, InstanceRegistry } from "@workspace-video/realtime-core";
 import { env } from "./env";
 
 /**
@@ -9,7 +9,7 @@ import { env } from "./env";
  * and the realtime instances agree on lease semantics. Never import this
  * from a client component — ioredis has no browser build.
  *
- * Cached on `globalThis`, the same pattern @cosmos/db uses for its Prisma
+ * Cached on `globalThis`, the same pattern @workspace-video/db uses for its Prisma
  * client: Next.js dev (Turbopack/webpack HMR) can re-evaluate a route
  * module on every request, and without this guard a fresh ioredis client —
  * and its underlying TCP connection/handshake — would be created per
@@ -19,21 +19,21 @@ import { env } from "./env";
  * re-evaluate on every request, so this is a pure safety net there.
  */
 const globalForRedis = globalThis as unknown as {
-  cosmosRedis?: Redis;
-  cosmosRoomLease?: RoomLease;
-  cosmosInstanceRegistry?: InstanceRegistry;
+  workspaceVideoRedis?: Redis;
+  workspaceVideoRoomLease?: RoomLease;
+  workspaceVideoInstanceRegistry?: InstanceRegistry;
 };
 
-const redis = globalForRedis.cosmosRedis ?? new Redis(env.redisUrl);
+const redis = globalForRedis.workspaceVideoRedis ?? new Redis(env.redisUrl);
 
 export const roomLease =
-  globalForRedis.cosmosRoomLease ?? new RoomLease(redis, env.roomLeaseTtlSeconds);
+  globalForRedis.workspaceVideoRoomLease ?? new RoomLease(redis, env.roomLeaseTtlSeconds);
 export const instanceRegistry =
-  globalForRedis.cosmosInstanceRegistry ??
+  globalForRedis.workspaceVideoInstanceRegistry ??
   new InstanceRegistry(redis, { ttlSeconds: env.instanceHeartbeatTtlSeconds });
 
 if (env.nodeEnv !== "production") {
-  globalForRedis.cosmosRedis = redis;
-  globalForRedis.cosmosRoomLease = roomLease;
-  globalForRedis.cosmosInstanceRegistry = instanceRegistry;
+  globalForRedis.workspaceVideoRedis = redis;
+  globalForRedis.workspaceVideoRoomLease = roomLease;
+  globalForRedis.workspaceVideoInstanceRegistry = instanceRegistry;
 }

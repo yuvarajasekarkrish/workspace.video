@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ClientEvents, ServerEvents } from "@cosmos/shared";
+import { ClientEvents, ServerEvents } from "@workspace-video/shared";
 import { proximityStore } from "@/store/proximityStore";
 import { connectionStore } from "@/store/connectionStore";
 

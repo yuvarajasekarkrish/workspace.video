@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import { useRef } from "react";
 import { objectsStore, useSelectedObject } from "@/store/objectsStore";
-import type { ObjectState } from "@cosmos/shared";
+import type { ObjectState } from "@workspace-video/shared";
 
 /**
  * Executable form of the hard rule, extended to objects: a component

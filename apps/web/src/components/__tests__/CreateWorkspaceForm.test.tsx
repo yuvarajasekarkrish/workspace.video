@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS } from "@cosmos/shared";
+import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS } from "@workspace-video/shared";
 import { CreateWorkspaceForm } from "../CreateWorkspaceForm";
 
 vi.mock("next/navigation", () => ({
