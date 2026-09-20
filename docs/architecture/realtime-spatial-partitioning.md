@@ -432,7 +432,7 @@ Not established:
 - The tick-window ring was returned rotated after wrapping and had no timestamp; fixed at the
   producer (`atMs`, oldest-first).
 - The first two `strace` attempts traced a process that did not serve the load (tiny counts, no
-  `writev`); the third, following child processes, worked.
+  `writev`); the third produced a valid trace. What changed between them was not recorded here (a wrapper process traced without `-f` is one possible cause of the failures; a leftover server on the port is another).
 
 ### Scaling note (not comparable to the runs above)
 
