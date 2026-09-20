@@ -25,6 +25,9 @@ export const env = {
   // processes agree without extra setup. In production a missing, blank or
   // public-default value stops the server at start (see resolveSecret).
   realtimeJwtSecret: resolveSecret(process.env, "REALTIME_JWT_SECRET", DEV_REALTIME_JWT_SECRET),
+  // Protects /internal/metrics in production (see internalRoutes.ts). A missing,
+  // blank or public-default value stops the server at start.
+  internalMetricsToken: resolveSecret(process.env, "INTERNAL_METRICS_TOKEN", "dev-only-insecure-metrics-token"),
   instanceHeartbeatTtlSeconds: 30,
   roomLeaseTtlSeconds: 30,
 };

@@ -24,6 +24,7 @@ import { GcRecorder, startGcObserver } from "./gcRecorder";
 import { maybeRegisterLoadHarnessRoutes } from "./loadHarnessRoutes";
 import { provisionLoadHarnessWorkspace, teardownLoadHarnessWorkspace } from "./loadHarnessFixtures";
 import { registerSocketHandlers } from "./socketHandlers";
+import { registerInternalGuard, registerResolveRoomRoute } from "./internalRoutes";
 
 const app = Fastify({ logger: true });
 
@@ -47,28 +48,25 @@ const loadHarnessLimitOverride: ParticipantLimitProvider =
       }
     : planParticipantLimitProvider;
 
+// Production rules for /internal (see internalRoutes.ts). Registered before any
+// route, because a Fastify hook only applies to routes added after it.
+const production = process.env.NODE_ENV === "production";
+registerInternalGuard(app, { production, metricsToken: env.internalMetricsToken });
+
 app.get("/health", async () => ({ ok: true, instanceId }));
 
 // Dev/testing convenience: exercises the exact same resolveRoomEndpoint path
 // the Next.js `GET /api/rooms/:id/endpoint` handler will call in apps/web.
 // Picks uniformly at random among currently live instances as the candidate.
-app.get<{ Params: { roomId: string } }>("/internal/resolve-room/:roomId", async (req, reply) => {
-  try {
-    const endpoint = await resolveRoomEndpoint(
-      req.params.roomId,
-      roomLease,
-      instanceRegistry,
-      async () => {
-        const ids = await instanceRegistry.listActiveIds();
-        if (ids.length === 0) return null;
-        return ids[Math.floor(Math.random() * ids.length)]!;
-      },
-    );
-    return endpoint;
-  } catch (err) {
-    reply.code(503);
-    return { error: (err as Error).message };
-  }
+// Not registered in production (the web app resolves rooms directly).
+registerResolveRoomRoute(app, {
+  production,
+  resolve: (roomId) =>
+    resolveRoomEndpoint(roomId, roomLease, instanceRegistry, async () => {
+      const ids = await instanceRegistry.listActiveIds();
+      if (ids.length === 0) return null;
+      return ids[Math.floor(Math.random() * ids.length)]!;
+    }),
 });
 
 // Declared before roomManager/countingBroadcaster exist (Fastify locks route
