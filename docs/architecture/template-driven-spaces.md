@@ -282,3 +282,91 @@ Phases 19 and 20 are independent of the art and can start now. Phase 22 needs at
 - **Region:** a separate area, such as an island, that could later run on its own server.
 - **Hot desk / assigned desk:** take any free seat, versus a seat that is yours.
 - **Interest management:** sending each person only the updates they can actually see.
+
+---
+
+## 13. Reviewed build plan: the first template, end to end
+
+Outcome of the engineering review of sections 0 to 12. The eight generic phases in section 10 are replaced, for now, by **one vertical slice**: build a single hard template completely with hand-written data, and generalise only what it forces. The Studio, versioning, customer overrides, region splitting and the marketplace are deferred until this slice works.
+
+### Decisions taken in the review
+| # | Decision | Chosen |
+|---|---|---|
+| Scope | Build order | One template, end to end, hand-written data. Generalise afterwards |
+| 1A | Walkable rule | **One shared pure function** used by server validation and the browser's movement, sliding along island edges, rejecting a straight path across empty space, with agreement tests over thousands of random moves |
+| 2A | Avatars behind objects | **A depth map for the whole picture** (chosen against the recommendation of "always on top in v1"). Consequence: every template needs a depth image, and we need a way to produce and check it |
+| 3A | Art for the first template | The look and layout of the reference picture, **built light**. Working reading, to be confirmed: stand-in art generated from shapes in the same layout (islands, bridges, seats, zones), so walkable areas, seats and the depth map are exact. The real picture can replace it later |
+| 4A | Rendering cost | **Draw only when something changes**, tiled compressed art, the depth map **compiled at build time into a few cut-out layers** (no per-pixel depth maths on the user's machine), capped resolution, dots when zoomed out, pause when hidden, and a **tested CPU and frame budget** |
+
+### Why 4A matters (found by reading the code)
+`apps/web/src/canvas/PixiStage.ts` runs a permanent per-frame callback (`app.ticker.add`, line 194) with anti-aliasing on and no idle mode or frame cap, so the canvas redraws every frame even when nothing moves. Adding large art to that loop would make it the heaviest thing in the app. The slice replaces it with a loop that runs only while there is something to draw.
+
+### Build pipeline for a template (proposed)
+```
+  compact description (islands, bridges, seats, zones, heights)
+            |
+            v
+     template builder (command line, the first version of the Studio)
+      |            |             |               |
+      v            v             v               v
+  template.json   art tiles   depth map ---> cut-out layers   validator report
+  (walkable,      (compressed) (exact for      (few masks,     (seats reachable,
+   seats, zones,                stand-in art)   cheap at run    zones closed, etc.)
+   projection)                                  time)
+            \________________ package, content-hashed ________________/
+                     |                                  |
+                     v                                  v
+              SERVER (rules, flat 2D)            BROWSER (drawing, 2.5D)
+```
+
+### The slice, in order
+| Step | What | Done when |
+|---|---|---|
+| **S0 (structural commit first)** | Template package v0: a validated JSON shape, a loader, and today's `openOffice@1` expressed in it with **no behaviour change** | Existing test suite passes unchanged |
+| **S1** | Shared geometry: point in polygon, segment against polygon, `moveWithinWalkable` (slides along edges), a polygon complexity cap and a grid index | Property tests pass: results are deterministic and independent of server or browser |
+| **S2** | Server: walkable check in move validation, polygon zone lookup, seat facing, spawn at an assigned seat or a zone entry | Off-island and across-void moves rejected. Zone edge cases pass |
+| **S3** | Browser movement uses the same shared function | **Agreement test:** for thousands of random moves the browser's result equals the server's verdict. Correction rate at island edges is at baseline |
+| **S4** | Template builder for the stand-in template: shapes to JSON, tiles, depth map, cut-out layers, validator | Builder output validates and is byte-stable across runs |
+| **S5** | Renderer: isometric projection, tile loading, draw-on-change loop, depth ordering with the cut-out layers, dots at low zoom, resolution cap, pause when hidden | Avatars sit on the art and hide behind cut-outs correctly. Projection round trip under one pixel |
+| **S6** | Travel logic: jump to a person, a zone entry or a seat (checked, seat-releasing, cooldown, private zones refused by default) | Tests for each target and each refusal |
+| **S7** | Minimal screens: online list with click to jump, live count, zoom buttons, My Location. Search and full tabs come from the design image later | You can jump to a person and see the count |
+| **S8** | Measure: render budget script (idle, walking, zoomed out; reference laptop and phone) and a **seated-heavy load scenario** placed on the template's real seats at 200 | Numbers reported, one run each. No tuning from a result |
+
+### Test plan
+```
+[+] shared geometry (S1)
+  ├── point in polygon: inside, outside, on an edge, at a vertex, concave, holes   unit + property
+  ├── segment vs polygon: crossing void, tangent, along an edge                    unit + property
+  └── moveWithinWalkable: slides, never ends outside, deterministic                property (many random moves)
+[+] server (S2)   walkable rejection, zone polygons, seat facing, spawn rules, complexity cap       unit
+[+] agreement (S3) browser result == server verdict over random moves at every island edge          property
+[+] builder (S4)  reachability of every seat, one entry per zone, regions connected, sizes capped    unit + golden files
+[+] renderer (S5) projection round trip, depth ordering, draw-on-change (no frames when idle)       unit + visual regression
+[+] travel (S6)   person / zone / seat targets, private refusal, cooldown, seat release             unit + real-socket seam test
+[+] budget (S8)   CPU and frame time in idle / walking / zoomed out, reference laptop and phone      scripted measurement
+```
+Regression rule: S0 must leave every existing test green. S3 protects the Phase 16 rubber-banding fix.
+
+### Failure modes to design for
+| Path | Realistic failure | Handled by |
+|---|---|---|
+| Walkable rule | Browser and server disagree at an edge, snap-backs return | S1 shared function, S3 agreement test |
+| Movement across gaps | A move that crosses empty space between islands passes an end-point check | Segment test, not only end points |
+| Polygon cost | A huge polygon makes every move and tick slow | Complexity cap in the validator, grid index |
+| Depth map | Wrong depth makes avatars flicker behind the wrong things | Exact depth for the stand-in, validator check, visual regression |
+| Idle loop | The draw-on-change loop misses an update and the screen looks frozen | A test that every state change requests a frame |
+| Battery | A change quietly raises idle CPU | S8 budget script gates the release |
+| Template load | The browser cannot fetch or verify the package | Loading and error states, checksum in the join reply |
+
+### Not in this slice
+The Template Studio (the builder is its command-line seed), template versioning and customer overrides, the presence index and full-directory search, region splitting and multi-room hand-off, tiling and depth-mapping the real AI picture, per-plan template limits, N=500.
+
+### Parallel work
+```
+Lane A (engine):   S0 -> S1 -> S2 -> S3            shared geometry, server, browser movement
+Lane B (art/tool): S4 (needs the S0 format)        builder, stand-in template
+Lane C (drawing):  S5 (needs S4 output)            renderer
+Lane D (travel):   S6 (needs S2)                   jump logic
+Then: S7 (needs S5, S6), S8 (needs S5, S7)
+```
+Lanes A and B can start together once S0's format exists. A and C touch different packages (shared/realtime versus web).
