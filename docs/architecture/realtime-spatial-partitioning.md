@@ -521,3 +521,31 @@ baselines are the two earlier per-peer runs (different commits, not a back-to-ba
 - Not established: cost on the client side (the harness client parses one event per tick; the web
   client is Phase 2), behavior with clients on another machine (loopback caveat stands), and the
   flag-off path on this commit under load (covered by tests and a local smoke only).
+
+### Phase 18, Phase 2: the web client opts in and handles `proximity:batch`
+
+- `RealtimeClient.joinRoom()` sends `proximityBatch: true` (first join, retry and reconnect share
+  that one call). It registers a `proximity:batch` handler and keeps the `proximity:update` handler,
+  so an older server, or the server's `PROXIMITY_BATCH=off` kill switch, still works.
+- `net/proximityEvents.ts`: both handlers share one per-item validation. A batch with one bad item
+  applies the good ones and counts the drop (`proximityEventStats.droppedItems`). A batch is written
+  to the store in a single `setPeersProximity`, so `SpatialAudioController` reconciles once per
+  tick instead of once per peer (its `subscribe(() => reconcile())` runs a full diff per store write).
+- Tests: store batch setter, handlers (valid, invalid, empty, non-batch, duplicate peer), a fake-socket
+  wiring test (the join carries the flag, including on `retryJoin`; both handlers reach the store),
+  22 batched updates give 1 reconcile against 22 for 22 separate updates, and the real server's
+  batch parses with the shared schema.
+- Manual check (local machine, two browser windows as two users, headphones): audio rose and faded
+  with avatar distance as before. The local server's counters afterwards showed 614 updates in 614
+  batch frames and 0 per-peer frames, so the browsers were on the batched path.
+
+Environment findings from that check, not caused by batching:
+- A listener owned by the VS Code process held `127.0.0.1:4001` and passed traffic to the Codespace
+  server, so the browser talked to the wrong server (different secret, "Reconnecting..."). Running
+  the local realtime server on another port avoided it.
+- LiveKit in Docker on Windows advertised its container address, so the browser reported "could not
+  establish pc connection". Pinning `rtc.node_ip: 127.0.0.1` in `livekit.yaml` fixed it. That is
+  correct for one machine only and is not committed.
+
+Not measured: the effect in a browser under load (only the reconcile count is asserted), behavior
+against a real old server, and two-window audio with more than two people.
