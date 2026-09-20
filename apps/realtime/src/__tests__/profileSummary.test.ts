@@ -111,3 +111,35 @@ describe("summarizeProfile: the busy run after each tick", () => {
     expect(s.postTick.bucket.totalMs).toBe(0);
   });
 });
+
+describe("summarizeProfile: callers of a function in the post-tick runs", () => {
+  // root -> tick -> emit
+  //      -> processTicksAndRejections -> uncork -> writev     (post-tick flush)
+  //      -> setup -> writev                                    (startup, not in a post-tick run)
+  const n: CpuProfile["nodes"] = [
+    { id: 1, callFrame: frame("(root)"), children: [2, 4, 7, 8] },
+    { id: 2, callFrame: frame("tick", "file:///app/dist/roomManager.js"), children: [3] },
+    { id: 3, callFrame: frame("emit", "file:///app/node_modules/socket.io/dist/socket.js") },
+    { id: 4, callFrame: frame("processTicksAndRejections", "node:internal/process/task_queues"), children: [5] },
+    { id: 5, callFrame: frame("uncork", "node:internal/streams/writable"), children: [6] },
+    { id: 6, callFrame: frame("writev") },
+    { id: 7, callFrame: frame("(idle)") },
+    { id: 8, callFrame: frame("setup", "file:///app/dist/server.js"), children: [9] },
+    { id: 9, callFrame: frame("writev") },
+  ];
+  const build = (segments: [number, number][]): CpuProfile => {
+    const samples: number[] = [];
+    for (const [id, ms] of segments) for (let i = 0; i < ms; i++) samples.push(id);
+    return { nodes: n, samples, timeDeltas: samples.map(() => 1000) };
+  };
+
+  it("groups the named function's post-tick time by caller chain, leaf first", () => {
+    const s = summarizeProfile(build([[9, 4], [7, 5], [3, 10], [6, 8], [7, 5]]), { callersOf: "writev" });
+    expect(s.postTick.callers).toEqual({ "writev < uncork < processTicksAndRejections < (root)": 8 });
+  });
+
+  it("leaves callers empty when not requested", () => {
+    const s = summarizeProfile(build([[3, 10], [6, 8], [7, 5]]));
+    expect(s.postTick.callers).toEqual({});
+  });
+});

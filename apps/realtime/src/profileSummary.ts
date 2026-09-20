@@ -41,6 +41,8 @@ export interface PostTickRuns {
   runMs: number[];
   /** Busy time by group / function over only those runs. */
   bucket: Bucket;
+  /** Busy ms of options.callersOf inside the runs, by caller chain (leaf first). */
+  callers: Record<string, number>;
 }
 
 export interface ProfileSummary {
@@ -84,7 +86,7 @@ function add(bucket: Bucket, fn: string, url: string, lineNumber: number | undef
 /** An idle stretch at least this long ends a post-tick busy run. */
 const RUN_ENDS_AT_IDLE_MS = 2;
 
-export function summarizeProfile(profile: CpuProfile, options: { idleGapMs?: number } = {}): ProfileSummary {
+export function summarizeProfile(profile: CpuProfile, options: { idleGapMs?: number; callersOf?: string } = {}): ProfileSummary {
   const idleGapMs = options.idleGapMs ?? RUN_ENDS_AT_IDLE_MS;
   const parent = new Map<number, number>();
   const byId = new Map(profile.nodes.map((n) => [n.id, n]));
@@ -100,12 +102,20 @@ export function summarizeProfile(profile: CpuProfile, options: { idleGapMs?: num
     return result;
   };
 
+  const chainOf = (id: number): string => {
+    const names: string[] = [];
+    for (let cur: number | undefined = id; cur !== undefined && names.length < 12; cur = parent.get(cur)) {
+      names.push(byId.get(cur)!.callFrame.functionName || "(anonymous)");
+    }
+    return names.join(" < ");
+  };
+
   const out: ProfileSummary = {
     hasTick: false,
     idleMs: 0,
     insideTick: emptyBucket(),
     outsideTick: emptyBucket(),
-    postTick: { runMs: [], bucket: emptyBucket() },
+    postTick: { runMs: [], bucket: emptyBucket(), callers: {} },
   };
 
   // A sample lasts until the next one; the last reuses its own delta.
@@ -158,6 +168,10 @@ export function summarizeProfile(profile: CpuProfile, options: { idleGapMs?: num
     add(out.outsideTick, fn, url, lineNumber, ms);
     if (runOpen) {
       add(out.postTick.bucket, fn, url, lineNumber, ms);
+      if (options.callersOf && fn === options.callersOf) {
+        const chain = chainOf(node.id);
+        out.postTick.callers[chain] = (out.postTick.callers[chain] ?? 0) + ms;
+      }
       runLastBusyEndMs = startMs + ms;
       idleStreakMs = 0;
     }
