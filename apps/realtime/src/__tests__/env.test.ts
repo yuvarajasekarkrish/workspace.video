@@ -8,6 +8,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 const REAL_SECRET = "a-different-realtime-secret-fedcba9876543210fedcba98765432";
+const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+const REAL_DATABASE_URL = "postgresql://app:a-strong-password@db.internal:5432/workspace";
 
 function setVar(name: string, value: string | undefined) {
   if (value === undefined) delete process.env[name];
@@ -22,15 +24,19 @@ async function loadEnv() {
 describe("realtime env: REALTIME_JWT_SECRET in production", () => {
   let savedRealtime: string | undefined;
   let savedAuth: string | undefined;
+  let savedDatabase: string | undefined;
 
   beforeEach(() => {
     savedRealtime = process.env.REALTIME_JWT_SECRET;
     savedAuth = process.env.AUTH_SECRET;
+    savedDatabase = process.env.DATABASE_URL;
+    setVar("DATABASE_URL", REAL_DATABASE_URL);
   });
 
   afterEach(() => {
     setVar("REALTIME_JWT_SECRET", savedRealtime);
     setVar("AUTH_SECRET", savedAuth);
+    setVar("DATABASE_URL", savedDatabase);
     vi.unstubAllEnvs();
     vi.resetModules();
   });
@@ -61,9 +67,19 @@ describe("realtime env: REALTIME_JWT_SECRET in production", () => {
       await expect(loadEnv()).rejects.toThrow(/REALTIME_JWT_SECRET/);
     });
 
-    it("starts and uses the value when it is real", async () => {
+    it("refuses to start when DATABASE_URL is not set or is the public dev default (it carries a password)", async () => {
       setVar("REALTIME_JWT_SECRET", REAL_SECRET);
-      expect((await loadEnv()).realtimeJwtSecret).toBe(REAL_SECRET);
+      setVar("DATABASE_URL", undefined);
+      await expect(loadEnv()).rejects.toThrow(/DATABASE_URL/);
+      setVar("DATABASE_URL", DEV_DATABASE_URL);
+      await expect(loadEnv()).rejects.toThrow(/DATABASE_URL/);
+    });
+
+    it("starts and uses the values when they are real", async () => {
+      setVar("REALTIME_JWT_SECRET", REAL_SECRET);
+      const env = await loadEnv();
+      expect(env.realtimeJwtSecret).toBe(REAL_SECRET);
+      expect(env.databaseUrl).toBe(REAL_DATABASE_URL);
     });
   });
 
@@ -71,7 +87,10 @@ describe("realtime env: REALTIME_JWT_SECRET in production", () => {
     it.each(["development", "test"])("falls back to the dev default when NODE_ENV=%s", async (nodeEnv) => {
       vi.stubEnv("NODE_ENV", nodeEnv);
       setVar("REALTIME_JWT_SECRET", undefined);
-      expect((await loadEnv()).realtimeJwtSecret).toBe(DEV_REALTIME_JWT_SECRET);
+      setVar("DATABASE_URL", undefined);
+      const env = await loadEnv();
+      expect(env.realtimeJwtSecret).toBe(DEV_REALTIME_JWT_SECRET);
+      expect(env.databaseUrl).toBe(DEV_DATABASE_URL);
     });
   });
 });

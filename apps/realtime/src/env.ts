@@ -1,4 +1,4 @@
-import { resolveSecret, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
+import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
 
 /** Central place for realtime-server environment configuration and parsing. */
 
@@ -17,7 +17,8 @@ export const env = {
   // not the LB's). Required for the sticky room-ownership endpoint lookup.
   publicUrl: required("REALTIME_PUBLIC_URL", `http://localhost:${process.env.PORT ?? 4001}`),
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
-  databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
+  // The dev default carries a password, so production refuses it (see resolveDatabaseUrl).
+  databaseUrl: resolveDatabaseUrl(process.env),
   // Verifies the short-lived token clients present at socket handshake; the web
   // app signs it with the same value. This server never sees the web app's
   // sign-in secret (AUTH_SECRET). In dev, falls back to a fixed value so the two

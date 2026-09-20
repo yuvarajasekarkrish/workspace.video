@@ -1,4 +1,4 @@
-import { resolveSecret, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
+import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
 
 /** Central environment configuration for apps/web, server-side only. */
 
@@ -36,7 +36,8 @@ export const env = {
   // value (its REALTIME_JWT_SECRET). Not used for the sign-in cookie.
   realtimeJwtSecret,
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
-  databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
+  // The dev default carries a password, so production refuses it (see resolveDatabaseUrl).
+  databaseUrl: resolveDatabaseUrl(process.env),
   roomLeaseTtlSeconds: 30,
   instanceHeartbeatTtlSeconds: 30,
   // LiveKit media server. Read purely from env (not hardcoded anywhere else)

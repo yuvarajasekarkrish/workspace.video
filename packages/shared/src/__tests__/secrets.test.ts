@@ -37,6 +37,18 @@ describe("resolveSecret", () => {
       expect(message).not.toContain(DEV);
     });
 
+    it("uses a custom hint instead of the random-value advice when one is given", () => {
+      let message = "";
+      try {
+        resolveSecret(prod(), "DATABASE_URL", DEV, "Set DATABASE_URL to your production database address.");
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain("DATABASE_URL");
+      expect(message).toContain("your production database address");
+      expect(message).not.toContain("openssl");
+    });
+
     it("does not treat a value that merely contains the default as the default", () => {
       expect(resolveSecret(prod({ S: `${DEV}-plus-more` }), "S", DEV)).toBe(`${DEV}-plus-more`);
     });

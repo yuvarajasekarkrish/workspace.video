@@ -16,6 +16,7 @@ async function loadSession() {
   vi.stubEnv("REALTIME_JWT_SECRET", REALTIME_JWT_SECRET);
   vi.stubEnv("LIVEKIT_API_KEY", "APIrealKey123");
   vi.stubEnv("LIVEKIT_API_SECRET", "a-real-livekit-secret-0123456789abcdef0123456789");
+  vi.stubEnv("DATABASE_URL", "postgresql://app:a-strong-password@db.internal:5432/workspace");
   vi.resetModules();
   return import("../session");
 }

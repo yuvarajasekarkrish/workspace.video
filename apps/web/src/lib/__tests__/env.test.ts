@@ -8,10 +8,13 @@ const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 const DEV_LIVEKIT_KEY = "devkey";
 const DEV_LIVEKIT_SECRET = "dev-livekit-secret-change-me-32chars-min";
 
-const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"] as const;
+const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+
+const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL"] as const;
 type Key = (typeof KEYS)[number];
 
 const REAL: Record<Key, string> = {
+  DATABASE_URL: "postgresql://app:a-strong-password@db.internal:5432/workspace",
   AUTH_SECRET: "a-real-auth-secret-0123456789abcdef0123456789abcdef",
   REALTIME_JWT_SECRET: "a-different-realtime-secret-fedcba9876543210fedcba98765432",
   LIVEKIT_API_KEY: "APIrealKey123",
@@ -93,6 +96,23 @@ describe("web env: secrets in production", () => {
       await expect(loadEnv()).rejects.toThrow(/LIVEKIT_API_SECRET/);
     });
 
+    it("refuses to start when DATABASE_URL is not set or is the public dev default (it carries a password)", async () => {
+      setEnv({ ...REAL, DATABASE_URL: undefined });
+      await expect(loadEnv()).rejects.toThrow(/DATABASE_URL/);
+      setEnv({ ...REAL, DATABASE_URL: DEV_DATABASE_URL });
+      await expect(loadEnv()).rejects.toThrow(/DATABASE_URL/);
+    });
+
+    it("gives database advice for DATABASE_URL, not 'random value' advice", async () => {
+      setEnv({ ...REAL, DATABASE_URL: undefined });
+      const error = await loadEnv().then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+      expect(error?.message).not.toContain("openssl");
+      expect(error?.message).toMatch(/database/i);
+    });
+
     it("names the variable and says how to fix it, without printing the secret", async () => {
       setEnv({ ...REAL, AUTH_SECRET: DEV_AUTH_SECRET });
       const error = await loadEnv().then(
@@ -111,6 +131,7 @@ describe("web env: secrets in production", () => {
       expect(env.realtimeJwtSecret).toBe(REAL.REALTIME_JWT_SECRET);
       expect(env.livekitApiKey).toBe(REAL.LIVEKIT_API_KEY);
       expect(env.livekitApiSecret).toBe(REAL.LIVEKIT_API_SECRET);
+      expect(env.databaseUrl).toBe(REAL.DATABASE_URL);
     });
   });
 
@@ -123,6 +144,7 @@ describe("web env: secrets in production", () => {
       expect(env.realtimeJwtSecret).toBe(DEV_REALTIME_JWT_SECRET);
       expect(env.livekitApiKey).toBe(DEV_LIVEKIT_KEY);
       expect(env.livekitApiSecret).toBe(DEV_LIVEKIT_SECRET);
+      expect(env.databaseUrl).toBe(DEV_DATABASE_URL);
     });
 
     it("keeps the two dev secrets different, so the split is real even in development", async () => {

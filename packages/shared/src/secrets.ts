@@ -3,6 +3,10 @@
  *  disagree about it. It is public, so production refuses it (see resolveSecret). */
 export const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 
+/** Development fallback for DATABASE_URL (the local docker-compose database). It
+ *  contains a password that is written in the repository, so production refuses it. */
+export const DEV_DATABASE_URL = "postgresql://cosmos:cosmos@localhost:5432/cosmos";
+
 /**
  * Resolves a secret from the environment.
  *
@@ -13,12 +17,14 @@ export const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change
  *
  * `source` is passed in (callers pass `process.env`) so this package needs no
  * Node types and the function can be tested without touching the real environment.
- * The error names the variable and never prints the value.
+ * The error names the variable and never prints the value. `hint` replaces the
+ * default "private random value" advice for values that are not random secrets.
  */
 export function resolveSecret(
   source: Readonly<Record<string, string | undefined>>,
   name: string,
   devDefault: string,
+  hint?: string,
 ): string {
   const raw = source[name];
   if (source.NODE_ENV !== "production") {
@@ -30,8 +36,19 @@ export function resolveSecret(
     const problem = !value ? "is missing or blank" : "is the public development default";
     throw new Error(
       `Refusing to start in production: ${name} ${problem}. ` +
-        `Set ${name} to a private random value, for example: openssl rand -hex 32`,
+        (hint ?? `Set ${name} to a private random value, for example: openssl rand -hex 32`),
     );
   }
   return raw as string;
+}
+
+/** DATABASE_URL: the local development database outside production, and in
+ *  production an explicit address whose password is not the public default. */
+export function resolveDatabaseUrl(source: Readonly<Record<string, string | undefined>>): string {
+  return resolveSecret(
+    source,
+    "DATABASE_URL",
+    DEV_DATABASE_URL,
+    "Set DATABASE_URL to your production database address, with its own password.",
+  );
 }
