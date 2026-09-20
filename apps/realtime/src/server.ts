@@ -248,6 +248,7 @@ app.get("/internal/metrics", async () => {
     redisPublishesPerSec,
     lease: roomManager.getLeaseStats(),
     staleDisconnectsIgnored: roomManager.getStaleDisconnectsIgnored(),
+    proximityBatch: roomManager.getProximityBatchStats(),
     join: joinDuration.snapshot(),
     transientDbRetryAttempts: transientRetryStats.attempts,
     disconnectReasons: { ...disconnectReasonCounts },
@@ -294,6 +295,9 @@ roomManager = new RoomManager(
     deleteObject,
   },
   tickDiagnostics,
+  // Kill switch: PROXIMITY_BATCH=off makes the server ignore every client's
+  // opt-in and send one proximity:update per change, as before batching.
+  { proximityBatchEnabled: process.env.PROXIMITY_BATCH !== "off" },
 );
 
 registerSocketHandlers({

@@ -35,6 +35,16 @@ describe("broadcasterFromSocketServer — Phase 10 local-only tick-path emits", 
     expect(toEmit).not.toHaveBeenCalled();
   });
 
+  it("routes proximity:batch through io.local too, or the tick would publish it to Redis (the Phase 10 bug)", () => {
+    const { io, localToEmit, toEmit } = fakeIo();
+    const broadcaster = broadcasterFromSocketServer(io);
+
+    broadcaster.to("socket1").emit(ServerEvents.ProximityBatch, { updates: [] });
+
+    expect(localToEmit).toHaveBeenCalledWith(ServerEvents.ProximityBatch, { updates: [] });
+    expect(toEmit).not.toHaveBeenCalled();
+  });
+
   it("routes every other event through the normal cross-instance-capable io.to path, unchanged", () => {
     const { io, localToEmit, toEmit } = fakeIo();
     const broadcaster = broadcasterFromSocketServer(io);

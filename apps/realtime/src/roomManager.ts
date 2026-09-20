@@ -6,6 +6,7 @@ import type {
   AdmitParticipantResult,
   MovementConfig,
   RoomLayout,
+  ProximityUpdateEvent,
 } from "@cosmos/shared";
 import {
   ServerEvents,
@@ -165,8 +166,18 @@ export interface RoomBroadcaster {
 const TICK_PATH_LOCAL_ONLY_EVENTS: ReadonlySet<string> = new Set([
   ServerEvents.PeersDelta,
   ServerEvents.ProximityUpdate,
+  // Same tick path, same reason: without this the batch would be published to
+  // Redis on top of local delivery, which is exactly the Phase 10 bug.
+  ServerEvents.ProximityBatch,
   ServerEvents.ZoneChanged,
 ]);
+
+export interface RoomManagerOptions {
+  /** Kill switch for `proximity:batch`. When false the server ignores every
+   *  client's opt-in and sends one `proximity:update` per change, exactly as
+   *  before batching existed. Defaults to true (a client that opts in gets it). */
+  proximityBatchEnabled?: boolean;
+}
 
 export function broadcasterFromSocketServer(io: SocketIOServer): RoomBroadcaster {
   return {
@@ -189,6 +200,12 @@ interface PeerState {
   name: string;
   avatarUrl: string | null;
   socketId: string;
+  /** This CONNECTION understands `proximity:batch` (declared in its own
+   *  join_room). It lives on the record next to `socketId` on purpose: both
+   *  are overwritten together by admitAndAddPeer on every join, so a socket
+   *  id and a capability always come from the same join and an old socket
+   *  can never lend its capability to a newer one. Absent means legacy. */
+  proximityBatch?: boolean;
   position: Point;
   acceptedAtMs: number;
   /** Unspent movement allowance carried from the last accepted move (ms of
@@ -392,7 +409,9 @@ export class RoomManager implements ActiveParticipantCounter {
     private readonly leaseRefreshIntervalMs = 10_000,
     objectRepository: ObjectRepository = noopObjectRepository,
     private readonly diagnostics?: TickDiagnostics,
+    options: RoomManagerOptions = {},
   ) {
+    this.proximityBatchEnabled = options.proximityBatchEnabled ?? true;
     // Owned internally (not injected as a whole) because it needs a
     // `getObject` closure over this.rooms — constructing it here, rather
     // than requiring a caller to somehow close over a not-yet-constructed
@@ -933,6 +952,53 @@ export class RoomManager implements ActiveParticipantCounter {
    *  of Phase 9's optimization besides pair-check count. */
   private readonly tickEmitCounts: number[] = [];
   private tickEmitCountThisTick = 0;
+
+  private readonly proximityBatchEnabled: boolean;
+  /** Updates the tick decided to send this tick to listeners that opted in to
+   *  `proximity:batch`, keyed by listener userId, flushed as one frame each at
+   *  the end of the audio loop. Reused across ticks (cleared, not rebuilt). The
+   *  existing dedup (lastEmittedAudio / shouldEmitAudioChange) stays the only
+   *  thing that decides WHAT is an update; this only changes how it is framed. */
+  private readonly pendingProximityBatches = new Map<string, ProximityUpdateEvent[]>();
+  /** Cumulative, both formats, so a change in framing is never mistaken for a
+   *  change in what was delivered: updatesTotal = batchedUpdatesTotal +
+   *  legacyFramesTotal (a legacy frame carries exactly one update). */
+  private proximityUpdatesTotal = 0;
+  private proximityBatchedUpdatesTotal = 0;
+  private proximityBatchFramesTotal = 0;
+  private proximityLegacyFramesTotal = 0;
+
+  getProximityBatchStats(): {
+    updatesTotal: number;
+    batchedUpdatesTotal: number;
+    batchFramesTotal: number;
+    legacyFramesTotal: number;
+  } {
+    return {
+      updatesTotal: this.proximityUpdatesTotal,
+      batchedUpdatesTotal: this.proximityBatchedUpdatesTotal,
+      batchFramesTotal: this.proximityBatchFramesTotal,
+      legacyFramesTotal: this.proximityLegacyFramesTotal,
+    };
+  }
+
+  /** One `proximity:batch` per listener that has queued updates, then clear.
+   *  The socket id is read from the peer record NOW (the same record that holds
+   *  the capability), and a listener that is no longer present is skipped. */
+  private flushProximityBatches(room: NonNullable<ReturnType<RoomManager["rooms"]["get"]>>): void {
+    try {
+      for (const [listenerUserId, updates] of this.pendingProximityBatches) {
+        const socketId = room.peers.get(listenerUserId)?.socketId;
+        if (!socketId || updates.length === 0) continue;
+        this.broadcaster.to(socketId).emit(ServerEvents.ProximityBatch, { updates });
+        this.proximityBatchedUpdatesTotal += updates.length;
+        this.proximityBatchFramesTotal++;
+        this.tickEmitCountThisTick++;
+      }
+    } finally {
+      this.pendingProximityBatches.clear();
+    }
+  }
   /** Phase 10: per-phase breakdown of the same tick, so "emission is
    *  dominant" is a measured claim, not a guess. Same ring-buffer treatment
    *  as tickDurationsMs, sharing its write index (all five arrays are
@@ -1215,20 +1281,27 @@ export class RoomManager implements ActiveParticipantCounter {
     const afterZone = performance.now();
 
     this.tickPairCount = candidatePairs.size;
-    for (const key of candidatePairs) {
-      const [a, b] = key.split(":") as [string, string];
-      if (!room.peers.has(a) || !room.peers.has(b)) continue; // one side left this tick
+    // The flush is in a finally: maybeEmitDirectedAudio records an update as
+    // sent when it QUEUES it, so a throw mid-loop must still deliver what was
+    // queued, or the dedup would suppress those updates until the value changes.
+    try {
+      for (const key of candidatePairs) {
+        const [a, b] = key.split(":") as [string, string];
+        if (!room.peers.has(a) || !room.peers.has(b)) continue; // one side left this tick
 
-      // A pair with no stored raw entry is genuinely NOT_NEARBY — the sparse
-      // tracker (unlike Phase 8's full-pair Map) never stores that state,
-      // so "missing" and "NOT_NEARBY" mean the same thing here.
-      const raw = room.proximity.stateFor(a, b) ?? NOT_NEARBY;
+        // A pair with no stored raw entry is genuinely NOT_NEARBY — the sparse
+        // tracker (unlike Phase 8's full-pair Map) never stores that state,
+        // so "missing" and "NOT_NEARBY" mean the same thing here.
+        const raw = room.proximity.stateFor(a, b) ?? NOT_NEARBY;
 
-      const zoneA = zoneRefFor(a);
-      const zoneB = zoneRefFor(b);
+        const zoneA = zoneRefFor(a);
+        const zoneB = zoneRefFor(b);
 
-      this.maybeEmitDirectedAudio(room, a, b, effectiveAudio(raw, zoneA, zoneB));
-      this.maybeEmitDirectedAudio(room, b, a, effectiveAudio(raw, zoneB, zoneA));
+        this.maybeEmitDirectedAudio(room, a, b, effectiveAudio(raw, zoneA, zoneB));
+        this.maybeEmitDirectedAudio(room, b, a, effectiveAudio(raw, zoneB, zoneA));
+      }
+    } finally {
+      this.flushProximityBatches(room);
     }
 
     const afterAudioEmit = performance.now();
@@ -1330,11 +1403,24 @@ export class RoomManager implements ActiveParticipantCounter {
       room.audienceOf.get(speakerUserId)?.delete(listenerUserId);
     }
 
-    const listenerSocketId = room.peers.get(listenerUserId)?.socketId;
-    if (listenerSocketId) {
-      this.broadcaster.to(listenerSocketId).emit(ServerEvents.ProximityUpdate, { peerId: speakerUserId, ...state });
-      this.tickEmitCountThisTick++;
+    // Capability and socket id are read from the SAME peer record: both were
+    // written by the connection's latest join_room.
+    const listener = room.peers.get(listenerUserId);
+    if (!listener) return;
+    const update = { peerId: speakerUserId, ...state };
+    this.proximityUpdatesTotal++;
+    if (listener.proximityBatch === true && this.proximityBatchEnabled) {
+      let queued = this.pendingProximityBatches.get(listenerUserId);
+      if (!queued) {
+        queued = [];
+        this.pendingProximityBatches.set(listenerUserId, queued);
+      }
+      queued.push(update);
+      return;
     }
+    this.broadcaster.to(listener.socketId).emit(ServerEvents.ProximityUpdate, update);
+    this.proximityLegacyFramesTotal++;
+    this.tickEmitCountThisTick++;
   }
 
   /** Rooms whose eviction is in flight (awaiting the object flush). The record
