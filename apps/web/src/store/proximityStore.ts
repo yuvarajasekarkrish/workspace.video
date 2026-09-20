@@ -21,6 +21,12 @@ export interface ProximityState {
   /** Applied on every proximity:update for one peer. */
   setPeerProximity: (peerId: string, state: DesiredPeerAudio) => void;
 
+  /** Applied on proximity:batch — every peer in the batch in ONE write. One
+   *  Map copy and one notification instead of one per peer, which matters
+   *  because SpatialAudioController runs a full reconcile() per notification.
+   *  Later entries for the same peer win. Nothing to apply means no write. */
+  setPeersProximity: (updates: ReadonlyArray<{ peerId: string; state: DesiredPeerAudio }>) => void;
+
   /** Applied on peers:snapshot — a wholesale roster replacement, so any
    *  cached desired-audio entry for a userId no longer in the roster must be
    *  dropped. Mirrors peersStore.applySnapshot's "replace, never merge" rule
@@ -43,6 +49,13 @@ export const proximityStore = createStore<ProximityState>()(
     setPeerProximity: (peerId, state) => {
       const next = new Map(get().desired);
       next.set(peerId, state);
+      set({ desired: next });
+    },
+
+    setPeersProximity: (updates) => {
+      if (updates.length === 0) return;
+      const next = new Map(get().desired);
+      for (const { peerId, state } of updates) next.set(peerId, state);
       set({ desired: next });
     },
 

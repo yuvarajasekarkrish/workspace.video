@@ -52,4 +52,35 @@ describe("proximityStore", () => {
     proximityStore.getState().setPeerProximity("u2", { audioSubscribed: false, audioGain: 0 });
     expect(proximityStore.getState().desired.get("u2")).toEqual({ audioSubscribed: false, audioGain: 0 });
   });
+
+  it("setPeersProximity applies many peers with one new map and one notification", () => {
+    proximityStore.getState().setPeerProximity("keep", { audioSubscribed: true, audioGain: 1 });
+    let notifications = 0;
+    const unsubscribe = proximityStore.subscribe(() => notifications++);
+
+    proximityStore.getState().setPeersProximity([
+      { peerId: "u1", state: { audioSubscribed: true, audioGain: 0.3 } },
+      { peerId: "u2", state: { audioSubscribed: false, audioGain: 0 } },
+    ]);
+    unsubscribe();
+
+    expect(notifications).toBe(1);
+    const desired = proximityStore.getState().desired;
+    expect(desired.get("u1")).toEqual({ audioSubscribed: true, audioGain: 0.3 });
+    expect(desired.get("u2")).toEqual({ audioSubscribed: false, audioGain: 0 });
+    expect(desired.get("keep")).toEqual({ audioSubscribed: true, audioGain: 1 });
+  });
+
+  it("setPeersProximity with nothing to apply neither allocates nor notifies", () => {
+    proximityStore.getState().setPeerProximity("u1", { audioSubscribed: true, audioGain: 1 });
+    const before = proximityStore.getState().desired;
+    let notifications = 0;
+    const unsubscribe = proximityStore.subscribe(() => notifications++);
+
+    proximityStore.getState().setPeersProximity([]);
+    unsubscribe();
+
+    expect(notifications).toBe(0);
+    expect(proximityStore.getState().desired).toBe(before);
+  });
 });
