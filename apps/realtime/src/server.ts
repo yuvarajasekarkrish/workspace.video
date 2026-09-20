@@ -90,24 +90,18 @@ let countingBroadcaster: CountingBroadcaster;
 const eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
 eventLoopDelay.enable();
 
-// Phase 17 diagnostics (read-only): where does the event-loop stall come from.
+// Phase 17 diagnostics (read-only): where does the event-loop delay come from.
 // The emit-tail recorder and the GC recorder stamp everything on the
-// performance.now() clock; the tick reads a PRIVATE loop-delay histogram once
-// per window and resets it — separate from eventLoopDelay above, whose
-// "reset on each /internal/metrics read" contract must stay untouched.
+// performance.now() clock. A second loop-delay histogram, read and reset at
+// every tick, was tried and removed: resetting drops the sample that spans the
+// tick, so it could not see the tick's own blocking. The tick now measures the
+// poll-phase work that follows it directly (RoomManager's postTickMs).
 const emitTail = new EmitTailRecorder();
 const gcRecorder = new GcRecorder();
 const stopGcObserver = startGcObserver(gcRecorder);
-const tickLoopDelay = monitorEventLoopDelay({ resolution: 10 });
-tickLoopDelay.enable();
 const tickDiagnostics: TickDiagnostics = {
   beginTick: () => emitTail.beginTick(),
   endTick: () => emitTail.endTick(),
-  takeLoopMaxMs: () => {
-    const maxMs = tickLoopDelay.max / 1e6;
-    tickLoopDelay.reset();
-    return maxMs;
-  },
 };
 
 // CPU and emit-rate metrics are both "since the last /internal/metrics
@@ -325,7 +319,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     // in progress at shutdown doesn't silently lose edits.
     await roomManager.disposeAll();
     stopGcObserver();
-    tickLoopDelay.disable();
     await stopHeartbeat();
     await app.close();
     process.exit(0);

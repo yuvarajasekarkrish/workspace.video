@@ -101,9 +101,12 @@ export interface TickWindowSample {
   /** Emit calls made inside this window's tick, and the time spent in them. */
   emitCount: number;
   emitMs: number;
-  /** Largest event-loop delay sample seen since the previous window (raw
-   *  histogram value, includes its ~10ms sampling interval). */
-  loopMaxMs: number;
+  /** How long after this window's tick ended the loop reached its check phase
+   *  (a setImmediate scheduled at the end of the tick). The poll phase, where
+   *  inbound frames and write completions are processed, runs in between, so
+   *  this is the size of the burst of work that follows the tick. null until
+   *  that immediate has run, and always null with diagnostics off. */
+  postTickMs: number | null;
 }
 
 /** Diagnostics hooks the tick calls; supplied by server.ts, absent in tests
@@ -111,8 +114,6 @@ export interface TickWindowSample {
 export interface TickDiagnostics {
   beginTick(): void;
   endTick(): { emitCount: number; emitMs: number };
-  /** Largest loop-delay sample since the last call, then resets. */
-  takeLoopMaxMs(): number;
 }
 
 export interface MoveValidationSample {
@@ -1050,13 +1051,21 @@ export class RoomManager implements ActiveParticipantCounter {
       this.recordSample(this.tickAudioEmitMs, phases.audioEmitMs);
     }
     this.tickWriteIndex++;
-    this.recordTickWindow(performance.now() - start, emitTick);
+    const sample = this.recordTickWindow(performance.now() - start, emitTick);
+    if (this.diagnostics && sample) {
+      // One immediate per tick, self-terminating: it fires once in this loop
+      // iteration's check phase, after the poll phase has processed whatever
+      // I/O the tick left queued, and records how long that took.
+      setImmediate(() => {
+        sample.postTickMs = performance.now() - sample.atMs;
+      });
+    }
   }
 
-  private recordTickWindow(tickMs: number, emitTick: { emitCount: number; emitMs: number } | undefined): void {
-    // Read (and reset) every tick, including the baseline one, so the first
-    // real window does not inherit delay from before it started.
-    const loopMaxMs = this.diagnostics?.takeLoopMaxMs() ?? 0;
+  private recordTickWindow(
+    tickMs: number,
+    emitTick: { emitCount: number; emitMs: number } | undefined,
+  ): TickWindowSample | undefined {
     const wallMs = performance.now();
     const cpuUsage = process.cpuUsage();
     const elu = performance.eventLoopUtilization();
@@ -1064,7 +1073,7 @@ export class RoomManager implements ActiveParticipantCounter {
     const buckets = this.windowRejectBuckets;
     this.windowRejectBuckets = new Map();
     this.windowBaseline = { wallMs, cpuUsage, elu };
-    if (!prev) return;
+    if (!prev) return undefined;
 
     const windowMs = wallMs - prev.wallMs;
     const cpuMs = (cpuUsage.user - prev.cpuUsage.user + (cpuUsage.system - prev.cpuUsage.system)) / 1000;
@@ -1079,7 +1088,7 @@ export class RoomManager implements ActiveParticipantCounter {
       maxClusterUsers,
       emitCount: emitTick?.emitCount ?? 0,
       emitMs: emitTick?.emitMs ?? 0,
-      loopMaxMs,
+      postTickMs: null,
     };
     if (this.tickWindows.length < RoomManager.MAX_TICK_WINDOWS) {
       this.tickWindows.push(sample);
@@ -1087,6 +1096,7 @@ export class RoomManager implements ActiveParticipantCounter {
       this.tickWindows[this.tickWindowWriteIndex % RoomManager.MAX_TICK_WINDOWS] = sample;
     }
     this.tickWindowWriteIndex++;
+    return sample;
   }
 
   private tickBody(roomId: string): TickPhaseTimings | undefined {

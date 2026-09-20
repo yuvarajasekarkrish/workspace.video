@@ -1,6 +1,12 @@
 import { EmitTailRecorder, type EmitTailSnapshot, type TailStat } from "./emitTailRecorder";
 import { GcRecorder, type GcSnapshot } from "./gcRecorder";
-import { summarizeStallsCovered, type StallGroup, type StallWindow } from "./stallSummary";
+import { iterationMs, summarizeStallsCovered, type StallGroup, type StallWindow } from "./stallSummary";
+
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]!;
+}
 
 /** Formats the Phase 17 diagnostics as plain lines, shared by the load harness
  *  and the offline analysis script. Numbers only: no verdict text, so the
@@ -27,6 +33,19 @@ export function formatStallReport(input: {
 }): string[] {
   const lines: string[] = [];
   const { windows, emitTail, gc } = input;
+
+  const measured = windows.filter((w) => w.postTickMs != null);
+  if (measured.length > 0) {
+    const burst = measured.map((w) => w.postTickMs!);
+    const iteration = measured.map(iterationMs);
+    const q = (values: number[]) =>
+      `p50 ${f(percentile(values, 0.5))} · p90 ${f(percentile(values, 0.9))} · p99 ${f(percentile(values, 0.99))} · max ${f(percentile(values, 1))}`;
+    lines.push(`  post-tick burst (delay from tick end to the loop's check phase), ${measured.length} windows, ms: ${q(burst)}`);
+    lines.push(
+      `  tick + burst (what a loop-delay sample across the tick would see, minus its own ~10ms interval), ms: ${q(iteration)}` +
+        ` · windows >= 50ms: ${iteration.filter((v) => v >= 50).length}/${iteration.length}`,
+    );
+  }
 
   if (emitTail) {
     lines.push("  emit tail (every emit call timed; counts are exact, not sampled):");
@@ -60,11 +79,11 @@ export function formatStallReport(input: {
       { ops: EmitTailRecorder.MAX_OPS, pauses: GcRecorder.MAX_PAUSES },
     );
     lines.push(
-      `  stall overlap (stalled = a window whose largest loop-delay sample was >= ${s.stallMs}ms; ` +
+      `  long-window overlap (long = tick + post-tick burst >= ${s.stallMs}ms; ` +
         `analyzed ${s.analyzedWindows}/${s.totalWindows} windows${s.truncated ? ", earlier ones dropped: a full ring no longer covers them" : ""}):`,
     );
-    lines.push(groupLine(`stalled (loopMaxMs >= ${s.stallMs})`, s.stalled));
-    lines.push(groupLine(`control (loopMaxMs < ${s.stallMs})`, s.control));
+    lines.push(groupLine(`long (tick+burst >= ${s.stallMs})`, s.stalled));
+    lines.push(groupLine(`control (tick+burst < ${s.stallMs})`, s.control));
   }
   return lines;
 }

@@ -1374,15 +1374,13 @@ describe("RoomManager", () => {
       expect(w!.atMs).toBeLessThanOrEqual(after);
     });
 
-    it("carries the diagnostics hooks' emit counts and loop delay into each window", () => {
+    it("carries the diagnostics hooks' emit counts into each window", () => {
       const { broadcaster } = fakeBroadcaster();
       const begin = vi.fn();
       const end = vi.fn(() => ({ emitCount: 7, emitMs: 2.5 }));
-      const take = vi.fn(() => 42);
       const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, undefined, {
         beginTick: begin,
         endTick: end,
-        takeLoopMaxMs: take,
       });
       rm.ensureRoom("room1", "ws1");
       rm.runTickForTest("room1");
@@ -1390,9 +1388,33 @@ describe("RoomManager", () => {
 
       expect(begin).toHaveBeenCalledTimes(2);
       expect(end).toHaveBeenCalledTimes(2);
-      // Read on the baseline tick too, so the first real window starts clean.
-      expect(take).toHaveBeenCalledTimes(2);
-      expect(rm.getMoveValidationStats().windows[0]).toMatchObject({ emitCount: 7, emitMs: 2.5, loopMaxMs: 42 });
+      expect(rm.getMoveValidationStats().windows[0]).toMatchObject({ emitCount: 7, emitMs: 2.5 });
+    });
+
+    it("records how long the loop takes to reach the check phase after a tick (postTickMs), only with diagnostics on", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a", 10_000, undefined, {
+        beginTick: () => {},
+        endTick: () => ({ emitCount: 0, emitMs: 0 }),
+      });
+      rm.ensureRoom("room1", "ws1");
+      rm.runTickForTest("room1");
+      rm.runTickForTest("room1");
+      // Not yet: the immediate has not run.
+      expect(rm.getMoveValidationStats().windows[0]!.postTickMs).toBeNull();
+      await new Promise((resolve) => setImmediate(resolve));
+      const measured = rm.getMoveValidationStats().windows[0]!.postTickMs;
+      expect(measured).not.toBeNull();
+      expect(Number.isFinite(measured!)).toBe(true);
+      expect(measured!).toBeGreaterThanOrEqual(0);
+
+      // Without diagnostics no immediate is scheduled and the field stays null.
+      const plain = createManager(fakeBroadcaster().broadcaster, fakeLease(), "instance-b");
+      plain.ensureRoom("room2", "ws1");
+      plain.runTickForTest("room2");
+      plain.runTickForTest("room2");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(plain.getMoveValidationStats().windows[0]!.postTickMs).toBeNull();
     });
   });
 });

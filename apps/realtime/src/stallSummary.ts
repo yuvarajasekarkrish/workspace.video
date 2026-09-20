@@ -6,11 +6,19 @@ export interface StallWindow {
   /** performance.now() at the END of the tick window. */
   atMs: number;
   windowMs: number;
-  /** Largest event-loop delay sample seen inside this window (raw histogram
-   *  value: includes the ~10ms sampling interval, like the p99 the gate uses). */
-  loopMaxMs: number;
   tickMs: number;
+  /** Time from the end of the tick until the loop reached its check phase:
+   *  the poll-phase work that follows the tick. null/absent = not measured. */
+  postTickMs?: number | null;
   emitMs?: number;
+}
+
+/** How long the loop was away from its timers around one tick: the tick itself
+ *  plus the burst of I/O work processed right after it. This is what a
+ *  loop-delay sample taken across the tick would have seen (minus its own
+ *  ~10ms interval). */
+export function iterationMs(w: StallWindow): number {
+  return w.tickMs + (w.postTickMs ?? 0);
 }
 
 export interface Span {
@@ -119,12 +127,12 @@ export function summarizeStalls(
     stallMs,
     overlapMs,
     stalled: summarizeGroup(
-      windows.filter((w) => w.loopMaxMs >= stallMs),
+      windows.filter((w) => iterationMs(w) >= stallMs),
       emits,
       gcs,
     ),
     control: summarizeGroup(
-      windows.filter((w) => w.loopMaxMs < stallMs),
+      windows.filter((w) => iterationMs(w) < stallMs),
       emits,
       gcs,
     ),

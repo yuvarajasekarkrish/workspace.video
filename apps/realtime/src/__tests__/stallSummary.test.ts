@@ -2,16 +2,17 @@ import { describe, it, expect } from "vitest";
 import { summarizeStalls, summarizeStallsCovered, type StallWindow } from "../stallSummary.js";
 
 // A window ends at atMs and spans windowMs before it: [atMs - windowMs, atMs].
-const win = (atMs: number, loopMaxMs: number, extra: Partial<StallWindow> = {}): StallWindow => ({
+// `iteration` is tick + post-tick burst: the tick is 15ms and the rest is burst.
+const win = (atMs: number, iteration: number, extra: Partial<StallWindow> = {}): StallWindow => ({
   atMs,
   windowMs: 100,
-  loopMaxMs,
   tickMs: 15,
+  postTickMs: Math.max(0, iteration - 15),
   ...extra,
 });
 
 describe("summarizeStalls", () => {
-  it("splits windows into stalled and control by loopMaxMs", () => {
+  it("splits windows into stalled and control by tick plus post-tick burst", () => {
     const s = summarizeStalls([win(1000, 60), win(1100, 10), win(1200, 50), win(1300, 49.9)], [], []);
     expect(s.stalled.windows).toBe(2); // 60 and exactly 50
     expect(s.control.windows).toBe(2);
@@ -54,6 +55,12 @@ describe("summarizeStalls", () => {
     const s = summarizeStalls([win(1000, 60), win(1100, 5)], [{ atMs: 1050, durationMs: 30 }], []);
     expect(s.stalled.withEmit).toBe(0);
     expect(s.control.withEmit).toBe(1);
+  });
+
+  it("treats a window whose burst was not measured as tick-only", () => {
+    const unmeasured: StallWindow = { atMs: 1000, windowMs: 100, tickMs: 40, postTickMs: null };
+    expect(summarizeStalls([unmeasured], [], []).stalled.windows).toBe(0);
+    expect(summarizeStalls([{ ...unmeasured, tickMs: 60 }], [], []).stalled.windows).toBe(1);
   });
 
   it("reports medians of tick and emit time, and handles empty input", () => {

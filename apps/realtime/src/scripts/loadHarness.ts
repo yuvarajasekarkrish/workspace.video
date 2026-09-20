@@ -130,7 +130,7 @@ interface TickWindowSample {
   maxClusterUsers: number;
   emitCount: number;
   emitMs: number;
-  loopMaxMs: number;
+  postTickMs: number | null;
 }
 
 /** Mirrors the server's MoveValidationSample (apps/realtime/src/roomManager.ts)
