@@ -1,0 +1,30 @@
+# Reverse proxy for the app box. Automatic HTTPS for the address in APP_ADDRESS
+# (for example www.workspace.video). One address serves both apps:
+#
+#   /socket.io/*  and  /health   ->  the realtime server
+#   everything else              ->  the web app
+#
+# This is layer 1 of 2 protecting the realtime server's /internal pages: they are
+# never forwarded, so from outside they can only ever reach the web app (a 404).
+# Layer 2 is in the server itself (apps/realtime/src/internalRoutes.ts), which
+# also refuses them in production. Do not add a path to the realtime block
+# without reading that file first.
+#
+# The realtime server must be told its own public address: set REALTIME_PUBLIC_URL
+# to https://<APP_ADDRESS>, because the browser is sent there for the socket.
+
+{$APP_ADDRESS} {
+	encode zstd gzip
+
+	handle /socket.io/* {
+		reverse_proxy {$REALTIME_UPSTREAM:realtime:4001}
+	}
+
+	handle /health {
+		reverse_proxy {$REALTIME_UPSTREAM:realtime:4001}
+	}
+
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+}
