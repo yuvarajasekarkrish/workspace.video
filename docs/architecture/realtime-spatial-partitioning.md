@@ -418,29 +418,29 @@ So the p99 is a recurring structural pattern (about one long iteration in seven 
   each packet as its own frame. So `writev` count tracks packets delivered, one per packet.
   A room broadcast is encoded once but still costs one `writev` per recipient socket.
 
-### Cork experiment (`src/scripts/experiments/corkBench.ts`, Codespace, N=100 x 22 frames per 100ms round)
+### Cork and batched experiment (`src/scripts/experiments/corkBench.ts`, Codespace, N=100 x 22 updates per 100ms round)
 
-Real Socket.IO server and clients on loopback, clients in a child process; plain vs `cork()`/`uncork()`
-per socket, alternated in 5 blocks of 60 rounds (all 704,000 frames delivered per mode, 0 out of order):
+Real Socket.IO server and clients on loopback, clients in a child process; three modes rotated across
+5 blocks of 60 rounds. Every frame delivered in every mode, 0 out of order.
 
-| per round | plain | corked |
-|---|---|---|
-| send start -> check phase p50 / p90 / p99 | 26.44 / 39.37 / 46.10 ms | 23.55 / 32.90 / 42.72 ms |
-| system CPU p50 | 16.39 ms | 15.01 ms |
-| user+system CPU p50 | 26.70 ms | 23.76 ms |
+| per round | plain (22 frames/socket) | corked (22 frames/socket) | batched (1 frame/socket) |
+|---|---|---|---|
+| frames sent (300 rounds) | 704,000 | 704,000 | 32,000 |
+| JSON bytes per socket per round | ~2,904 | ~2,926 | ~2,122 |
+| send start -> check phase p50 / p90 / p99 | 24.05 / 36.75 / 47.42 ms | 23.68 / 35.88 / 45.03 ms | 2.85 / 5.11 / 7.92 ms |
+| system CPU p50 | 15.93 ms | 15.33 ms | 1.03 ms |
+| user+system CPU p50 | 24.31 ms | 23.80 ms | 2.99 ms |
 
-- The plain run reproduces the burst (p50 26.4ms) with no application logic at all.
-- Corking gave only ~8-11%, far less than a 22x cut in syscalls would predict. Not verified: that
-  the cork actually reduced the syscall count (a `strace -c` of the bench would show it).
-- Consistent with (not proof of) cost dominated by per-byte or per-segment loopback work rather than
-  per-call overhead; whether it holds for remote clients is untested.
-- Option "cork the sockets across the tick" is therefore not pursued on this evidence.
+- The plain run reproduces the burst (p50 24ms) with no application logic at all.
+- **Batched cuts the burst ~8x and system CPU ~15x** while sending ~27% fewer bytes (the plain frames repeat two small fields; that byte difference cannot explain a 15x drop). So the cost scales with frames, not bytes.
+- **The cork result is not evidence about the syscall count.** Engine.IO sends a socket's first packet immediately and holds the rest in `writeBuffer` until the transport is writable again; each is then sent as its own frame with its own cork/uncork (`socket.js flush()`, `websocket.js send`). An outside cork therefore covered only the first packet. An earlier reading here, "cost dominated by per-byte loopback work, so batching would not help", was wrong and is superseded.
+- Limits: synthetic load (identical updates, loopback, one run, no client-side parse cost measured), not the real tick.
 
 ### Reading
 
 The burst is one `writev` syscall per delivered packet (per WebSocket frame), flushed after each
-tick (~2,100-2,200 packets per tick at N=100). What makes that cost is NOT settled: see the cork
-experiment below, which argues against "the number of syscalls" being the driver.
+tick (~2,100-2,200 packets per tick at N=100). The batched experiment above shows the cost scales with
+the number of frames, not with bytes.
 
 Not established:
 - whether this holds for the untraced run at the same per-frame ratio (only the traced run has a
