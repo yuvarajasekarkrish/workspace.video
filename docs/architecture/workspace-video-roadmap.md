@@ -54,7 +54,7 @@ You are building a lightweight, global workspace where people sit in a shared sp
 Each phase has a **gate**. You do not start the next phase until the gate is met. "Your job" is what only you can do.
 
 ### Phase 0: Make it real (about 2 to 3 weeks)
-**Build:** rename the internal "cosmos" names; production refuses default secrets (F1); real sign-in to replace the dev sign-in; deploy to a real address with staging, automatic checks, error tracking and product analytics; backups; feature switches.
+**Build:** rename the internal "cosmos" names; production refuses default secrets (F1); real sign-in to replace the dev sign-in; deploy to a real address with staging, automatic checks, error tracking; backups. (Product analytics and a feature-flag system were deferred to Phase 1 by the engineering review; see section 9.)
 **Infrastructure test (F2, H1):** compare hosts on bandwidth terms (read the fair-use fine print, then measure), and on delay from each continent to real test devices. Run a video load test on the chosen host, measuring bandwidth per person per hour for audio-only, a 4-tile call and a 20-tile room. The results decide whether peer-to-peer or a cross-region relay is ever built. Check whether one room can span regions on the open-source media server (I believe it cannot; this is unverified).
 **Your job:** decide the hosting budget; find and hire a person or contractor who watches servers; start the legal review of AI screening now (it takes weeks); decide the brand name and logo; do your three customer calls (see section 6).
 **Gate:** a stranger signs up on www.workspace.video, reaches a room, a second person joins from another continent, and the delay numbers are written down.
@@ -181,3 +181,83 @@ Realtime spatial engine and proximity audio; LiveKit selective subscription; sig
 - Pricing, to be tested (F5).
 - Brand name and logo, and replacing "cosmos" internal names.
 - Design review Pass 6 (phones and accessibility) and Pass 7 (open decisions) of the template plan are not done.
+
+---
+
+## 9. Reviewed build plan: Phase 0 (engineering review)
+
+Outcome of the engineering review of Phase 0. The secrets work is already done (commits `f344538`, `76dbd7e`, `189a42b`). Evidence words as above. Confidence scores and quoted lines are in the review conversation; the file and line references below are the motivating evidence.
+
+### Decisions taken in the review
+| # | Decision | Chosen |
+|---|---|---|
+| D2 | Phase 0 scope | Reduced: sign-in, one production stack, small staging, CI, error tracking, backups, infrastructure test. Product analytics and a feature-flag system deferred |
+| 1A | Sign-in | **Better Auth** for the email link behind the current session seam (`getSessionUser`, `signRealtimeToken`), **gated by a one-day spike**; if the spike fails, fall back to a hand-written email link on the existing tables (pre-approved fallback). Dev sign-in stays, still 404 in production. Includes: an email transport interface with a console transport for dev and tests, a timeout and clear error on provider failure, expiring one-time links, rate limits per email and per address, no account enumeration |
+| 1B | Media config | Production LiveKit config is **generated from secrets at deploy**; `livekit.yaml` stays dev-only. The deploy refuses the dev key and the localhost address ([livekit.yaml:7](../../livekit.yaml)) |
+| 1C | Database | **Managed Postgres**, app box and database in the **same region** (each page load makes several queries in a row), one restore drill recorded before the gate. Video servers stay self-hosted (F2) |
+| 1D | Deploy | CI builds images tagged by commit; a deploy script backs up the database, runs migrations, pulls, restarts, checks health; rollback redeploys the previous tag; **migrations must be backward-compatible for one version** |
+| 1E | `/internal` routes | The proxy forwards only `/socket.io` and `/health`; `/internal/metrics` requires a secret token in production; `/internal/resolve-room` is **not registered in production** ([server.ts:55](../../apps/realtime/src/server.ts), [server.ts:199](../../apps/realtime/src/server.ts)). Tests prove each rule |
+| 2A | Rename | **Everything, including the local database user, name and volumes.** Every existing local database and Codespace needs `docker compose down -v`, migrate and re-seed once |
+| 2B | Duplicate helper | Move `required()` into the shared package, own small commit |
+| 3A | CI and flaky tests | CI gates on **all** tests. On a failure it prints durations and attaches the report; nothing is retried or loosened until a failure report has been inspected |
+| 3B | Infrastructure test | Scripted headless call clients in about four regions on **short-lived hourly rented machines destroyed after the run**; records round-trip time, jitter, packet loss, bytes; a validity check compares client bytes with server counters; one run per host, no changes from a result. **The host is the cheapest one that passes the measured limits** (assumed reading of "look for the cheapest one") |
+| 3C | E2E level | Route-level integration tests in CI (real Postgres, test inbox) plus **one browser smoke test on staging** after each deploy |
+| 4A | Speed baseline | One scripted, repeatable baseline (JavaScript size, load time of the real domain from two regions, idle CPU and memory of the canvas), numbers only, no thresholds |
+| TODOs | Deferred with context in [TODOS.md](../../TODOS.md) | Analytics and feature flags; zero-downtime realtime deploys; cut live connections on revoke |
+
+### Build order and parallel lanes
+```
+ Step 0 (alone, first):  T1 rename everything (structural commit)
+         |
+         +--> Lane A  apps/web, apps/realtime, packages/*   T2 -> T3 (spike gate) -> T4 ; T10
+         +--> Lane B  Dockerfiles, .github/, deploy/        T5, T6, T7(deploy side), T12, T13
+         +--> Lane C  scripts/ and rented test machines     T8, T9
+         +--> Founder lane: hosts, DNS, email provider + SPF/DKIM/DMARC, managed Postgres, error tracking account, registry
+```
+Lane A and Lane B do not share a directory; both wait for T1 because image names and package names change in it. Lane C needs nothing from T1 except script paths.
+
+### Implementation tasks
+- [ ] **T1 (P1, human: ~1d / CC: ~1h)** Rename `@cosmos/*`, cookie, devcontainer, database user/name/volumes, and doc headings, in one structural commit. Verify: typecheck, full suites, a scripted check that no old name remains outside historical docs. Files: whole repo (98 files).
+- [ ] **T2 (P1, ~2h / ~30min)** Regression tests first for existing untested behaviour: dev-signin 404 in production and flag off; `getSessionUser` cookie ok/none/bad; realtime-token 401 signed out and secret separation. Files: `apps/web/src/lib/__tests__`, `apps/web/src/app/api/auth`.
+- [ ] **T3 (P1, ~2wk / ~2-3d)** One-day Better Auth spike (gate), then email-link sign-in per 1A with the tests in section 9 test plan. Files: `apps/web`, `packages/db/prisma`.
+- [ ] **T4 (P1, ~1d / ~2h)** Protect `/internal` per 1E, with tests. Files: `apps/realtime/src/server.ts`, the proxy config.
+- [ ] **T5 (P1, ~1d / ~2h)** Production LiveKit config generator plus a deploy check that refuses the dev key and localhost address (1B). Files: `deploy/`.
+- [ ] **T6 (P1, ~1wk / ~1d)** Dockerfiles, CI (typecheck, tests, printed durations, fail when zero tests are found), images tagged by commit, deploy script with backup-before-migrate and rollback, staging from the same recipe (1D, 3A). Files: `.github/`, `deploy/`.
+- [ ] **T7 (P1, ~1d / ~1h)** Managed Postgres in the same region as the app box; one restore drill recorded (1C).
+- [ ] **T8 (P2, ~1wk / ~2d)** Infrastructure test scripts and one recorded run per candidate host (3B), including database round trip and TURN/TLS relay-only check.
+- [ ] **T9 (P2, ~2d / ~3h)** Browser-side baseline script (4A).
+- [ ] **T10 (P2, ~1h / ~10min)** Move `required()` to the shared package (2B).
+- [ ] **T11 (P2, ~1d / ~2h)** Browser smoke test on staging after each deploy (3C).
+- [ ] **T12 (P2, ~1d / ~2h)** Error tracking in web and realtime, with a deliberate error confirmed visible.
+- [ ] **T13 (P2, ~2h / ~30min)** Alert when the last successful backup is older than about 26 hours.
+- Founder tasks: choose hosts (cheapest that passes T8), set DNS, choose the email provider and add SPF, DKIM and DMARC records for workspace.video, open the managed-database, error-tracking and image-registry accounts.
+
+### Test plan (coverage at review time: 3 of 33 paths tested)
+Iron-rule regression tests are in T2. New sign-in tests (route level, in CI): request link for a valid and an invalid email; provider failure and timeout; rate limits per email and per address; the same reply for known and unknown email; verify a valid, expired, reused and tampered link; a link opened in another browser; a double click; revocation refuses the next request; sign-out; first-time user with no workspace creates one and reaches a room. Production guard: the built image starts with real values and refuses defaults. Deploy: dry run, backup-before-migrate order, rollback rehearsal on staging. Media: the config generator refuses the dev key; a relay-only client connects over TURN/TLS. Infrastructure test: the byte validity check.
+
+### Failure modes (one per new path)
+| Path | Failure | Test? | Handled? | User sees |
+|---|---|---|---|---|
+| Email provider | Down or slow | planned | timeout plus error state | "We couldn't send the link, try again" |
+| Sign-in link | Reused, expired, tampered | planned | rejected | Clear message and a way to request a new link |
+| Media server | UDP blocked | planned (relay-only client) | TURN/TLS fallback | Audio still works, or the existing audio error text |
+| Deploy | Migration fails | planned (rehearsal) | backup first, deploy aborts, old version keeps running | Nothing |
+| Backup | Job silently stops | planned (T13) | alert when stale | Nothing until alerted; **watch this one** |
+| Error tracking | Outage | n/a | fire and forget | Nothing |
+| `/internal` | Direct hit on the port | planned | token required, route absent | 401 or 404 |
+| Infrastructure test | Measured nothing | planned (validity check) | run flagged invalid | Report says invalid |
+No critical gap (no path is untested, unhandled and silent).
+
+### Not in scope
+- Product analytics and a feature-flag system (TODOS.md).
+- Zero-downtime realtime deploys (TODOS.md).
+- Disconnecting live connections on revoke or member removal (TODOS.md).
+- Company sign-in (SSO) and Google or Microsoft sign-in: Phase 5.
+- Multi-region, peer-to-peer, cross-region relay (decided after the infrastructure test).
+- A full browser test suite; Kubernetes.
+
+### What already exists (reused)
+The session seam (`getSessionUser`, `signRealtimeToken`, [session.ts](../../apps/web/src/lib/session.ts)); the account, session and verification-token tables in [schema.prisma](../../packages/db/prisma/schema.prisma); the dev sign-in and its production 404; `prisma migrate deploy` in the Codespaces scripts; the secrets guard; the load harness and profiling tools (reused by T8).
+
+### Unresolved decisions
+None. Two assumptions to confirm: the reading of "look for the cheapest one" in 3B, and the new names for the packages (`@workspace-video/*`) and the database user and name.
