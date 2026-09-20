@@ -23,7 +23,11 @@ export function signRealtimeToken(user: SessionUser): string {
  *  valid, it has expired, or it has been revoked. A database failure is not "signed
  *  out": it throws, so it is seen instead of quietly logging everyone out. */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const session = await getAuth().api.getSession({ headers: await headers() });
+  // Read the request headers FIRST: during `next build` this is what tells Next the page
+  // is per-request and must not be prerendered. Touching the sign-in setup before it
+  // would run production start-up checks (e.g. no email provider) at build time.
+  const requestHeaders = await headers();
+  const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session) return null;
   return { userId: session.user.id, email: session.user.email };
 }
