@@ -1,14 +1,8 @@
-import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
+import { required as requiredFrom, resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
 
 /** Central place for realtime-server environment configuration and parsing. */
 
-function required(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-  if (value === undefined) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
+const required = (name: string, fallback?: string): string => requiredFrom(process.env, name, fallback);
 
 export const env = {
   port: Number(process.env.PORT ?? 4001),

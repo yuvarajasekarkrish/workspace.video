@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSecret } from "../secrets";
+import { required, resolveSecret } from "../secrets";
 
 const DEV = "dev-default-value";
 const REAL = "a-real-secret-0123456789abcdef0123456789abcdef";
@@ -63,5 +63,20 @@ describe("resolveSecret", () => {
       expect(resolveSecret({ NODE_ENV: "development", S: REAL }, "S", DEV)).toBe(REAL);
       expect(resolveSecret({ NODE_ENV: "development", S: "" }, "S", DEV)).toBe("");
     });
+  });
+});
+
+describe("required", () => {
+  it("returns the value that is set", () => {
+    expect(required({ REDIS_URL: "redis://cache:6379" }, "REDIS_URL", "redis://localhost:6379")).toBe("redis://cache:6379");
+  });
+  it("uses the fallback when unset", () => {
+    expect(required({}, "REDIS_URL", "redis://localhost:6379")).toBe("redis://localhost:6379");
+  });
+  it("keeps an empty value rather than falling back (only unset falls back)", () => {
+    expect(required({ REDIS_URL: "" }, "REDIS_URL", "x")).toBe("");
+  });
+  it("names the missing variable when there is no value and no fallback", () => {
+    expect(() => required({}, "LIVEKIT_URL")).toThrow("Missing required environment variable: LIVEKIT_URL");
   });
 });

@@ -1,14 +1,8 @@
-import { resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
+import { required as requiredFrom, resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
 
 /** Central environment configuration for apps/web, server-side only. */
 
-function required(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-  if (value === undefined) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
+const required = (name: string, fallback?: string): string => requiredFrom(process.env, name, fallback);
 
 // AUTH_SECRET signs the 7-day sign-in cookie, which is httpOnly. The 1-hour
 // realtime token is different: browser JavaScript has to read it to open the

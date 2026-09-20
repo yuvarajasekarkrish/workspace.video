@@ -52,3 +52,14 @@ export function resolveDatabaseUrl(source: Readonly<Record<string, string | unde
     "Set DATABASE_URL to your production database address, with its own password.",
   );
 }
+
+/** A setting that must exist, with an optional development fallback. Unlike
+ *  `resolveSecret` it does not refuse public defaults in production: use it for
+ *  addresses (Redis, LiveKit, public URLs), never for anything secret. */
+export function required(source: Record<string, string | undefined>, name: string, fallback?: string): string {
+  const value = source[name] ?? fallback;
+  if (value === undefined) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
