@@ -1,4 +1,4 @@
-import { resolveSecret } from "@cosmos/shared";
+import { resolveSecret, DEV_REALTIME_JWT_SECRET } from "@cosmos/shared";
 
 /** Central place for realtime-server environment configuration and parsing. */
 
@@ -18,11 +18,12 @@ export const env = {
   publicUrl: required("REALTIME_PUBLIC_URL", `http://localhost:${process.env.PORT ?? 4001}`),
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
   databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
-  // Shared with Next.js/Auth.js — used to verify the session token clients
-  // present at socket handshake. In dev, falls back to a fixed value so the
-  // two processes agree without extra setup. In production a missing, blank or
+  // Verifies the short-lived token clients present at socket handshake; the web
+  // app signs it with the same value. This server never sees the web app's
+  // sign-in secret (AUTH_SECRET). In dev, falls back to a fixed value so the two
+  // processes agree without extra setup. In production a missing, blank or
   // public-default value stops the server at start (see resolveSecret).
-  authSecret: resolveSecret(process.env, "AUTH_SECRET", "dev-only-insecure-secret-change-me"),
+  realtimeJwtSecret: resolveSecret(process.env, "REALTIME_JWT_SECRET", DEV_REALTIME_JWT_SECRET),
   instanceHeartbeatTtlSeconds: 30,
   roomLeaseTtlSeconds: 30,
 };

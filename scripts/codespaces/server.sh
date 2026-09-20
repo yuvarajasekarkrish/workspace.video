@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Codespace A: Postgres + Redis (local only) and the realtime server on :4001.
-# Usage: export AUTH_SECRET=<same value as codespace B>; bash scripts/codespaces/server.sh
+# Usage: export REALTIME_JWT_SECRET=<same value as codespace B>; bash scripts/codespaces/server.sh
+# (This was AUTH_SECRET before the secrets were split; AUTH_SECRET is no longer read here.)
 # Keep port 4001 PRIVATE in the Codespaces Ports panel; codespace B reaches it
 # through an authenticated `gh codespace ports forward`.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-: "${AUTH_SECRET:?Set AUTH_SECRET first (use the same value in codespace B), e.g. export AUTH_SECRET=\$(openssl rand -hex 32)}"
+if [ -z "${REALTIME_JWT_SECRET:-}" ] && [ -n "${AUTH_SECRET:-}" ]; then
+  echo "AUTH_SECRET is no longer used here. Set REALTIME_JWT_SECRET instead (same value in codespace B)." >&2
+fi
+: "${REALTIME_JWT_SECRET:?Set REALTIME_JWT_SECRET first (use the same value in codespace B), e.g. export REALTIME_JWT_SECRET=\$(openssl rand -hex 32)}"
 export DATABASE_URL="${DATABASE_URL:-postgresql://cosmos:cosmos@localhost:5432/cosmos}"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
 

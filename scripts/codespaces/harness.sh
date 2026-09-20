@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Codespace B: load generator only. Reaches codespace A on port 4001 and
 # nothing else (no Postgres, no Redis).
-# Usage: export AUTH_SECRET=<same value as codespace A>
+# Usage: export REALTIME_JWT_SECRET=<same value as codespace A>
 #        bash scripts/codespaces/harness.sh <server-codespace-name> <N> <windowSec> <label>
 # Example sequence: 50 60 · 100 60 · 200 600 (run 1) · 200 600 (run 2, after restarting server.sh)
 set -euo pipefail
@@ -15,7 +15,10 @@ N=$2
 WINDOW_SEC=$3
 LABEL=$4
 
-: "${AUTH_SECRET:?Set AUTH_SECRET first (same value as codespace A)}"
+if [ -z "${REALTIME_JWT_SECRET:-}" ] && [ -n "${AUTH_SECRET:-}" ]; then
+  echo "AUTH_SECRET is no longer used here. Set REALTIME_JWT_SECRET instead (same value as codespace A)." >&2
+fi
+: "${REALTIME_JWT_SECRET:?Set REALTIME_JWT_SECRET first (same value as codespace A)}"
 cd "$(dirname "$0")/../.."
 
 # Phase 12: this file used to be deleted on every exit. It's the single

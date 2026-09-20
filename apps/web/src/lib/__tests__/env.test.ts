@@ -4,18 +4,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
  *  environment, resets the module cache, and imports it fresh. */
 
 const DEV_AUTH_SECRET = "dev-only-insecure-secret-change-me";
+const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
 const DEV_LIVEKIT_KEY = "devkey";
 const DEV_LIVEKIT_SECRET = "dev-livekit-secret-change-me-32chars-min";
 
-const KEYS = ["AUTH_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"] as const;
+const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"] as const;
+type Key = (typeof KEYS)[number];
 
-const REAL = {
+const REAL: Record<Key, string> = {
   AUTH_SECRET: "a-real-auth-secret-0123456789abcdef0123456789abcdef",
+  REALTIME_JWT_SECRET: "a-different-realtime-secret-fedcba9876543210fedcba98765432",
   LIVEKIT_API_KEY: "APIrealKey123",
   LIVEKIT_API_SECRET: "a-real-livekit-secret-0123456789abcdef0123456789",
 };
 
-function setEnv(values: Partial<Record<(typeof KEYS)[number], string | undefined>>) {
+function setEnv(values: Partial<Record<Key, string | undefined>>) {
   for (const key of KEYS) {
     const value = key in values ? values[key] : undefined;
     if (value === undefined) delete (process.env as Record<string, string | undefined>)[key];
@@ -64,6 +67,18 @@ describe("web env: secrets in production", () => {
       await expect(loadEnv()).rejects.toThrow(/AUTH_SECRET/);
     });
 
+    it("refuses to start when REALTIME_JWT_SECRET is not set or is the dev default", async () => {
+      setEnv({ ...REAL, REALTIME_JWT_SECRET: undefined });
+      await expect(loadEnv()).rejects.toThrow(/REALTIME_JWT_SECRET/);
+      setEnv({ ...REAL, REALTIME_JWT_SECRET: DEV_REALTIME_JWT_SECRET });
+      await expect(loadEnv()).rejects.toThrow(/REALTIME_JWT_SECRET/);
+    });
+
+    it("refuses to start when REALTIME_JWT_SECRET is the same value as AUTH_SECRET", async () => {
+      setEnv({ ...REAL, REALTIME_JWT_SECRET: REAL.AUTH_SECRET });
+      await expect(loadEnv()).rejects.toThrow(/REALTIME_JWT_SECRET.*AUTH_SECRET|AUTH_SECRET.*REALTIME_JWT_SECRET/);
+    });
+
     it("refuses to start when LIVEKIT_API_KEY is not set or is the dev default", async () => {
       setEnv({ ...REAL, LIVEKIT_API_KEY: undefined });
       await expect(loadEnv()).rejects.toThrow(/LIVEKIT_API_KEY/);
@@ -89,10 +104,11 @@ describe("web env: secrets in production", () => {
       expect(error?.message).not.toContain(DEV_AUTH_SECRET);
     });
 
-    it("starts and uses the values when all three are real", async () => {
+    it("starts and uses the values when all four are real and distinct", async () => {
       setEnv(REAL);
       const env = await loadEnv();
       expect(env.authSecret).toBe(REAL.AUTH_SECRET);
+      expect(env.realtimeJwtSecret).toBe(REAL.REALTIME_JWT_SECRET);
       expect(env.livekitApiKey).toBe(REAL.LIVEKIT_API_KEY);
       expect(env.livekitApiSecret).toBe(REAL.LIVEKIT_API_SECRET);
     });
@@ -104,8 +120,16 @@ describe("web env: secrets in production", () => {
       setEnv({});
       const env = await loadEnv();
       expect(env.authSecret).toBe(DEV_AUTH_SECRET);
+      expect(env.realtimeJwtSecret).toBe(DEV_REALTIME_JWT_SECRET);
       expect(env.livekitApiKey).toBe(DEV_LIVEKIT_KEY);
       expect(env.livekitApiSecret).toBe(DEV_LIVEKIT_SECRET);
+    });
+
+    it("keeps the two dev secrets different, so the split is real even in development", async () => {
+      vi.stubEnv("NODE_ENV", "development");
+      setEnv({});
+      const env = await loadEnv();
+      expect(env.realtimeJwtSecret).not.toBe(env.authSecret);
     });
   });
 });

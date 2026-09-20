@@ -10,7 +10,7 @@ export interface SessionUser {
 }
 
 /** Signs the long-lived app session cookie (dev sign-in flow only in this
- *  milestone — see lib/env.ts for the AUTH_SECRET-reuse note). */
+ *  milestone). Uses AUTH_SECRET, which is never used for the realtime token. */
 export function signSessionToken(user: SessionUser): string {
   return jwt.sign({ sub: user.userId, email: user.email }, env.authSecret, { expiresIn: "7d" });
 }
@@ -19,9 +19,11 @@ export function signSessionToken(user: SessionUser): string {
  *  separate from the session cookie: the cookie is httpOnly (unreadable by
  *  client JS, as it should be), but the socket client needs the token value
  *  in JS to pass as `auth.token` — so this is returned in a response body,
- *  not set as a cookie, and kept short-lived to bound the exposure. */
+ *  not set as a cookie, and kept short-lived to bound the exposure. Because JS
+ *  can read it, it is signed with REALTIME_JWT_SECRET, a different secret from
+ *  the cookie's, so a leaked socket token is not a valid sign-in cookie. */
 export function signRealtimeToken(user: SessionUser): string {
-  return jwt.sign({ sub: user.userId, email: user.email }, env.authSecret, { expiresIn: "1h" });
+  return jwt.sign({ sub: user.userId, email: user.email }, env.realtimeJwtSecret, { expiresIn: "1h" });
 }
 
 export function verifySessionToken(token: string): SessionUser {

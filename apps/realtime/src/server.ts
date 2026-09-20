@@ -304,7 +304,7 @@ registerSocketHandlers({
   io,
   roomManager,
   roomLease,
-  authSecret: env.authSecret,
+  authSecret: env.realtimeJwtSecret,
   instanceId,
   joinDuration,
   disconnectReasonCounts,

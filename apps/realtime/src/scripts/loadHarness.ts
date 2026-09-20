@@ -8,13 +8,13 @@
  * /internal/load-harness/* routes (start the server with
  * LOAD_HARNESS_ENABLED=1), so the load generator needs no database access
  * and can run on a separate machine. JWTs are minted locally with the shared
- * AUTH_SECRET.
+ * REALTIME_JWT_SECRET.
  *
  *   pnpm --filter @cosmos/realtime run load-harness
  *
  * Env:
  *   REALTIME_URL                 default http://localhost:4001
- *   AUTH_SECRET                  must match the server
+ *   REALTIME_JWT_SECRET          must match the server
  *   LOAD_HARNESS_LABEL           tags the result file (default "local")
  *   LOAD_HARNESS_WINDOW_SEC      measurement window, default 8 (use 600 for validation)
  *   LOAD_HARNESS_ONLY_N          run a single N instead of 50/100/200
@@ -46,7 +46,14 @@ import { fileURLToPath } from "node:url";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import jwt from "jsonwebtoken";
 import { io as ioClient, type Socket } from "socket.io-client";
-import { openOffice1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout, ServerEvents, type Point } from "@cosmos/shared";
+import {
+  openOffice1,
+  DEFAULT_MOVEMENT_CONFIG,
+  movementConfigForLayout,
+  ServerEvents,
+  DEV_REALTIME_JWT_SECRET,
+  type Point,
+} from "@cosmos/shared";
 import type { EmitTailSnapshot } from "../emitTailRecorder";
 import type { GcSnapshot } from "../gcRecorder";
 import { formatStallReport } from "../stallReport";
@@ -56,7 +63,7 @@ const ROOM_MOVEMENT_CONFIG = movementConfigForLayout(openOffice1, DEFAULT_MOVEME
 
 const REALTIME_URL = process.env.REALTIME_URL ?? "http://localhost:4001";
 const METRICS_URL = `${REALTIME_URL}/internal/metrics`;
-const AUTH_SECRET = process.env.AUTH_SECRET ?? "dev-only-insecure-secret-change-me";
+const REALTIME_JWT_SECRET = process.env.REALTIME_JWT_SECRET ?? DEV_REALTIME_JWT_SECRET;
 const WINDOW_MS = Math.max(1, Number(process.env.LOAD_HARNESS_WINDOW_SEC ?? "8")) * 1000;
 const POLL_INTERVAL_MS = 10_000;
 const MOVE_INTERVAL_MS = 50;
@@ -295,7 +302,7 @@ async function teardownWorkspace(workspaceId: string, userIds: string[]): Promis
 }
 
 function mintToken(userId: string, email: string): string {
-  return jwt.sign({ sub: userId, email }, AUTH_SECRET, { expiresIn: "1h" });
+  return jwt.sign({ sub: userId, email }, REALTIME_JWT_SECRET, { expiresIn: "1h" });
 }
 
 interface ConnectedSocket {

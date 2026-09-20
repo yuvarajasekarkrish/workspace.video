@@ -1,3 +1,8 @@
+/** Development fallback for REALTIME_JWT_SECRET. Exported so the web app (which
+ *  signs socket tokens) and the realtime server (which verifies them) can never
+ *  disagree about it. It is public, so production refuses it (see resolveSecret). */
+export const DEV_REALTIME_JWT_SECRET = "dev-only-insecure-realtime-secret-change-me";
+
 /**
  * Resolves a secret from the environment.
  *
