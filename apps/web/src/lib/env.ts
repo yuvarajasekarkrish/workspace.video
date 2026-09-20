@@ -1,3 +1,5 @@
+import { resolveSecret } from "@cosmos/shared";
+
 /** Central environment configuration for apps/web, server-side only. */
 
 function required(name: string, fallback?: string): string {
@@ -19,7 +21,7 @@ export const env = {
   // is a deliberate, temporary coupling: Phase 2 splits AUTH_SECRET (Auth.js
   // sessions) from a distinct REALTIME_JWT_SECRET (realtime tokens) once
   // real identity provisioning replaces the dev sign-in flow.
-  authSecret: required("AUTH_SECRET", "dev-only-insecure-secret-change-me"),
+  authSecret: resolveSecret(process.env, "AUTH_SECRET", "dev-only-insecure-secret-change-me"),
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
   databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
   roomLeaseTtlSeconds: 30,
@@ -32,6 +34,8 @@ export const env = {
   // intentionally a DISTINCT secret from AUTH_SECRET — no repeat of the
   // temporary realtime-token secret-reuse documented above.
   livekitUrl: required("LIVEKIT_URL", "ws://localhost:7880"),
-  livekitApiKey: required("LIVEKIT_API_KEY", "devkey"),
-  livekitApiSecret: required("LIVEKIT_API_SECRET", "dev-livekit-secret-change-me-32chars-min"),
+  // In production all three secrets must be set to private values: a missing,
+  // blank or public-default one stops the app at start (see resolveSecret).
+  livekitApiKey: resolveSecret(process.env, "LIVEKIT_API_KEY", "devkey"),
+  livekitApiSecret: resolveSecret(process.env, "LIVEKIT_API_SECRET", "dev-livekit-secret-change-me-32chars-min"),
 };

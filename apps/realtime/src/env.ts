@@ -1,3 +1,5 @@
+import { resolveSecret } from "@cosmos/shared";
+
 /** Central place for realtime-server environment configuration and parsing. */
 
 function required(name: string, fallback?: string): string {
@@ -18,8 +20,9 @@ export const env = {
   databaseUrl: required("DATABASE_URL", "postgresql://cosmos:cosmos@localhost:5432/cosmos"),
   // Shared with Next.js/Auth.js — used to verify the session token clients
   // present at socket handshake. In dev, falls back to a fixed value so the
-  // two processes agree without extra setup; must be set explicitly in prod.
-  authSecret: required("AUTH_SECRET", "dev-only-insecure-secret-change-me"),
+  // two processes agree without extra setup. In production a missing, blank or
+  // public-default value stops the server at start (see resolveSecret).
+  authSecret: resolveSecret(process.env, "AUTH_SECRET", "dev-only-insecure-secret-change-me"),
   instanceHeartbeatTtlSeconds: 30,
   roomLeaseTtlSeconds: 30,
 };
