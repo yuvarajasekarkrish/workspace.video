@@ -94,6 +94,74 @@ jobs:
             packages/*/vitest-report.json
           if-no-files-found: warn
 
+  images:
+    # Builds both deploy images (not pushed) and checks the built artifacts:
+    # no build-time placeholder leaked into the image environment, and a container
+    # started with no settings refuses to start (the production guards, in the real image).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/web.Dockerfile
+          load: true
+          push: false
+          tags: workspace-video-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Build the realtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/realtime.Dockerfile
+          load: true
+          push: false
+          tags: workspace-video-realtime:ci
+          cache-from: type=gha,scope=realtime
+          cache-to: type=gha,scope=realtime,mode=max
+
+      - name: No build-time placeholder secret is left in either image
+        run: |
+          for image in workspace-video-web:ci workspace-video-realtime:ci; do
+            if docker run --rm --entrypoint env "$image" | grep -E 'AUTH_SECRET|build-only'; then
+              echo "::error::$image contains a build-time placeholder in its environment"
+              exit 1
+            fi
+          done
+
+      - name: Images run as an unprivileged user and hold no history, env files or dev media config
+        run: |
+          for image in workspace-video-web:ci workspace-video-realtime:ci; do
+            user=$(docker run --rm --entrypoint id "$image" -un)
+            [ "$user" = "node" ] || { echo "::error::$image runs as '$user', not node"; exit 1; }
+            if docker run --rm --entrypoint sh "$image" -c 'ls -a /repo; ls /repo/.env* /repo/livekit.yaml 2>/dev/null' | grep -E '^\.git$|\.env$|livekit\.yaml'; then
+              echo "::error::$image contains a file that must stay out of images"
+              exit 1
+            fi
+          done
+
+      - name: A container with no settings refuses to start in production
+        run: |
+          for image in workspace-video-web:ci workspace-video-realtime:ci; do
+            if output=$(docker run --rm "$image" 2>&1); then
+              echo "::error::$image started with no settings"
+              exit 1
+            fi
+            echo "$output" | grep -q "Refusing to start in production" || {
+              echo "::error::$image failed, but not with the production guard message:"
+              echo "$output" | tail -20
+              exit 1
+            }
+            echo "$image refused to start, as it should"
+          done
+
   proxy-allowlist:
     # Proves with real containers that the proxy forwards only /socket.io and /health
     # to the realtime server (see deploy/Caddyfile).

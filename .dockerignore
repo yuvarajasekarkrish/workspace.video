@@ -1,0 +1,18 @@
+# Keep the image build context to source only: no local installs, history, or secrets.
+**/node_modules
+**/.next
+**/dist
+.git
+.github
+.agents
+.claude
+.devcontainer
+**/.env
+**/.env.*
+!**/.env.example
+livekit.yaml
+deploy/**/*.generated.*
+**/vitest-report.json
+**/load-results
+docs
+skills-lock.json
