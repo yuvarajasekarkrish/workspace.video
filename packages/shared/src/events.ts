@@ -33,6 +33,11 @@ export type MoveEvent = z.infer<typeof MoveEventSchema>;
  *  of the workspace that owns `roomId`. */
 export const JoinRoomEventSchema = z.object({
   roomId: z.string().min(1),
+  /** Opt-in: this connection understands `proximity:batch`. Absent means it does
+   *  not, and it keeps receiving one `proximity:update` per change. It belongs to
+   *  the connection that sent this join, not to the user: the server keeps it on
+   *  the peer record next to the socket id, so a reconnect re-declares it. */
+  proximityBatch: z.boolean().optional(),
 });
 export type JoinRoomEvent = z.infer<typeof JoinRoomEventSchema>;
 
@@ -161,6 +166,15 @@ export const ProximityUpdateEventSchema = z.object({
 });
 export type ProximityUpdateEvent = z.infer<typeof ProximityUpdateEventSchema>;
 
+/** All of one listener's proximity changes for a tick in a single event. Each
+ *  item is exactly a `proximity:update` payload, so the two formats carry the
+ *  same information; only the framing differs. Sent only to connections that
+ *  opted in via `JoinRoomEvent.proximityBatch`. */
+export const ProximityBatchEventSchema = z.object({
+  updates: z.array(ProximityUpdateEventSchema),
+});
+export type ProximityBatchEvent = z.infer<typeof ProximityBatchEventSchema>;
+
 export const ObjectStateSchema = z.object({
   objectId: z.string().min(1),
   roomId: z.string().min(1),
@@ -265,6 +279,7 @@ export const ServerEvents = {
   PeersDelta: "peers:delta",
   MoveCorrection: "move:correction",
   ProximityUpdate: "proximity:update",
+  ProximityBatch: "proximity:batch",
   ObjectsSnapshot: "objects:snapshot",
   ObjectSync: "object:sync",
   ObjectRemoved: "object:removed",

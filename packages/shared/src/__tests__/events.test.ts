@@ -4,6 +4,8 @@ import {
   JoinRoomEventSchema,
   ObjectUpsertEventSchema,
   ProximityUpdateEventSchema,
+  ProximityBatchEventSchema,
+  ServerEvents,
 } from "../events.js";
 
 describe("event schemas", () => {
@@ -62,5 +64,31 @@ describe("event schemas", () => {
       videoSubscribed: false,
     });
     expect(result.success).toBe(false);
+  });
+
+  describe("proximity batching (opt-in)", () => {
+    it("treats a join without proximityBatch as not opted in", () => {
+      const parsed = JoinRoomEventSchema.safeParse({ roomId: "r1" });
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.proximityBatch).toBeUndefined();
+    });
+
+    it("accepts proximityBatch true and false, rejects a non-boolean", () => {
+      expect(JoinRoomEventSchema.safeParse({ roomId: "r1", proximityBatch: true }).success).toBe(true);
+      expect(JoinRoomEventSchema.safeParse({ roomId: "r1", proximityBatch: false }).success).toBe(true);
+      expect(JoinRoomEventSchema.safeParse({ roomId: "r1", proximityBatch: "yes" }).success).toBe(false);
+    });
+
+    it("carries proximity updates in the same item shape as proximity:update", () => {
+      const item = { peerId: "p1", audioSubscribed: true, audioGain: 0.5, videoSubscribed: false };
+      expect(ProximityBatchEventSchema.safeParse({ updates: [item, { ...item, peerId: "p2" }] }).success).toBe(true);
+      expect(ProximityBatchEventSchema.safeParse({ updates: [] }).success).toBe(true);
+      expect(ProximityBatchEventSchema.safeParse({ updates: [{ ...item, audioGain: 1.5 }] }).success).toBe(false);
+      expect(ProximityBatchEventSchema.safeParse({ updates: [{ peerId: "" }] }).success).toBe(false);
+    });
+
+    it("names the event proximity:batch", () => {
+      expect(ServerEvents.ProximityBatch).toBe("proximity:batch");
+    });
   });
 });
