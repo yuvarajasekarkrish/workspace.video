@@ -11,7 +11,8 @@
     "test": "vitest run",
     "load-harness": "tsx src/scripts/loadHarness.ts",
     "tunnel-canary": "tsx src/scripts/tunnelCanary.ts",
-    "analyze-stalls": "tsx src/scripts/analyzeStalls.ts"
+    "analyze-stalls": "tsx src/scripts/analyzeStalls.ts",
+    "analyze-profile": "tsx src/scripts/analyzeProfile.ts"
   },
   "dependencies": {
     "@cosmos/db": "workspace:*",
