@@ -17,3 +17,4 @@ coverage/
 # Generated deploy-time configs contain secrets and must never be committed
 deploy/**/*.generated.*
 deploy/**/_smoke/
+vitest-report.json

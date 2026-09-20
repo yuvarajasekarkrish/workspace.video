@@ -1,0 +1,104 @@
+name: CI
+
+# Every push to master and every pull request. Nothing here retries a test or
+# loosens a timeout: a red run is inspected from its report (see the test step
+# and the uploaded vitest-report.json files), then fixed on evidence.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: workspace
+          POSTGRES_PASSWORD: workspace
+          POSTGRES_DB: workspace_video
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workspace"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://workspace:workspace@localhost:5432/workspace_video
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (lockfile must be current)
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate the database client and apply migrations
+        run: |
+          pnpm --filter @workspace-video/db run generate
+          pnpm --filter @workspace-video/db exec prisma migrate deploy
+
+      - name: The retired internal name must not come back
+        run: bash scripts/check-no-old-name.sh
+
+      - name: Deploy and script tests (config generator, report checker)
+        run: node --test deploy/livekit/render-config.test.mjs scripts/check-test-report.test.mjs
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Tests (every one gates; a JSON report with durations is written per package)
+        run: pnpm -r run test --reporter=verbose --reporter=json --outputFile=vitest-report.json
+
+      - name: Test totals and slowest tests (fails if any package ran zero tests)
+        if: always()
+        run: node scripts/check-test-report.mjs
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-reports
+          path: |
+            apps/*/vitest-report.json
+            packages/*/vitest-report.json
+          if-no-files-found: warn
+
+  proxy-allowlist:
+    # Proves with real containers that the proxy forwards only /socket.io and /health
+    # to the realtime server (see deploy/Caddyfile).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash deploy/proxy/verify-allowlist.sh
