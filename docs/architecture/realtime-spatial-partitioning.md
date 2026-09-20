@@ -328,3 +328,135 @@ pair-checking) still stands independently of this phase's emit work.
 3. Only if a phase is then clearly >50% of tick again, apply the matching Step 4 optimization
    (batching `proximity:update`, or a leaner wire format) — don't batch pre-emptively.
 4. 500-user work stays gated behind 200 validating, per the approved plan.
+
+---
+
+# Phases 11-17: concurrent real users, and where the event-loop tail comes from
+
+Phases 9-10 were about tick cost. These phases were about what happens with real concurrent
+sockets: joins, disconnects, rubber-banding, and a failing event-loop p99 gate at N=100.
+
+## Phases 11-14 (pointers only)
+
+Detail lives in the commits; this document does not restate findings it has not re-verified.
+
+| Phase | Commit | Subject |
+|---|---|---|
+| 11 | `715ed3c` | fix lease-eviction bug, cut `join_room` latency |
+| 12 | `2a6f21b` | diagnose the mass-disconnect independent of Phase 11's fix |
+| 13 | `d88ee01` | guard against a stale forward, measure the harness's own event loop |
+| 14 | `df6b8c1` | instrument the Engine.IO heartbeat path itself |
+
+## Phase 15: join fast-path bug, move-validation instrumentation
+
+- Fixed the join fast path reading `participantLimit` as 0 (`ebc6a95`).
+- Read-only instrumentation for rejected moves: emit-vs-arrival gaps, cross-user clustering in the
+  same 10ms, and a per-tick window of event-loop utilization, cpu/wall ratio and tick time.
+- Result: at N=30 there were 0 corrections. At N=100 all 100 sockets survived but 1.85% of moves
+  were corrected and the server event-loop p99 was ~64ms. Rejections did not cluster across users
+  (0 of the observed rejected moves shared a 10ms instant with another user beyond chance).
+
+## Phase 16: concurrency defects and rubber-banding
+
+Test-first for each; structural extraction (`registerSocketHandlers`) landed as its own commit.
+
+| Defect | Fix |
+|---|---|
+| A stale socket's disconnect removed the peer that had already reconnected under the same userId | `removePeer` takes the disconnecting socket id and ignores a stale one (`staleDisconnectsIgnored` counter) |
+| A join racing a room eviction created a fresh room record while the old one was still flushing | join awaits the in-flight eviction before `ensureRoom` (record stays in `rooms` during flush) |
+| Server stalls were charged to users as speed violations | `validateMove` banks unspent allowance up to `maxBurstMs` (default 200ms); credit resets on seat teleport |
+
+Known residual (not fixed): a small admit-during-eviction window, and a first-move snap-back after
+some reconnects (~10%, inferred, not measured).
+
+Result (N=100, 60s, 20 reconnects, co-located): corrections 0.004-0.007% (was 1.85%), occupancy
+100 after 20 reconnects, stale disconnects ignored = 20 per 20 churns.
+
+## Phase 17: where the ~60-70ms event-loop p99 comes from
+
+The remaining failing gate at N=100 was event-loop p99 (59-72ms against a 50ms limit) while tick
+p95 was 22-25ms. Everything below is N=100, 60s, spread, 20 reconnects, server and harness on one
+Codespace, no tunnel. Numbers only; the reading follows.
+
+### Ruled out (measured)
+
+| Candidate | Measurement |
+|---|---|
+| A slow emit | every emit timed: max 4.1-7.4ms over ~1.25-1.4M emits; none at 10ms or more |
+| Garbage collection | max pause 5.7-7.5ms (~180-230 pauses); no long window overlaps a 20ms pause |
+| Inbound move handling | in the CPU profile, `tryParse` 48ms and app code 53ms of 17.5s post-tick busy time |
+| The tick alone | tick p50 ~15-17ms, max ~28-35ms |
+
+### What the pattern is
+
+A probe measures, after each tick, how long the loop takes to reach its check phase (`postTickMs`).
+The tick plus this burst is the loop's away-time around one tick.
+
+| Run | post-tick burst p50 / p90 / p99 | windows with tick+burst >= 50ms | event-loop p99 |
+|---|---|---|---|
+| A | 23.2 / 31.6 / 42.0 ms | 56/400 | 62.21ms |
+| B (replicate) | 22.8 / 31.5 / 41.9 ms | 49/400 | 59.13ms |
+
+So the p99 is a recurring structural pattern (about one long iteration in seven or eight), not rare stalls.
+
+### What the burst consists of
+
+- `node --cpu-prof`, 670 ticks: post-tick busy time is 79% one native function, `writev` (13.8s of
+  17.5s). 99.8% of it has one call chain: Engine.IO `flush` -> WebSocket `sendFrame` -> stream
+  `uncork` -> `clearBuffer` -> `writev`. Median busy run after a tick: 27.3ms (harness burst p50
+  23.2ms; the two agree loosely, profiler overhead and different run boundaries).
+- `strace -c` (server and children traced): **663,783 `writev` calls, 12.29s, ~18µs per call**;
+  `write` 2,068; `sendto` 367. The two methods agree on the `writev` time within ~11%.
+- Against the ~1.25-1.4M emits of a comparable run (this run's own emit count was not captured):
+  roughly 0.5 `writev` per emit, ~2 packets per call, ~1,000 calls per tick (~10 per socket per
+  tick). Approximate.
+
+### Reading
+
+The burst is many small `writev` syscalls issued by Engine.IO's per-socket flush after each tick.
+The cost driver is the number of calls, not slow individual calls.
+
+Not established:
+- why the flush is this fragmented (hypothesis: Engine.IO's write-ready cycle interacting with the
+  tick; ~20 small packets per socket per tick such as 98-byte `proximity:update`);
+- whether loopback co-location inflates the per-call cost (a receiver's network processing can run
+  inside the sender's syscall). No run with clients on another machine exists;
+- whether this reproduces for real remote clients.
+
+### Records of what was wrong along the way
+
+- A per-tick reset of a private loop-delay histogram was blind to the tick's own blocking, so its
+  "no stalled windows" result was void; it was removed (`90d1924`).
+- Early guesses that the burst was inbound move handling, and that it was ~100 calls of ~0.2ms
+  each, were both wrong and are superseded by the numbers above.
+- The tick-window ring was returned rotated after wrapping and had no timestamp; fixed at the
+  producer (`atMs`, oldest-first).
+- The first two `strace` attempts traced a process that did not serve the load (tiny counts, no
+  `writev`); the third, following child processes, worked.
+
+### Scaling note (not comparable to the runs above)
+
+An 8s-window matrix on the same Codespace (counters cumulative across scenarios, windows include
+ramp-up): N=50 and N=100 pass every gate; N=200 fails tick p95 (65-67ms), tick p99 (79ms) and
+event-loop p99 (110-169ms), with long windows' median tick 43-50ms, so at 200 the tick itself
+grows, not only the burst. Still no emit or GC pause of 20ms.
+
+### Gate status
+
+Event-loop p99 <= 50ms remains failing at N=100 (59-72ms). Every other N=100 gate passes (tick
+p95/p99, corrections, survival, occupancy, join latency, RSS). No threshold was changed.
+
+### Open
+
+- Why the flush issues so many small writes; whether fewer or combined packets per tick would cut
+  the syscall count (a protocol/behavior change: needs its own plan, evidence and approval).
+- A run with the harness on a separate machine.
+- N=200 tick scaling (tick p50 4.0ms -> 14.9ms from N=100 to N=200 in the 8s matrix).
+- RSS plateau (~70MB per room), tick p95 marginal (24.8 vs 25 in one run; ~2ms is instrument
+  overhead), post-rejoin first-move snap-back, admit-during-eviction window.
+
+### Tools added (read-only)
+
+`analyze-stalls` (result JSON overlap report), `analyze-profile` (`.cpuprofile`: busy time inside
+vs after each tick, by library, `--callers=<fn>`), the load harness's reconnect churn
+(`LOAD_HARNESS_RECONNECT_COUNT`), emit-tail and GC recorders exposed on `/internal/metrics`.
