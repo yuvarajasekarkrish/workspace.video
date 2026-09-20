@@ -2,7 +2,7 @@ import { EmitTailRecorder, type EmitTailSnapshot, type TailStat } from "./emitTa
 import { GcRecorder, type GcSnapshot } from "./gcRecorder";
 import { iterationMs, summarizeStallsCovered, type StallGroup, type StallWindow } from "./stallSummary";
 
-function percentile(values: number[], p: number): number | null {
+export function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]!;
