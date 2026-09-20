@@ -95,7 +95,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       const parsed = JoinRoomEventSchema.safeParse(raw);
       if (!parsed.success) return finish({ error: "Invalid join payload." });
 
-      const { roomId } = parsed.data;
+      const { roomId, proximityBatch } = parsed.data;
 
       let workspaceId: string;
       let layout: RoomLayout;
@@ -191,6 +191,9 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
         name: user.email, // placeholder until profile data is wired up in phase 2
         avatarUrl: null,
         socketId: socket.id,
+        // This connection's own declaration, stored next to its socket id so
+        // both are replaced together by the latest join (see PeerState).
+        proximityBatch: proximityBatch === true,
         // Deterministic per-user ring offset around the layout's spawn zone
         // center, so multiple avatars don't render exactly on top of each
         // other (see packages/proximity/src/spawn.ts). Closes the TODO this

@@ -152,6 +152,31 @@ describe("socket seam", () => {
     );
   });
 
+  it("proximity batching over real sockets: an opted-in client gets a batch, an old client keeps getting per-peer updates", async () => {
+    seam = await startSeam();
+    const joinWith = (client: ClientSocket, proximityBatch?: boolean) =>
+      new Promise((resolve) =>
+        client.emit(ClientEvents.JoinRoom, { roomId: ROOM_ID, ...(proximityBatch === undefined ? {} : { proximityBatch }) }, resolve),
+      );
+
+    const newClient = await connect("u1");
+    const oldClient = await connect("u2");
+    const seen = { newBatch: [] as { peerId: string }[][], newUpdate: 0, oldBatch: 0, oldUpdate: [] as string[] };
+    newClient.on(ServerEvents.ProximityBatch, (p: { updates: { peerId: string }[] }) => seen.newBatch.push(p.updates));
+    newClient.on(ServerEvents.ProximityUpdate, () => seen.newUpdate++);
+    oldClient.on(ServerEvents.ProximityBatch, () => seen.oldBatch++);
+    oldClient.on(ServerEvents.ProximityUpdate, (p: { peerId: string }) => seen.oldUpdate.push(p.peerId));
+
+    expect(await joinWith(newClient, true)).toEqual({ ok: true });
+    expect(await joinWith(oldClient)).toEqual({ ok: true }); // no field at all: what every existing client sends
+
+    await waitFor(() => seen.newBatch.length > 0 && seen.oldUpdate.length > 0, "both listeners to be told about each other");
+    expect(seen.newBatch.flat().map((u) => u.peerId)).toEqual(["u2"]);
+    expect(seen.newUpdate, "the opted-in client must not also get per-peer updates").toBe(0);
+    expect(seen.oldUpdate).toEqual(["u1"]);
+    expect(seen.oldBatch, "the old client must never see the new event").toBe(0);
+  });
+
   it("does not hand a joiner a room that is mid-eviction (flush in progress)", async () => {
     const FLUSH_MS = 150;
     const repository: ObjectRepository = {
