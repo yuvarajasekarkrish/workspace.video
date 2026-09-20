@@ -5,9 +5,10 @@
  * Server and N real Socket.IO clients (websocket transport) on loopback; the
  * clients run in a child process so their receive work does not share the
  * server's event loop. Each 100ms round the server emits FRAMES small
- * `proximity:update`-shaped events to every socket, two ways, alternated in
+ * `proximity:update`-shaped events to every socket, three ways, rotated in
  * blocks so drift hits both equally:
  *   plain   the way the server does it today (one WebSocket frame -> one writev)
+ *   batched the same updates as ONE frame per socket (what a batched event would send)
  *   corked  cork() each socket's underlying net.Socket, emit, uncork() once
  *           (uncork is in a finally: a missed uncork would silence the socket)
  * Numbers only, no verdict. Every started resource is closed at the end.
@@ -30,11 +31,11 @@ const WARMUP = Number(process.env.CORK_BENCH_WARMUP ?? 20);
 const PERIOD_MS = 100;
 const EVENT = "proximity:update";
 
-type Mode = "plain" | "corked";
+type Mode = "plain" | "corked" | "batched";
 
 // ---------------------------------------------------------------- child ----
 async function runChild(url: string): Promise<void> {
-  const received: Record<string, number> = { plain: 0, corked: 0 };
+  const received: Record<string, number> = { plain: 0, corked: 0, batched: 0 };
   let outOfOrder = 0;
   const lastSeq = new Map<number, number>();
   const clients = Array.from({ length: SOCKETS }, (_, id) => {
@@ -103,8 +104,8 @@ async function runParent(): Promise<void> {
   const corkable = handles.every((h) => typeof h?.cork === "function" && typeof h?.uncork === "function");
 
   const payload = { peerId: "user-0123456789ab", audioSubscribed: true, audioGain: 0.5, videoSubscribed: false };
-  const sent: Record<Mode, number> = { plain: 0, corked: 0 };
-  const samples: Record<Mode, Sample[]> = { plain: [], corked: [] };
+  const sent: Record<Mode, number> = { plain: 0, corked: 0, batched: 0 };
+  const samples: Record<Mode, Sample[]> = { plain: [], corked: [], batched: [] };
   const seq = new Array<number>(SOCKETS).fill(0);
 
   async function round(mode: Mode, record: boolean): Promise<void> {
@@ -113,6 +114,12 @@ async function runParent(): Promise<void> {
     if (mode === "corked") for (const h of handles) h!.cork!();
     try {
       for (let i = 0; i < serverSockets.length; i++) {
+        if (mode === "batched") {
+          // The same FRAMES updates as one frame per socket (what a batched event would send).
+          serverSockets[i]!.emit(EVENT, { m: mode, n: seq[i]!++, updates: Array.from({ length: FRAMES }, () => payload) });
+          sent[mode]++;
+          continue;
+        }
         for (let k = 0; k < FRAMES; k++) {
           serverSockets[i]!.emit(EVENT, { ...payload, m: mode, n: seq[i]!++ });
           sent[mode]++;
@@ -132,10 +139,11 @@ async function runParent(): Promise<void> {
   }
 
   try {
-    const modes: Mode[] = corkable ? ["plain", "corked"] : ["plain"];
+    const modes: Mode[] = corkable ? ["plain", "corked", "batched"] : ["plain", "batched"];
     for (let i = 0; i < WARMUP; i++) for (const m of modes) await round(m, false);
     for (let b = 0; b < BLOCKS; b++) {
-      const order = b % 2 === 0 ? modes : [...modes].reverse();
+      const shift = b % modes.length; // rotate the order each block so no mode is always first
+      const order = [...modes.slice(shift), ...modes.slice(0, shift)];
       for (const m of order) for (let r = 0; r < ROUNDS; r++) await round(m, true);
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 500)); // let the last flushes land
@@ -154,10 +162,14 @@ async function runParent(): Promise<void> {
     console.log(
       `underlying net.Socket reachable via conn.transport.socket._socket on every socket: ${corkable ? "yes" : "NO (corked mode skipped)"}`,
     );
+    const wireBytes = (m: Mode) =>
+      m === "batched"
+        ? JSON.stringify([EVENT, { m, n: 0, updates: Array.from({ length: FRAMES }, () => payload) }]).length
+        : JSON.stringify([EVENT, { ...payload, m, n: 0 }]).length * FRAMES;
     for (const m of modes) {
       const s = samples[m];
       const col = (pick: (x: Sample) => number, p: number) => f(percentile(s.map(pick), p));
-      console.log(`  ${m.padEnd(6)} rounds ${s.length}`);
+      console.log(`  ${m.padEnd(7)} rounds ${s.length} · ~${wireBytes(m)} JSON bytes and ${m === "batched" ? 1 : FRAMES} frame(s) per socket per round`);
       console.log(`    sync send loop ms             p50 ${col((x) => x.syncMs, 0.5)} · p90 ${col((x) => x.syncMs, 0.9)} · p99 ${col((x) => x.syncMs, 0.99)}`);
       console.log(`    send start -> check phase ms  p50 ${col((x) => x.burstMs, 0.5)} · p90 ${col((x) => x.burstMs, 0.9)} · p99 ${col((x) => x.burstMs, 0.99)}`);
       console.log(`    cpu per round ms              user p50 ${col((x) => x.userMs, 0.5)} · system p50 ${col((x) => x.sysMs, 0.5)} · user+system p50 ${col((x) => x.userMs + x.sysMs, 0.5)}`);
