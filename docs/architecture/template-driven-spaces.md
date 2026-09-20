@@ -208,7 +208,7 @@ A template chooses a **seating mode**. The engine supports all of them.
 - **Rule we keep:** measure first, one run, report, then decide. No tuning on suspicion.
 
 ### QA / tester
-- **Template validator tests (automatic, run on every template):** every seat inside a walkable area and reachable from spawn, no two seats on the same spot, every zone has an entry point, all regions connected by links, capacity not above seat count where seats are required, private zones far enough apart for the audio radius, file size and shape limits.
+- **Template validator tests (automatic, run on every template):** every seat inside a walkable area and reachable from spawn, no two seats on the same spot, every zone has an entry point, all regions connected by links, capacity is a separate number from the seat count (a 2-seat room may allow 4 people; capacity is checked against seats only for a zone that declares `seatsRequired`), private zones far enough apart for the audio radius, file size and shape limits.
 - **Engine tests:** walkable rejection, polygon zone membership at edges, seat claim in all modes, travel (each target type, refusal cases, cooldown, seat release), projection round trip (flat to screen and back within one pixel), depth ordering.
 - **Load tests:** 100, 200, 500 people per template with the seated-heavy scenario, plus reconnect storms and jump storms.
 - **Visual regression:** a screenshot per template at each zoom level.
@@ -370,3 +370,111 @@ Lane D (travel):   S6 (needs S2)                   jump logic
 Then: S7 (needs S5, S6), S8 (needs S5, S7)
 ```
 Lanes A and B can start together once S0's format exists. A and C touch different packages (shared/realtime versus web).
+
+---
+
+## 14. Design spec (from the design review)
+
+Outcome of the design review of sections 0 to 13. It adds what people see and do. Every item here was decided individually. No screen pictures were generated: the design tool needs an OpenAI API key that is not configured, so the decisions below are backed by text sketches, not mockups.
+
+Existing look to reuse (found in the code): dark ground `#0b0d12`, Tailwind, translucent black chips with blur (`bg-black/50 backdrop-blur`), blue dot for you, green dot for others, monospace counts. There are no design tokens and no `DESIGN.md` yet.
+
+### Pass 1: what the user sees first, second, third
+Screen type: a full-screen scene where the scene is the product (an "experience" screen), not a dashboard.
+
+| Rank | Element | Why |
+|---|---|---|
+| 1st | The scene and your own avatar | It is the product |
+| 2nd | Find and jump (search) | The main action |
+| 3rd | Live count | Proof that people are here |
+| Edge | Tabs, room list, zoom, My Location, logo | Small, at the edges, out of the way |
+
+**Decision 1A: floating glass chips over a full-screen scene**, in **named slots**, so new controls take a slot and never a free position:
+```
++--------------------------------------------------------------+
+| top-left: (free)                          top-right: logo+name|
+|                                                              |
+|                 island scene, full screen                    |
+|                                                              |
+|                                          bottom-right: zoom, |
+|                                          My Location         |
+| bottom-left: Live count   bottom-centre: Find a person or room|
++--------------------------------------------------------------+
+```
+- The top-right slot belongs to the logo and company name, as in the reference picture. The current people list ([RoomHud.tsx](../../apps/web/src/components/RoomHud.tsx), top-right) and the zone chip ([ZoneHudChip.tsx](../../apps/web/src/components/ZoneHudChip.tsx), left, 24 units down) must move into slots when this is built.
+- Every chip has a collapse or hide rule and a safe margin so it never hides an avatar the user is trying to click.
+- The layout knows nothing about a particular template, so a new template or scene needs no layout change.
+
+**Decision 1B: three fixed zoom levels**, each with one job:
+| Level | Shows | Draw cost |
+|---|---|---|
+| **Map** (zoomed out) | Islands, dots, counts only | Lowest, fits the battery budget |
+| **Room** (default) | Avatars with initials, room label cards | Medium |
+| **Desk** (zoomed in) | Full names, seat labels, seat state | Highest per avatar, but few avatars are visible |
+- A short cross-fade between levels, no per-frame label collision checks.
+- QA takes one screenshot per level per template (visual regression).
+
+### Pass 2: states (every feature has a loading, empty, error and partial look)
+
+**Decision 2A: scene loading.** The builder also makes a tiny blurry preview of the whole scene (about 20 KB) per template. It shows at once, sharp tiles fill in over it, and the screen is never black. If the template cannot load: a failure screen "Couldn't load this space" with **Try again** and **Back to my last space**. A checksum mismatch is treated as a load failure.
+
+**Decision 2B: jump refusals are shown on the row before the click**, with the reason, and a short message appears only if the state changed after the click ("Ana just left"). The server enforces the same rules either way. The reasons come from the **template's per-zone rules**, not from fixed code:
+| Reason shown | Comes from |
+|---|---|
+| Full (12/40) | The zone's `capacity`. **Capacity is its own number, not the seat count**: a 2-seat room may allow 4 people |
+| Private, invite only, interview room | The zone's `access` rule |
+| In a meeting, occupied | A **new live zone state** (`open`, `occupied`, `locked`) that the server tracks. This is new engine data the travel step (S6) needs |
+| Away, offline | Presence |
+| Try again in 3 s | Jump cooldown |
+
+**Decision 2C: the states table (adopted row by row).**
+| Feature | Loading | Empty | Error | Success | Partial |
+|---|---|---|---|---|---|
+| Scene | Blurry preview at once, tiles fill in | n/a | Failure screen (2A) | Scene and you at your seat | Missing tiles stay blurry, retry quietly |
+| Search | Skeleton rows after 150 ms | "No one called 'xyz'. Try a room name." plus the 5 busiest rooms | "Search is down. The People list still works." | Results, each with Jump | Only people or only rooms: show that group |
+| Jump | Nothing under about 200 ms, then a small "Jumping..." | n/a | Reason on the row, message if it changed (2B) | You appear next to the target | n/a |
+| People list | Skeleton rows | "You're the only one here." No invite link: you are already in the workspace | Last known list, dimmed | Rows | A scrolling list that draws only the rows that fit, nothing overlapping (no fixed cap) |
+| Live count | "..." | "1" (you) | Last number, dimmed, "offline" | The number | n/a |
+| Seat | n/a | Free seat outline | **No message.** Seats are visibly occupied and everyone can see who sits where | Avatar faces the desk, chip "Desk 017 - Stand up" | n/a |
+| Connection | Existing "Reconnecting..." badge | n/a | Unchanged from today | Badge disappears | n/a |
+
+**Seating on arrival (refines the spawn rule in sections 3 and 6):** on joining you are placed automatically at **your assigned seat, otherwise your previous seat if it is free, otherwise any free seat**. You can later move, or use a "back to my seat" action.
+
+**Deferred by the user (next level after this one):** invite links and meeting rooms opened in a new window, like Zoom or Teams.
+
+### Pass 3: the journey
+
+| Step | User does | User feels | Specified by |
+|---|---|---|---|
+| 1 | Opens the space | Curious, impatient | Blurry preview at once (2A) |
+| 2 | Lands at their own seat | "This is my place" | Assigned, then previous, then any free seat |
+| 3 | Sees the count and avatars | Reassured | Live count, three zoom levels (1B) |
+| 4 | Searches and clicks Jump | Wants speed | Reason shown on the row (2B) |
+| 5 | Arrives next to the person | Connected | Instant cut, then a ring (3B) |
+| 6 | The other person sees someone appear beside them | Possibly startled | **Accepted risk (3A)** |
+| 7 | Goes back to their seat | Relief | "Back to my seat" |
+| 8 | Returns tomorrow | Familiar | Previous seat remembered |
+Time horizons: 5 seconds = the preview and your own avatar at your seat; 5 minutes = find someone and reach them; long term = "my place".
+
+**Decision 3A: a jump to a person is always instant.** No arrival cue, no consent step, no "Ask first" setting. The risk that the other person is startled is accepted by the product owner. Rules that still apply: private, full and occupied zones refuse (2B), the cooldown, and the audit trail of who jumped where (section 8).
+
+**Invite to talk (a later feature, not in S0 to S8).** If someone you jumped to did not respond, you go back to your seat and send an invite. When they return and accept, you talk. It needs a stored pending invite and a notification. Its place in the phase order is an open decision (Pass 7).
+
+**Decision 3B: an instant camera cut to the new place, then a highlight ring around you for about 300 ms.** No slide or fly-across, so the jump costs almost no drawing work.
+
+### Pass 4: an intentional look, not a generic one
+
+Screen type: the main screen is an "experience" screen (the scene fills the view); lists and panels are ordinary app screens. No hard-rejection pattern applies. Known gap: the logo and company name are undecided, so the top-right slot is a placeholder that reads a per-workspace logo and name.
+
+**Decision 4A: quiet, neutral controls with one accent colour, and the scene carries the colour.** The controls must not depend on any one template's look. The "Cosmic Canopy" picture is only one example template, so nothing in the controls is styled to match it. Keep the dark glass chips already in the app because they stay readable over busy art. No glow, no gradient edges on controls. A template may supply an accent hue through its data.
+
+Watch list for reviewers (AI-look tells): a system font as the main face, glow or gradient edges, purple-to-blue gradients, and identical rounded cards everywhere.
+
+### Pass 5: design system
+
+**Decision 5A: a small token set plus a one-page `DESIGN.md`, with a real font pair swappable in one place.** Today there is no `DESIGN.md` and no tokens: colours are typed into components and the font is the plain system one ([globals.css:13](../../apps/web/src/app/globals.css)).
+- **Tokens** (each defined once, as CSS variables): colours (ground, chip surface, text, muted text, one accent, "you" and "other" dots), corner roundness, blur amount, spacing steps, type sizes, motion timings (ring 300 ms, level cross-fade).
+- **Fonts:** a real UI face plus a number face for counts, replacing the system font. It is replaceable in one line when the brand is decided. The font download is counted in the loading budget.
+- A template may supply its own accent hue through its data. The controls pick it up from the token, with no restyling.
+- `DESIGN.md` records decisions 1A to 5A so later work has one place to look.
+- Pass 5 status: this design review was paused after 5A, before Pass 6 (phones and accessibility) and Pass 7 (open decisions). Neither has been done.
