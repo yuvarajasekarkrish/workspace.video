@@ -17,6 +17,7 @@ async function loadSession() {
   vi.stubEnv("LIVEKIT_API_KEY", "APIrealKey123");
   vi.stubEnv("LIVEKIT_API_SECRET", "a-real-livekit-secret-0123456789abcdef0123456789");
   vi.stubEnv("DATABASE_URL", "postgresql://app:a-strong-password@db.internal:5432/workspace");
+  vi.stubEnv("APP_URL", "https://www.workspace.video");
   vi.resetModules();
   return import("../session");
 }

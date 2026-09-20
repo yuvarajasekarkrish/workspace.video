@@ -10,10 +10,11 @@ const DEV_LIVEKIT_SECRET = "dev-livekit-secret-change-me-32chars-min";
 
 const DEV_DATABASE_URL = "postgresql://workspace:workspace@localhost:5432/workspace_video";
 
-const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL"] as const;
+const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL", "APP_URL"] as const;
 type Key = (typeof KEYS)[number];
 
 const REAL: Record<Key, string> = {
+  APP_URL: "https://www.workspace.video",
   DATABASE_URL: "postgresql://app:a-strong-password@db.internal:5432/workspace",
   AUTH_SECRET: "a-real-auth-secret-0123456789abcdef0123456789abcdef",
   REALTIME_JWT_SECRET: "a-different-realtime-secret-fedcba9876543210fedcba98765432",
@@ -113,6 +114,20 @@ describe("web env: secrets in production", () => {
       expect(error?.message).toMatch(/database/i);
     });
 
+    it("refuses to start when APP_URL is missing, blank, or not https, because sign-in links are built from it", async () => {
+      setEnv({ ...REAL, APP_URL: undefined });
+      await expect(loadEnv()).rejects.toThrow(/APP_URL/);
+      setEnv({ ...REAL, APP_URL: "  " });
+      await expect(loadEnv()).rejects.toThrow(/APP_URL/);
+      setEnv({ ...REAL, APP_URL: "http://www.workspace.video" });
+      await expect(loadEnv()).rejects.toThrow(/APP_URL.*https/);
+    });
+
+    it("uses APP_URL without a trailing slash", async () => {
+      setEnv({ ...REAL, APP_URL: "https://www.workspace.video///" });
+      expect((await loadEnv()).appUrl).toBe("https://www.workspace.video");
+    });
+
     it("names the variable and says how to fix it, without printing the secret", async () => {
       setEnv({ ...REAL, AUTH_SECRET: DEV_AUTH_SECRET });
       const error = await loadEnv().then(
@@ -145,6 +160,7 @@ describe("web env: secrets in production", () => {
       expect(env.livekitApiKey).toBe(DEV_LIVEKIT_KEY);
       expect(env.livekitApiSecret).toBe(DEV_LIVEKIT_SECRET);
       expect(env.databaseUrl).toBe(DEV_DATABASE_URL);
+      expect(env.appUrl).toBe("http://localhost:3000");
     });
 
     it("keeps the two dev secrets different, so the split is real even in development", async () => {

@@ -24,8 +24,25 @@ if (process.env.NODE_ENV === "production" && realtimeJwtSecret === authSecret) {
   );
 }
 
+/** Public address of this app. Sign-in links are built from it and redirects are
+ *  only accepted to it, so production must set it explicitly, over https. */
+function resolveAppUrl(source: NodeJS.ProcessEnv): string {
+  const raw = source.APP_URL?.trim();
+  if (source.NODE_ENV !== "production") return (raw || "http://localhost:3000").replace(/\/+$/, "");
+  if (!raw) {
+    throw new Error(
+      "Refusing to start in production: APP_URL is missing or blank. Set APP_URL to this app's public address, for example https://www.workspace.video",
+    );
+  }
+  if (!raw.startsWith("https://")) {
+    throw new Error("Refusing to start in production: APP_URL must start with https://");
+  }
+  return raw.replace(/\/+$/, "");
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
+  appUrl: resolveAppUrl(process.env),
   // Dev-only "sign in as" flow (see lib/session.ts) is hard-gated behind
   // BOTH of these — never enabled by NODE_ENV alone, so a misconfigured
   // deploy can't accidentally expose it.

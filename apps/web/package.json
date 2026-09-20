@@ -15,6 +15,7 @@
     "@workspace-video/proximity": "workspace:*",
     "@workspace-video/realtime-core": "workspace:*",
     "@workspace-video/shared": "workspace:*",
+    "better-auth": "^1.7.5",
     "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
     "livekit-client": "^2.22.3",
