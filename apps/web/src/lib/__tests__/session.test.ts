@@ -52,3 +52,61 @@ describe("session tokens use separate secrets", () => {
     expect(verifySessionToken(signSessionToken(USER))).toEqual(USER);
   });
 });
+
+describe("getSessionUser (reads the sign-in cookie of the current request)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  /** Loads session.ts with the browser sending `cookieValue` (or no cookie). */
+  async function loadWithCookie(cookieValue: string | ((s: Awaited<ReturnType<typeof loadSession>>) => string) | undefined) {
+    const session = await loadSession();
+    const value = typeof cookieValue === "function" ? cookieValue(session) : cookieValue;
+    const { cookies } = await import("next/headers");
+    vi.mocked(cookies).mockResolvedValue({
+      get: (name: string) => (name === session.SESSION_COOKIE_NAME && value ? { name, value } : undefined),
+    } as never);
+    return session;
+  }
+
+  it("returns the user for a valid cookie", async () => {
+    const { getSessionUser } = await loadWithCookie((s) => s.signSessionToken(USER));
+    expect(await getSessionUser()).toEqual(USER);
+  });
+
+  it("returns null when there is no cookie", async () => {
+    const { getSessionUser } = await loadWithCookie(undefined);
+    expect(await getSessionUser()).toBeNull();
+  });
+
+  it("returns null, without throwing, for a cookie that is not a token", async () => {
+    const { getSessionUser } = await loadWithCookie("garbage");
+    expect(await getSessionUser()).toBeNull();
+  });
+
+  it("returns null for a token whose signature was altered", async () => {
+    const { getSessionUser } = await loadWithCookie((s) => {
+      const token = s.signSessionToken(USER);
+      return token.slice(0, -2) + (token.endsWith("aa") ? "bb" : "aa");
+    });
+    expect(await getSessionUser()).toBeNull();
+  });
+
+  it("returns null for an expired token", async () => {
+    const { getSessionUser } = await loadWithCookie(() =>
+      jwt.sign({ sub: USER.userId, email: USER.email }, AUTH_SECRET, { expiresIn: -10 }),
+    );
+    expect(await getSessionUser()).toBeNull();
+  });
+
+  it("returns null for a correctly signed token that lacks the email claim", async () => {
+    const { getSessionUser } = await loadWithCookie(() => jwt.sign({ sub: USER.userId }, AUTH_SECRET, { expiresIn: "1h" }));
+    expect(await getSessionUser()).toBeNull();
+  });
+
+  it("returns null for a socket token presented as the sign-in cookie", async () => {
+    const { getSessionUser } = await loadWithCookie((s) => s.signRealtimeToken(USER));
+    expect(await getSessionUser()).toBeNull();
+  });
+});
