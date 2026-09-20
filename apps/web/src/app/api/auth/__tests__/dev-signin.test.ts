@@ -1,14 +1,23 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach, vi } from "vitest";
-import jwt from "jsonwebtoken";
+import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { AUTH_SECRET, REAL_ENV, setEnv, restoreEnv } from "@/lib/__tests__/helpers/testEnv";
+import { makeTestAuth, removeTestUsers, TEST_BASE_URL, TEST_DOMAIN } from "@/lib/__tests__/helpers/testAuth";
 
-const findUnique = vi.hoisted(() => vi.fn());
-vi.mock("@workspace-video/db", () => ({ prisma: { user: { findUnique } } }));
-vi.mock("next/headers", () => ({ cookies: vi.fn() }));
+/** The real database, with `prisma.user.findUnique` counted so a test can prove
+ *  the route never looked anyone up. */
+const lookups = vi.hoisted(() => ({ findUnique: undefined as unknown as ReturnType<typeof vi.fn> }));
+vi.mock("@workspace-video/db", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@workspace-video/db")>();
+  const findUnique = vi.fn((args: never) => real.prisma.user.findUnique(args));
+  lookups.findUnique = findUnique;
+  const user = new Proxy(real.prisma.user, { get: (t, p, r) => (p === "findUnique" ? findUnique : Reflect.get(t, p, r)) });
+  const prisma = new Proxy(real.prisma, { get: (t, p, r) => (p === "user" ? user : Reflect.get(t, p, r)) });
+  return { ...real, prisma };
+});
+vi.mock("next/headers", () => ({ headers: vi.fn() }));
 
-const SEEDED = { id: "user-1", email: "test@example.com", name: "Test User" };
+const SEEDED_EMAIL = `dev-${Date.now()}${TEST_DOMAIN}`;
 
 /** The route reads env.devAuthEnabled at import, so set the environment and import fresh. */
 async function loadRoute(env: { NODE_ENV: string; ENABLE_DEV_AUTH?: string }) {
@@ -24,71 +33,91 @@ const post = (body: unknown) =>
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 
-describe("POST /api/auth/dev-signin", () => {
-  afterEach(() => {
-    restoreEnv();
-    findUnique.mockReset();
-  });
+beforeEach(async () => {
+  const { prisma } = await import("@workspace-video/db");
+  await prisma.user.upsert({ where: { email: SEEDED_EMAIL }, update: {}, create: { email: SEEDED_EMAIL, name: "Dev User" } });
+});
 
+afterEach(() => {
+  restoreEnv();
+});
+
+afterAll(async () => {
+  await removeTestUsers();
+  const { prisma } = await import("@workspace-video/db");
+  await prisma.$disconnect();
+});
+
+describe("POST /api/auth/dev-signin", () => {
   describe("is switched off unless both conditions hold", () => {
-    it("404s in production even with ENABLE_DEV_AUTH=true, and never touches the database", async () => {
+    it("404s in production even with ENABLE_DEV_AUTH=true, never looks anyone up, and sets no cookie", async () => {
       const { POST } = await loadRoute({ NODE_ENV: "production", ENABLE_DEV_AUTH: "true" });
-      const res = await POST(post({ email: SEEDED.email }));
+      lookups.findUnique.mockClear();
+      const res = await POST(post({ email: SEEDED_EMAIL }));
       expect(res.status).toBe(404);
-      expect(findUnique).not.toHaveBeenCalled();
+      expect(lookups.findUnique).not.toHaveBeenCalled();
       expect(res.headers.get("set-cookie")).toBeNull();
     });
 
     it("404s in development when ENABLE_DEV_AUTH is not set", async () => {
       const { POST } = await loadRoute({ NODE_ENV: "development" });
-      const res = await POST(post({ email: SEEDED.email }));
+      lookups.findUnique.mockClear();
+      const res = await POST(post({ email: SEEDED_EMAIL }));
       expect(res.status).toBe(404);
-      expect(findUnique).not.toHaveBeenCalled();
+      expect(lookups.findUnique).not.toHaveBeenCalled();
     });
 
     it("404s in development for any ENABLE_DEV_AUTH value other than exactly 'true'", async () => {
       for (const value of ["1", "TRUE", "yes", ""]) {
         const { POST } = await loadRoute({ NODE_ENV: "development", ENABLE_DEV_AUTH: value });
-        expect((await POST(post({ email: SEEDED.email }))).status, `ENABLE_DEV_AUTH=${JSON.stringify(value)}`).toBe(404);
+        lookups.findUnique.mockClear();
+        expect((await POST(post({ email: SEEDED_EMAIL }))).status, `ENABLE_DEV_AUTH=${JSON.stringify(value)}`).toBe(404);
+        expect(lookups.findUnique).not.toHaveBeenCalled();
       }
-      expect(findUnique).not.toHaveBeenCalled();
     });
   });
 
   describe("when enabled (development + ENABLE_DEV_AUTH=true)", () => {
     const enabled = { NODE_ENV: "development", ENABLE_DEV_AUTH: "true" };
 
-    it("signs a seeded user in: 200, a 7-day httpOnly lax cookie holding a token signed with AUTH_SECRET", async () => {
-      findUnique.mockResolvedValue(SEEDED);
+    it("signs a seeded user in with a real Better Auth session cookie that the app accepts", async () => {
       const { POST } = await loadRoute(enabled);
-      const { SESSION_COOKIE_NAME } = await import("@/lib/session");
-
-      const res = await POST(post({ email: SEEDED.email }));
+      const res = await POST(post({ email: SEEDED_EMAIL }));
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, user: SEEDED });
-      const cookie = res.cookies.get(SESSION_COOKIE_NAME);
-      expect(cookie).toBeDefined();
-      expect(cookie).toMatchObject({ httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 7 });
-      const claims = jwt.verify(cookie!.value, AUTH_SECRET) as jwt.JwtPayload;
-      expect(claims.sub).toBe(SEEDED.id);
-      expect(claims.email).toBe(SEEDED.email);
+      const { prisma } = await import("@workspace-video/db");
+      const user = await prisma.user.findUniqueOrThrow({ where: { email: SEEDED_EMAIL } });
+      expect(await res.json()).toEqual({ ok: true, user: { id: user.id, email: SEEDED_EMAIL, name: "Dev User" } });
+
+      const setCookies = res.headers.getSetCookie();
+      const session = setCookies.find((c) => /session_token=/.test(c));
+      expect(session).toBeDefined();
+      expect(session).toMatch(/HttpOnly/i);
+      expect(session).toMatch(/SameSite=Lax/i);
+
+      // The same cookie must work against a Better Auth instance with the same secret and address.
+      const cookie = setCookies.map((c) => c.split(";")[0]).join("; ");
+      const { auth } = makeTestAuth(TEST_BASE_URL, AUTH_SECRET);
+      const seen = await auth.api.getSession({ headers: new Headers({ cookie }) });
+      expect(seen?.user.id).toBe(user.id);
     });
 
-    it("trims and lower-cases the email before looking it up", async () => {
-      findUnique.mockResolvedValue(SEEDED);
+    it("does not create an account: an email that is not seeded gets 401 and no cookie", async () => {
       const { POST } = await loadRoute(enabled);
-      await POST(post({ email: "  Test@Example.COM " }));
-      expect(findUnique).toHaveBeenCalledWith({ where: { email: "test@example.com" } });
-    });
-
-    it("401s for an email that is not a seeded user, and sets no cookie", async () => {
-      findUnique.mockResolvedValue(null);
-      const { POST } = await loadRoute(enabled);
-      const res = await POST(post({ email: "nobody@example.com" }));
+      const nobody = `nobody-${Date.now()}${TEST_DOMAIN}`;
+      const res = await POST(post({ email: nobody }));
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "No such seeded user." });
       expect(res.headers.get("set-cookie")).toBeNull();
+      const { prisma } = await import("@workspace-video/db");
+      expect(await prisma.user.count({ where: { email: nobody } })).toBe(0);
+    });
+
+    it("trims and lower-cases the email before looking it up", async () => {
+      const { POST } = await loadRoute(enabled);
+      lookups.findUnique.mockClear();
+      await POST(post({ email: `  ${SEEDED_EMAIL.toUpperCase()} ` }));
+      expect(lookups.findUnique).toHaveBeenCalledWith({ where: { email: SEEDED_EMAIL } });
     });
 
     it.each([
@@ -97,9 +126,10 @@ describe("POST /api/auth/dev-signin", () => {
       ["a body that is not JSON", "not json"],
     ])("400s for %s, without a database lookup", async (_label, body) => {
       const { POST } = await loadRoute(enabled);
+      lookups.findUnique.mockClear();
       const res = await POST(post(body));
       expect(res.status).toBe(400);
-      expect(findUnique).not.toHaveBeenCalled();
+      expect(lookups.findUnique).not.toHaveBeenCalled();
     });
   });
 });

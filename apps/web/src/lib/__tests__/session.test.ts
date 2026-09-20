@@ -1,113 +1,85 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+// @vitest-environment node
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import jwt from "jsonwebtoken";
+import { prisma } from "@workspace-video/db";
+import { AUTH_SECRET, REALTIME_JWT_SECRET, restoreEnv } from "./helpers/testEnv";
+import { authMockFactory, bootstrap, removeTestUsers, signIn, uniqueTestEmail } from "./helpers/testAuth";
 
-vi.mock("next/headers", () => ({ cookies: vi.fn() }));
-
-const AUTH_SECRET = "a-real-auth-secret-0123456789abcdef0123456789abcdef";
-const REALTIME_JWT_SECRET = "a-different-realtime-secret-fedcba9876543210fedcba98765432";
+vi.mock("next/headers", () => ({ headers: vi.fn() }));
+vi.mock("@/lib/auth", () => authMockFactory());
 
 const USER = { userId: "user-1", email: "user-1@example.com" };
 
-/** session.ts reads its secrets through env.ts at import, so set the process
- *  environment to production values, reset the module cache, and import fresh. */
-async function loadSession() {
-  vi.stubEnv("NODE_ENV", "production");
-  vi.stubEnv("AUTH_SECRET", AUTH_SECRET);
-  vi.stubEnv("REALTIME_JWT_SECRET", REALTIME_JWT_SECRET);
-  vi.stubEnv("LIVEKIT_API_KEY", "APIrealKey123");
-  vi.stubEnv("LIVEKIT_API_SECRET", "a-real-livekit-secret-0123456789abcdef0123456789");
-  vi.stubEnv("DATABASE_URL", "postgresql://app:a-strong-password@db.internal:5432/workspace");
-  vi.stubEnv("APP_URL", "https://www.workspace.video");
-  vi.resetModules();
-  return import("../session");
-}
+afterEach(() => restoreEnv());
+afterAll(async () => {
+  await removeTestUsers();
+  await prisma.$disconnect();
+});
 
-describe("session tokens use separate secrets", () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  it("signs the realtime token with REALTIME_JWT_SECRET, not the sign-in secret", async () => {
-    const { signRealtimeToken } = await loadSession();
+describe("the realtime (socket) token", () => {
+  it("is signed with REALTIME_JWT_SECRET and not the sign-in secret, and lasts one hour", async () => {
+    await bootstrap();
+    const { signRealtimeToken } = await import("../session");
     const token = signRealtimeToken(USER);
-    expect(() => jwt.verify(token, REALTIME_JWT_SECRET)).not.toThrow();
+    const claims = jwt.verify(token, REALTIME_JWT_SECRET) as jwt.JwtPayload;
+    expect(claims.sub).toBe(USER.userId);
+    expect(claims.email).toBe(USER.email);
+    expect(claims.exp! - claims.iat!).toBe(60 * 60);
     expect(() => jwt.verify(token, AUTH_SECRET)).toThrow();
-  });
-
-  it("signs the sign-in cookie with AUTH_SECRET, not the realtime secret", async () => {
-    const { signSessionToken } = await loadSession();
-    const token = signSessionToken(USER);
-    expect(() => jwt.verify(token, AUTH_SECRET)).not.toThrow();
-    expect(() => jwt.verify(token, REALTIME_JWT_SECRET)).toThrow();
-  });
-
-  it("does not accept a realtime token (which browser JavaScript can read) as a sign-in cookie", async () => {
-    const { signRealtimeToken, verifySessionToken } = await loadSession();
-    expect(() => verifySessionToken(signRealtimeToken(USER))).toThrow();
-  });
-
-  it("still accepts its own sign-in cookie", async () => {
-    const { signSessionToken, verifySessionToken } = await loadSession();
-    expect(verifySessionToken(signSessionToken(USER))).toEqual(USER);
   });
 });
 
 describe("getSessionUser (reads the sign-in cookie of the current request)", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  /** Loads session.ts with the browser sending `cookieValue` (or no cookie). */
-  async function loadWithCookie(cookieValue: string | ((s: Awaited<ReturnType<typeof loadSession>>) => string) | undefined) {
-    const session = await loadSession();
-    const value = typeof cookieValue === "function" ? cookieValue(session) : cookieValue;
-    const { cookies } = await import("next/headers");
-    vi.mocked(cookies).mockResolvedValue({
-      get: (name: string) => (name === session.SESSION_COOKIE_NAME && value ? { name, value } : undefined),
-    } as never);
-    return session;
+  /** Signs `email` in for real, points the request at that cookie, and returns helpers. */
+  async function signedInAs(email = uniqueTestEmail()) {
+    const { t, useCookie } = await bootstrap();
+    const cookie = await signIn(t, email);
+    await useCookie(cookie);
+    const { getSessionUser } = await import("../session");
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    return { getSessionUser, useCookie, cookie, email, user };
   }
+  const cookieName = (cookie: string) => cookie.split("=")[0]!;
 
-  it("returns the user for a valid cookie", async () => {
-    const { getSessionUser } = await loadWithCookie((s) => s.signSessionToken(USER));
-    expect(await getSessionUser()).toEqual(USER);
+  it("returns the user for a valid session cookie", async () => {
+    const { getSessionUser, email, user } = await signedInAs();
+    expect(await getSessionUser()).toEqual({ userId: user.id, email });
   });
 
   it("returns null when there is no cookie", async () => {
-    const { getSessionUser } = await loadWithCookie(undefined);
+    const { getSessionUser, useCookie } = await signedInAs();
+    await useCookie(undefined);
     expect(await getSessionUser()).toBeNull();
   });
 
-  it("returns null, without throwing, for a cookie that is not a token", async () => {
-    const { getSessionUser } = await loadWithCookie("garbage");
+  it("returns null, without throwing, for a cookie that is not a session", async () => {
+    const { getSessionUser, useCookie, cookie } = await signedInAs();
+    await useCookie(`${cookieName(cookie)}=garbage`);
     expect(await getSessionUser()).toBeNull();
   });
 
-  it("returns null for a token whose signature was altered", async () => {
-    const { getSessionUser } = await loadWithCookie((s) => {
-      const token = s.signSessionToken(USER);
-      return token.slice(0, -2) + (token.endsWith("aa") ? "bb" : "aa");
-    });
+  it("returns null for a cookie whose signature was altered", async () => {
+    const { getSessionUser, useCookie, cookie } = await signedInAs();
+    await useCookie(cookie.replace(/=(.*)$/, (_m, value: string) => `=${value.slice(0, -8)}AAAAAAAA`));
     expect(await getSessionUser()).toBeNull();
   });
 
-  it("returns null for an expired token", async () => {
-    const { getSessionUser } = await loadWithCookie(() =>
-      jwt.sign({ sub: USER.userId, email: USER.email }, AUTH_SECRET, { expiresIn: -10 }),
-    );
+  it("returns null once the session has expired", async () => {
+    const { getSessionUser, user } = await signedInAs();
+    await prisma.session.updateMany({ where: { userId: user.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
     expect(await getSessionUser()).toBeNull();
   });
 
-  it("returns null for a correctly signed token that lacks the email claim", async () => {
-    const { getSessionUser } = await loadWithCookie(() => jwt.sign({ sub: USER.userId }, AUTH_SECRET, { expiresIn: "1h" }));
+  it("returns null once the session has been revoked (its row deleted)", async () => {
+    const { getSessionUser, user } = await signedInAs();
+    await prisma.session.deleteMany({ where: { userId: user.id } });
     expect(await getSessionUser()).toBeNull();
   });
 
   it("returns null for a socket token presented as the sign-in cookie", async () => {
-    const { getSessionUser } = await loadWithCookie((s) => s.signRealtimeToken(USER));
+    const { getSessionUser, useCookie, cookie } = await signedInAs();
+    const { signRealtimeToken } = await import("../session");
+    await useCookie(`${cookieName(cookie)}=${signRealtimeToken(USER)}`);
     expect(await getSessionUser()).toBeNull();
   });
 });

@@ -1,57 +1,51 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { REAL_ENV, setEnv, restoreEnv } from "@/lib/__tests__/helpers/testEnv";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
+import { prisma } from "@workspace-video/db";
+import { restoreEnv } from "@/lib/__tests__/helpers/testEnv";
+import { authMockFactory, bootstrap, removeTestUsers, signIn, uniqueTestEmail } from "@/lib/__tests__/helpers/testAuth";
 
-const findUnique = vi.hoisted(() => vi.fn());
-vi.mock("@workspace-video/db", () => ({ prisma: { user: { findUnique } } }));
-vi.mock("next/headers", () => ({ cookies: vi.fn() }));
+vi.mock("next/headers", () => ({ headers: vi.fn() }));
+vi.mock("@/lib/auth", () => authMockFactory());
 
-const USER = { userId: "user-1", email: "user-1@example.com" };
-const ROW = { id: "user-1", email: "user-1@example.com", name: "User One" };
+afterEach(() => restoreEnv());
+afterAll(async () => {
+  await removeTestUsers();
+  await prisma.$disconnect();
+});
 
-async function loadRoute(signedIn: boolean) {
-  setEnv({ ...REAL_ENV, NODE_ENV: "production" });
-  vi.resetModules();
-  const session = await import("@/lib/session");
-  const value = signedIn ? session.signSessionToken(USER) : undefined;
-  const { cookies } = await import("next/headers");
-  vi.mocked(cookies).mockResolvedValue({
-    get: (name: string) => (name === session.SESSION_COOKIE_NAME && value ? { name, value } : undefined),
-  } as never);
-  return import("../session/route");
+async function loadRoute() {
+  const kit = await bootstrap();
+  const { GET } = await import("../session/route");
+  return { ...kit, GET };
 }
 
 describe("GET /api/auth/session", () => {
-  afterEach(() => {
-    restoreEnv();
-    findUnique.mockReset();
-  });
-
-  it("401s when signed out, without a database lookup", async () => {
-    const { GET } = await loadRoute(false);
+  it("401s when signed out", async () => {
+    const { GET, useCookie } = await loadRoute();
+    await useCookie(undefined);
     const res = await GET();
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Not signed in." });
-    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it("401s when the cookie is valid but the user no longer exists", async () => {
-    findUnique.mockResolvedValue(null);
-    const { GET } = await loadRoute(true);
+  it("401s when the user has since been deleted (their sessions go with them)", async () => {
+    const { GET, t, useCookie } = await loadRoute();
+    const email = uniqueTestEmail();
+    await useCookie(await signIn(t, email));
+    await prisma.user.delete({ where: { email } });
     const res = await GET();
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Not signed in." });
   });
 
   it("returns only id, email and name for a signed-in user", async () => {
-    findUnique.mockResolvedValue(ROW);
-    const { GET } = await loadRoute(true);
+    const { GET, t, useCookie } = await loadRoute();
+    const email = uniqueTestEmail();
+    await useCookie(await signIn(t, email));
     const res = await GET();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: ROW });
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { id: USER.userId },
-      select: { id: true, email: true, name: true },
-    });
+    const { user } = (await res.json()) as { user: Record<string, unknown> };
+    expect(Object.keys(user).sort()).toEqual(["email", "id", "name"]);
+    expect(user.email).toBe(email);
   });
 });

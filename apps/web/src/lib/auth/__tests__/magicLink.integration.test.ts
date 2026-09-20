@@ -4,11 +4,13 @@ import { prisma } from "@workspace-video/db";
 import { createAuth } from "../auth";
 import { handleAuthRequest } from "../handleAuthRequest";
 import { SlidingWindowLimiter } from "../emailLimiter";
+import { TEST_DOMAIN } from "@/lib/__tests__/helpers/testAuth";
 
 /** Real Postgres (the local docker one, or CI's), real Better Auth, an in-memory mailer.
- *  Every account these tests create ends in @it.invalid and is removed afterwards. */
+ *  Every account these tests create ends in this file's own test domain and is
+ *  removed afterwards (see helpers/testAuth: the domain is unique per test file). */
 
-const DOMAIN = "@it.invalid";
+const DOMAIN = TEST_DOMAIN;
 const BASE = "http://localhost:3000";
 const SECRET = "integration-test-secret-0123456789abcdef0123456789abcdef";
 const SEVEN_DAYS = 60 * 60 * 24 * 7;
