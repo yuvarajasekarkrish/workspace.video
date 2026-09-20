@@ -5,7 +5,6 @@ import {
   PeersSnapshotEventSchema,
   PeersDeltaEventSchema,
   MoveCorrectionEventSchema,
-  ProximityUpdateEventSchema,
   OwnerChangedEventSchema,
   ObjectsSnapshotEventSchema,
   ObjectSyncEventSchema,
@@ -21,6 +20,7 @@ import {
 import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
 import { proximityStore } from "@/store/proximityStore";
+import { applyProximityUpdate, applyProximityBatch } from "./proximityEvents";
 import { objectsStore } from "@/store/objectsStore";
 import { occupancyStore } from "@/store/occupancyStore";
 import { seatsStore } from "@/store/seatsStore";
@@ -199,13 +199,15 @@ export class RealtimeClient {
     // visual and unaware of audio; SpatialAudioController is the only
     // reader, via getState()/subscribe(), never a React hook (see the
     // approved LiveKit plan's no-rerender rule for the audio-store split).
+    // Two framings of the same information. We opt in to the batch in
+    // joinRoom(), but keep the per-peer handler: an older server never sends
+    // the batch, and the server's kill switch sends per-peer to opted-in
+    // clients too.
     socket.on(ServerEvents.ProximityUpdate, (raw) => {
-      const parsed = ProximityUpdateEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      proximityStore.getState().setPeerProximity(parsed.data.peerId, {
-        audioSubscribed: parsed.data.audioSubscribed,
-        audioGain: parsed.data.audioGain,
-      });
+      applyProximityUpdate(raw);
+    });
+    socket.on(ServerEvents.ProximityBatch, (raw) => {
+      applyProximityBatch(raw);
     });
 
     // Wholesale replacement, exactly like peers:snapshot — sent only to
@@ -298,7 +300,9 @@ export class RealtimeClient {
     connectionStore.getState().setStatus("joining");
     connectionStore.getState().setCapacity(null);
 
-    this.socket.emit(ClientEvents.JoinRoom, { roomId: this.roomId }, (ack: unknown) => {
+    // proximityBatch is this CONNECTION's declaration that it understands
+    // proximity:batch; it is re-sent on every join (first join, retry, reconnect).
+    this.socket.emit(ClientEvents.JoinRoom, { roomId: this.roomId, proximityBatch: true }, (ack: unknown) => {
       if (this.disposed) return;
       const ackObj = ack as { ok?: boolean; error?: string; limit?: number; active?: number } | undefined;
 
