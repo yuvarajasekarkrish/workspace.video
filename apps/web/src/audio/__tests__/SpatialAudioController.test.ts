@@ -174,6 +174,23 @@ describe("SpatialAudioController", () => {
     expect(pub.isSubscribed).toBe(true); // unchanged, no error
   });
 
+  it("a batch of N proximity updates triggers one reconcile, where N separate updates trigger N", async () => {
+    await controller.connect();
+    const reconcile = vi.spyOn(controller as unknown as { reconcile: () => void }, "reconcile");
+    const peers = Array.from({ length: 22 }, (_, i) => `peer${i}`);
+
+    // Legacy framing: one store write per update, one reconcile each.
+    for (const id of peers) proximityStore.getState().setPeerProximity(id, { audioSubscribed: true, audioGain: 0.5 });
+    expect(reconcile).toHaveBeenCalledTimes(22);
+
+    // Batched: the same 22 peers in one write, one reconcile.
+    reconcile.mockClear();
+    proximityStore
+      .getState()
+      .setPeersProximity(peers.map((peerId) => ({ peerId, state: { audioSubscribed: true, audioGain: 0.9 } })));
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
   it("dispose() releases the room, clears listeners, and stops the mic", async () => {
     await controller.connect();
     await controller.enableAudio();

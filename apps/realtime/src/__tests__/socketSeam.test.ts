@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { Server as SocketIOServer } from "socket.io";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type { RoomLease } from "@cosmos/realtime-core";
-import { ClientEvents, ServerEvents } from "@cosmos/shared";
+import { ClientEvents, ServerEvents, ProximityBatchEventSchema } from "@cosmos/shared";
 import { RoomManager, broadcasterFromSocketServer } from "../roomManager.js";
 import { registerSocketHandlers } from "../socketHandlers.js";
 import type { ObjectRepository } from "../objectPersistence.js";
@@ -162,7 +162,11 @@ describe("socket seam", () => {
     const newClient = await connect("u1");
     const oldClient = await connect("u2");
     const seen = { newBatch: [] as { peerId: string }[][], newUpdate: 0, oldBatch: 0, oldUpdate: [] as string[] };
-    newClient.on(ServerEvents.ProximityBatch, (p: { updates: { peerId: string }[] }) => seen.newBatch.push(p.updates));
+    const rawBatches: unknown[] = [];
+    newClient.on(ServerEvents.ProximityBatch, (p: { updates: { peerId: string }[] }) => {
+      rawBatches.push(p);
+      seen.newBatch.push(p.updates);
+    });
     newClient.on(ServerEvents.ProximityUpdate, () => seen.newUpdate++);
     oldClient.on(ServerEvents.ProximityBatch, () => seen.oldBatch++);
     oldClient.on(ServerEvents.ProximityUpdate, (p: { peerId: string }) => seen.oldUpdate.push(p.peerId));
@@ -171,6 +175,9 @@ describe("socket seam", () => {
     expect(await joinWith(oldClient)).toEqual({ ok: true }); // no field at all: what every existing client sends
 
     await waitFor(() => seen.newBatch.length > 0 && seen.oldUpdate.length > 0, "both listeners to be told about each other");
+    // The contract the web client relies on: what the server emits parses with the shared schema.
+    expect(rawBatches.length).toBeGreaterThan(0);
+    for (const batch of rawBatches) expect(ProximityBatchEventSchema.safeParse(batch).success).toBe(true);
     expect(seen.newBatch.flat().map((u) => u.peerId)).toEqual(["u2"]);
     expect(seen.newUpdate, "the opted-in client must not also get per-peer updates").toBe(0);
     expect(seen.oldUpdate).toEqual(["u1"]);
