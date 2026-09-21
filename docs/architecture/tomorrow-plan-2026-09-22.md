@@ -102,3 +102,32 @@ The colour-contrast test, the fit maths and the "fit" button, the room's screens
 VERDICT: PLAN READY. OUTSIDE COVERAGE: not run (no second reviewer available); that is missing coverage, not a clean result.
 
 NO UNRESOLVED DECISIONS
+
+## Progress (written at the end of the working session)
+
+| # | Task | State |
+|---|---|---|
+| 1 | Tidy loose files | Done (`e93d501`) |
+| 2 | Save the audio fix | Done (`9661027`); audio connects about 8 to 10 seconds after the page opens |
+| 3 | Public-links settings | Done (`1612412`), 6 tests |
+| 4 | Privacy, Terms, Changelog pages | Done (`a71b471`), 7 tests, checked in the browser |
+| 5 | Landing page, sign-in, design notes | Done (`095a3e6`), fresh install and 53 focused tests pass, checked signed-out at laptop and phone width |
+| 6 | Phone-friendly bar, 48 px buttons | Done (`4d99231`), measured at 360, 390, 430 and 1280 |
+| 7 | Re-fit the map on resize unless the person moved it | Done (`5214f44`), 5 new tests and a browser check |
+| 8 | Every canvas colour in one file | Done (`9a59989`), before and after screenshots identical |
+| 9 | Soft teal `#2dd4bf` replaces amber | Done (`b10aa29`), a test now fails if an amber value returns; pictures in `docs/designs/teal-accent/` |
+| 10 | Overlay panels onto `DESIGN.md` | Done (`32ccb6c`), 41 rule tests; on a phone the note toolbar and people list are hidden (see below) |
+| 12 | Plan rule (half) | Done (`8aa1cbb`): plans above 10 people only, on the server, after the role, downgrade keeps map and history. **Not done: the record table for role and publish changes (decision 3A).** |
+| 11 | Map text rule (16 px labels, names only where useful) | Not started |
+| 13 | End of day: stop servers, reset the test room | Waiting for you to say "done" |
+
+Every save is on GitHub. The whole web suite (489 tests), the database tests (40) and the shared tests (167) pass.
+
+### Things I found that need your answer
+
+1. **Ground and surface colours.** `DESIGN.md` says `#0b0d12` and `#14171f`; `globals.css` and the canvas use `#0a0a0a` and `#171717`. The room now uses the tokens for its panels and page, so a single edit in `globals.css` will fix it once you pick one set. `DESIGN.md` records this under "Open".
+2. **Status dots are still amber.** The "Connecting" dot and the "nearly full" occupancy text use the standard amber. They mean a state, not the accent. Does "no amber anywhere" cover them?
+3. **The landing page announces "Admin Drag & Drop Builder"** and has "Open Admin Builder" buttons, but the builder is not built yet (and, by your rule, will not exist for the smallest plan). Public wording about an unbuilt feature is a promise worth deciding on.
+4. **On a phone I now hide the "+ Note / Shape / Zone / Image" buttons and the people list.** They covered the area chip. Notes already on the map still show. Tell me if you want them back on phones in some other form.
+5. **Joining the room takes about 5 seconds in the development server.** It is the first load of the page, not the room itself, but a real deployment should be measured.
+6. **Three tool folders are still unsaved** (`.agents`, `.claude`, `skills-lock.json`) and `docs/architecture/eng-review-2026-09-19.md`. I left them alone.
