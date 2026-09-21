@@ -10,11 +10,13 @@ const DEV_LIVEKIT_SECRET = "dev-livekit-secret-change-me-32chars-min";
 
 const DEV_DATABASE_URL = "postgresql://workspace:workspace@localhost:5432/workspace_video";
 
-const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL", "APP_URL"] as const;
+const KEYS = ["AUTH_SECRET", "REALTIME_JWT_SECRET", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DATABASE_URL", "APP_URL", "RESEND_API_KEY", "MAIL_FROM"] as const;
 type Key = (typeof KEYS)[number];
 
 const REAL: Record<Key, string> = {
   APP_URL: "https://www.workspace.video",
+  RESEND_API_KEY: "re_test_key_0123456789",
+  MAIL_FROM: "workspace.video <login@mail.workspace.video>",
   DATABASE_URL: "postgresql://app:a-strong-password@db.internal:5432/workspace",
   AUTH_SECRET: "a-real-auth-secret-0123456789abcdef0123456789abcdef",
   REALTIME_JWT_SECRET: "a-different-realtime-secret-fedcba9876543210fedcba98765432",
@@ -53,6 +55,13 @@ describe("web env: secrets in production", () => {
 
   describe("in production", () => {
     beforeEach(() => vi.stubEnv("NODE_ENV", "production"));
+
+    it("refuses to start when the email provider settings are missing or blank", async () => {
+      setEnv({ ...REAL, RESEND_API_KEY: undefined });
+      await expect(loadEnv()).rejects.toThrow(/RESEND_API_KEY/);
+      setEnv({ ...REAL, MAIL_FROM: "  " });
+      await expect(loadEnv()).rejects.toThrow(/MAIL_FROM/);
+    });
 
     it("refuses to start when AUTH_SECRET is not set", async () => {
       setEnv({ ...REAL, AUTH_SECRET: undefined });

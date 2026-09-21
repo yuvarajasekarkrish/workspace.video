@@ -15,6 +15,8 @@ export const REAL_ENV: Record<string, string> = {
   LIVEKIT_API_SECRET: "a-real-livekit-secret-0123456789abcdef0123456789",
   DATABASE_URL: "postgresql://app:a-strong-password@db.internal:5432/workspace",
   APP_URL: "https://www.workspace.video",
+  RESEND_API_KEY: "re_test_key_0123456789",
+  MAIL_FROM: "workspace.video <login@mail.workspace.video>",
 };
 
 const saved = new Map<string, string | undefined>();

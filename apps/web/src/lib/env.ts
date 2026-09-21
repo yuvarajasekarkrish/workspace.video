@@ -46,6 +46,15 @@ export const env = {
   // Signs the short-lived socket token; apps/realtime verifies it with the same
   // value (its REALTIME_JWT_SECRET). Not used for the sign-in cookie.
   realtimeJwtSecret,
+  // Sign-in email provider (Resend). Required in production, where the app refuses to
+  // start without them; unused in development, which prints the link instead.
+  resendApiKey: resolveSecret(process.env, "RESEND_API_KEY", "", "Set RESEND_API_KEY to your Resend API key."),
+  mailFrom: resolveSecret(
+    process.env,
+    "MAIL_FROM",
+    "",
+    "Set MAIL_FROM to the sender address, for example: workspace.video <login@mail.workspace.video>",
+  ),
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
   // The dev default carries a password, so production refuses it (see resolveDatabaseUrl).
   databaseUrl: resolveDatabaseUrl(process.env),

@@ -14,7 +14,10 @@ export function getAuth(): Auth {
     prisma,
     secret: env.authSecret,
     baseURL: env.appUrl,
-    mailer: createMailer({ nodeEnv: env.nodeEnv }),
+    mailer: createMailer({
+      nodeEnv: env.nodeEnv,
+      resend: { apiKey: env.resendApiKey, from: env.mailFrom },
+    }),
   });
   return cached;
 }
