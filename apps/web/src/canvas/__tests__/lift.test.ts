@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { TILE_PX, type RoomLayout } from "@workspace-video/shared";
 import { project } from "../isoMath";
-import { HOVER_LIFT, LiftState, liftVector, pickZone, screenStep, stepLift } from "../lift";
+import { HOVER_LIFT, LiftState, liftVector, pickSlab, screenStep, stepLift } from "../lift";
+import { planFloor } from "../slabPlan";
 
 // Raising an area under the mouse (elevation only, no colour change). These pin the maths so a raised area rises
 // straight up the screen, settles by itself (so the drawing loop can rest and save battery), and does not flicker.
@@ -105,14 +106,15 @@ describe("LiftState: the rest of the drawing loop can stop when nothing is raise
   });
 });
 
-describe("pickZone", () => {
+describe("pickSlab", () => {
+  const plan = planFloor(layout);
   const inA = { x: TILE_PX * 2, y: TILE_PX * 2 };
   const inB = { x: TILE_PX * 6, y: TILE_PX * 2 };
 
-  it("finds the area under the mouse, or none over empty floor", () => {
-    expect(pickZone(layout, inA, null)).toBe("a");
-    expect(pickZone(layout, inB, null)).toBe("b");
-    expect(pickZone(layout, { x: TILE_PX * 20, y: TILE_PX * 20 }, null)).toBeNull();
+  it("finds the plate under the mouse, or none over empty floor", () => {
+    expect(pickSlab(plan, inA, null)).toBe("a");
+    expect(pickSlab(plan, inB, null)).toBe("b");
+    expect(pickSlab(plan, { x: TILE_PX * 20, y: TILE_PX * 20 }, null)).toBeNull();
   });
 
   it("keeps a raised area picked while the mouse is still over where it is drawn, even if that is just off its flat footprint", () => {
@@ -120,13 +122,13 @@ describe("pickZone", () => {
     // must still count, or the area would drop and rise again at the edge.
     const step = liftVector(HOVER_LIFT);
     const edgeInside = { x: TILE_PX * 4 + step.x * 0.5, y: TILE_PX * 2 + step.y * 0.5 }; // flat floor says B, drawing says A
-    const zoneAtEdge = pickZone(layout, edgeInside, null);
-    const kept = pickZone(layout, edgeInside, { zoneId: "a", lift: HOVER_LIFT });
+    const zoneAtEdge = pickSlab(plan, edgeInside, null);
+    const kept = pickSlab(plan, edgeInside, { slabId: "a", lift: HOVER_LIFT });
     expect(kept).toBe("a");
     expect(zoneAtEdge === "a" || zoneAtEdge === "b").toBe(true);
   });
 
   it("lets go of an area once the mouse is clearly outside it", () => {
-    expect(pickZone(layout, inB, { zoneId: "a", lift: HOVER_LIFT })).toBe("b");
+    expect(pickSlab(plan, inB, { slabId: "a", lift: HOVER_LIFT })).toBe("b");
   });
 });

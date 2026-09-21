@@ -1,6 +1,6 @@
-import type { Point, RoomLayout, LayoutZone } from "@workspace-video/shared";
-import { tileRectToWorld, zoneAt } from "@workspace-video/shared";
+import type { Point } from "@workspace-video/shared";
 import { unproject } from "./isoMath";
+import { slabAt, type FloorPlan } from "./slabPlan";
 
 /**
  * Raising an area when the mouse is over it, like the Gemini map (a platform rises and its shadow grows and
@@ -33,28 +33,25 @@ export function stepLift(current: number, target: number, dtSeconds: number): nu
   return Math.abs(target - next) <= SETTLED_WITHIN ? target : next;
 }
 
-function contains(zone: LayoutZone, p: Point): boolean {
-  const box = tileRectToWorld(zone.rect);
-  return p.x >= box.x && p.x < box.x + box.width && p.y >= box.y && p.y < box.y + box.height;
-}
-
 /**
- * Which area the mouse is over. `floorPoint` is where the mouse lands on the flat floor. An area that is already
+ * Which plate the mouse is over. `floorPoint` is where the mouse lands on the flat floor. A plate that is already
  * raised is tested where it is drawn (raised), not where it sits, and keeps priority: otherwise the mouse near an
- * edge would raise the area, the raised edge would slip away from the mouse, the area would drop, and it would flicker.
+ * edge would raise the plate, the raised edge would slip away from the mouse, the plate would drop, and it would flicker.
  */
-export function pickZone(layout: RoomLayout, floorPoint: Point, current: { zoneId: string; lift: number } | null): string | null {
+export function pickSlab(plan: FloorPlan, floorPoint: Point, current: { slabId: string; lift: number } | null): string | null {
   if (current) {
-    const zone = layout.zones.find((z) => z.id === current.zoneId);
-    if (zone) {
+    const slab = plan.slabs.find((s) => s.id === current.slabId);
+    if (slab) {
       const step = liftVector(current.lift);
-      if (contains(zone, { x: floorPoint.x - step.x, y: floorPoint.y - step.y })) return zone.id;
+      const p = { x: floorPoint.x - step.x, y: floorPoint.y - step.y };
+      const r = slab.rect;
+      if (p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height) return slab.id;
     }
   }
-  return zoneAt(layout, floorPoint)?.id ?? null;
+  return slabAt(plan, floorPoint)?.id ?? null;
 }
 
-/** The raise of every area, and which one the mouse is over. */
+/** The raise of every plate, and which one the mouse is over. */
 export class LiftState {
   private readonly lifts = new Map<string, number>();
   private hovered: string | null = null;

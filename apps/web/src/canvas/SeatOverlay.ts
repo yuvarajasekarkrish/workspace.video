@@ -1,5 +1,6 @@
 import { Container, Graphics, Matrix } from "pixi.js";
-import { zoneAt, type Point, type RoomLayout } from "@workspace-video/shared";
+import type { Point, RoomLayout } from "@workspace-video/shared";
+import { slabAt, type FloorPlan } from "./slabPlan";
 import { uprightMatrix } from "./isoMath";
 
 const MARKER_RADIUS = 9;
@@ -18,11 +19,11 @@ export class SeatOverlay {
   readonly container = new Container();
   private readonly markers = new Map<string, Graphics>();
   private readonly anchors = new Map<string, Point>();
-  /** Which area each seat is in, so its marker rises with that area. */
-  private readonly zoneOfSeat = new Map<string, string>();
+  /** Which plate each seat is on, so its marker rises with that plate. */
+  private readonly slabOfSeat = new Map<string, string>();
   private readonly upright = uprightMatrix();
 
-  constructor(layout: RoomLayout) {
+  constructor(layout: RoomLayout, plan: FloorPlan) {
     const u = uprightMatrix(); // markers stand up straight on the tilted floor, so they stay round
     for (const seat of layout.seats) {
       const marker = new Graphics().circle(0, 0, MARKER_RADIUS).fill(OCCUPIED_COLOR);
@@ -31,16 +32,16 @@ export class SeatOverlay {
       this.container.addChild(marker);
       this.markers.set(seat.id, marker);
       this.anchors.set(seat.id, { x: seat.anchor.x, y: seat.anchor.y });
-      const zone = zoneAt(layout, seat.anchor);
-      if (zone) this.zoneOfSeat.set(seat.id, zone.id);
+      const slab = slabAt(plan, seat.anchor);
+      if (slab) this.slabOfSeat.set(seat.id, slab.id);
     }
   }
 
-  /** Moves the markers of one area by `step` (the same step the area itself was raised by). */
-  liftZone(zoneId: string, step: Point): void {
+  /** Moves the markers on one plate by `step` (the same step the plate itself was raised by). */
+  liftSlab(slabId: string, step: Point): void {
     const u = this.upright;
-    for (const [seatId, id] of this.zoneOfSeat) {
-      if (id !== zoneId) continue;
+    for (const [seatId, id] of this.slabOfSeat) {
+      if (id !== slabId) continue;
       const anchor = this.anchors.get(seatId)!;
       this.markers.get(seatId)?.setFromMatrix(new Matrix(u.a, u.b, u.c, u.d, anchor.x + step.x, anchor.y + step.y));
     }

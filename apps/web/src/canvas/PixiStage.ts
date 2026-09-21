@@ -1,5 +1,5 @@
 import { Application, Container, EventsTicker, Ticker } from "pixi.js";
-import { zoneAt, type Point, type RoomLayout } from "@workspace-video/shared";
+import type { Point, RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
   movementConfigForLayout,
@@ -10,7 +10,8 @@ import { objectsStore, type ObjectsState } from "@/store/objectsStore";
 import { seatsStore } from "@/store/seatsStore";
 import { createBackground } from "./Background";
 import { buildFloorView, type FloorView } from "./FloorView";
-import { LiftState, liftVector, pickZone } from "./lift";
+import { LiftState, liftVector, pickSlab } from "./lift";
+import { slabAt } from "./slabPlan";
 import { SeatOverlay } from "./SeatOverlay";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
@@ -140,7 +141,7 @@ export class PixiStage {
     this.viewport.world.addChild(createBackground(movementConfig));
     this.floor = buildFloorView(this.layout);
     this.viewport.world.addChild(this.floor.container);
-    this.seatOverlay = new SeatOverlay(this.layout);
+    this.seatOverlay = new SeatOverlay(this.layout, this.floor.plan);
     this.viewport.world.addChild(this.seatOverlay.container);
     this.objectLayer.sortableChildren = true;
     this.viewport.world.addChild(this.objectLayer);
@@ -309,11 +310,11 @@ export class PixiStage {
     }
   }
 
-  /** Puts a person at their floor position, raised along with the area they are standing in. */
+  /** Puts a person at their floor position, raised along with the plate they are standing on. */
   private placeAvatar(avatar: Avatar, position: Point): void {
     if (this.lifts.isActive()) {
-      const zone = zoneAt(this.layout, position);
-      const height = zone ? this.lifts.liftOf(zone.id) : 0;
+      const slab = slabAt(this.floor.plan, position);
+      const height = slab ? this.lifts.liftOf(slab.id) : 0;
       if (height > 0) {
         const step = liftVector(height);
         avatar.setPosition(position.x + step.x, position.y + step.y);
@@ -323,7 +324,7 @@ export class PixiStage {
     avatar.setPosition(position.x, position.y);
   }
 
-  /** Raises the area under the mouse. Moving the mouse inside one area does nothing; only crossing into another area
+  /** Raises the plate under the mouse. Moving the mouse inside one plate does nothing; only crossing onto another plate
    *  (or off the floor) changes anything, and only then is the drawing loop woken, for the short rise. */
   private attachHover(canvas: HTMLCanvasElement): () => void {
     const onMove = (e: PointerEvent) => {
@@ -331,7 +332,7 @@ export class PixiStage {
       const rect = canvas.getBoundingClientRect();
       const floorPoint = this.viewport.screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
       const current = this.lifts.hoveredId();
-      const next = pickZone(this.layout, floorPoint, current ? { zoneId: current, lift: this.lifts.liftOf(current) } : null);
+      const next = pickSlab(this.floor.plan, floorPoint, current ? { slabId: current, lift: this.lifts.liftOf(current) } : null);
       if (next === current) return;
       this.lifts.setHovered(next);
       this.gate.wake();
@@ -358,13 +359,13 @@ export class PixiStage {
   private renderFrame(dtSeconds: number): boolean {
     let stillChanging = false;
 
-    // Areas rising or settling back under the mouse. Busy only while something is actually moving, so a mouse resting
+    // Plates rising or settling back under the mouse. Busy only while something is actually moving, so a mouse resting
     // on a raised area costs no frames at all.
     const moved = this.lifts.step(dtSeconds);
-    for (const zoneId of moved) {
-      const height = this.lifts.liftOf(zoneId);
-      this.floor.setLift(zoneId, height);
-      this.seatOverlay.liftZone(zoneId, liftVector(height));
+    for (const slabId of moved) {
+      const height = this.lifts.liftOf(slabId);
+      this.floor.setLift(slabId, height);
+      this.seatOverlay.liftSlab(slabId, liftVector(height));
       stillChanging = true;
     }
 
