@@ -31,3 +31,23 @@ Deferred work, with enough context to pick it up later. Each item came from a re
 - **Trigger:** before member removal or sign-out-everywhere ships.
 - **Depends on:** the Better Auth session work (1A) and the protected internal route (1E).
 - **Priority:** P2.
+
+## Save my office as my own template
+- **What:** let an owner or admin save any published map as their own template and start new workspaces from it.
+- **Why:** a company with more than one workspace can get a layout it already trusts in one click.
+- **Pros:** small, because the saved-versions table already keeps every map; makes new workspaces quick.
+- **Cons:** only useful once a company has more than one workspace, and the product is one office room per workspace for now.
+- **Context:** the owner chose "later" during the CEO review of steps E and F (docs/architecture/company-map-builder.md, D16, item E5).
+- **Trigger:** a company asks for a second workspace, or the builder (step E) has shipped.
+- **Depends on:** the builder (step E) and the plan rule in D16.
+- **Priority:** P3.
+
+## Server sends its own map to each browser
+- **What:** when someone joins, the realtime server sends the map it is actually using, and the room screen draws that, so the page and the server can never disagree.
+- **Why:** decision 4A in D16 closes the mismatch by resetting the room on publish; this is the cleaner long-term fix.
+- **Pros:** removes a whole class of "page and server disagree" bugs.
+- **Cons:** changes a message the server sends (needs the owner's approval) and the room screen's start-up code, where two blank-screen mistakes already happened.
+- **Context:** offered as option B of decision 4A in the CEO review, 2026-09-21; not chosen for now.
+- **Trigger:** a second mismatch bug, or before rooms are spread over several servers.
+- **Depends on:** the owner's approval of the message change.
+- **Priority:** P3.

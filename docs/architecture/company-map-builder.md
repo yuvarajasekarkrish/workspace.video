@@ -241,3 +241,91 @@ The owner asked for a **sleek bar floating below the screen** that never spoils 
 - The status colours (green, red, blue, yellow) and their counts are still to be built, once the owner confirms the meanings proposed under D14.
 
 **A mistake the browser check caught (again).** The first version of the "fit" button also woke the drawing loop, and it was called during start-up before that loop existed, so the room opened blank. A test run would not have shown it. Any change to `PixiStage.ts` still needs a real-browser look: the badge must say "Connected", the person must move when clicked, and the map must show.
+
+## D16. CEO review of steps E and F (2026-09-21, selective expansion; the owner decided every item)
+
+Written for: the product owner first, then whoever builds it.
+
+**Approach (the owner's words).** "Full drag builder, for a subscription of more than 10 people; the others get a prefixed template." In the plans this is: **Startup (10 people) gets ready-made templates only; Team (25), Company (50), Large (100) and Enterprise (200) get the drag builder.** The rule reads the same plan lookup as the participant limit ("more than 10"), so a later billing change moves both together. It is checked on the server on every save and publish, like the role rules, never only by hiding a button.
+
+**Seats do not set capacity (the owner).** Only the plan decides how many people may be online. A map may have more or fewer seats than that. So Startup needs no special small templates, and "fewer seats than people" is information in the map check, not an error.
+
+| # | Decision | Chosen |
+|---|---|---|
+| E1 | Startup admins may try the builder in their own browser; Publish is locked with an upgrade message. The draft stays in the browser, so the server rule is untouched | Added |
+| E2 | Teammates walk a private draft before it goes live | Not in scope |
+| E3 | "Apply now" for a live office | Added, and merged into 4A below |
+| E4 | Assigned desks and "go to my desk" | Not in scope. Any-free-seat stays; this also drops "go to my desk" from D14. Find-a-person stays |
+| E5 | Save my office as my own template | Deferred (TODOS.md) |
+| E6 | A "does my office work?" check in the builder (seats vs people as information, screen fit, far-apart meeting rooms) | Added |
+| 1A | A workspace whose plan drops to Startup keeps its map; editing is locked with a message; the admin may switch to a template; every earlier version stays | Chosen |
+| 1B | How Apply now works: reset the room with the server's existing failover path, and tell each browser to reload after a random 0 to 5 second wait (so 200 people do not arrive in one second). The map is saved either way | Chosen |
+| 3A | A small record table: who gave or removed which role, who published, restored or applied a map, and when. Written in the same step as the change. Owners and admins can read it | Chosen. One additive table; older code ignores it |
+| 11A | The builder edits on a flat top-down grid; a Preview button shows the tilted, raised-tile view, drawn by the same code as the live room | Chosen |
+| 11B | Editing on a tablet-sized window and up; on a phone the builder is view, preview, version history and restore only | Chosen |
+| 4A | **Publish into an occupied room resets it** (see the gap below) | Chosen |
+
+**A gap in D5, found in this review.** Publishing writes the new map into the room's settings immediately, and the room page reads those settings when it opens. But the realtime server keeps the old map for as long as anyone is inside. So after a publish into an occupied room, a newcomer would draw the new map while the server used the old one (seats refuse, walking limits wrong). A stale tab reconnecting after a reset has the same problem. **Decision 4A replaces D5 for occupied rooms:** publishing into a room with people in it first shows how many are inside and asks for confirmation; on confirm the map is saved and the room is reset so the server and every page agree within seconds. If the reset fails, the publish is undone and the admin is told why. When a browser reconnects it also checks the live map version and reloads if its page is out of date. An empty room simply takes the new map the next time anyone joins, as before. The longer-term cleaner fix, the server sending its own map to each browser, is deferred because it changes a server message and the room screen's start-up code.
+
+### How the pieces fit (★ = new)
+
+```
+ admin (Team+)            web app                          database                     realtime server
+ builder ★ ── save ──▶ layout routes (exist) ──checks──▶ role rule (exists)
+ (flat grid;             + plan rule ★ (limit > 10)         + plan lookup (exists)
+  Preview = tilted,      ── write ──▶ RoomLayoutVersion (exists) + audit record ★
+  same drawing code)             │
+ Startup admin ★ ── template pick ─▶ same routes: anything but a template is refused
+                                 │
+ Publish into a live room ★ ─▶ confirm (N inside) ─▶ save map ─▶ internal call ★ ──▶ evict room (exists, used for failover)
+                                                                                        │ every socket told to reconnect
+ every browser ◀── "map changed" ★ ── reload page after 0-5 s ◀────────────────────────┘
+      └─▶ on reconnect: compare the live map version with the page's; reload if different ★
+```
+
+### Error and rescue registry
+
+| Where | What can go wrong | Caught by | The person sees |
+|---|---|---|---|
+| Save or publish by a plan of 10 or fewer | A Startup member calls the route directly | Server checks the plan every call | "Your plan does not include the builder", refused; logged |
+| Plan drops | A Team workspace goes down to Startup | 1A: map kept, editing locked | A clear message; templates still available |
+| Publish into an occupied room | The room's server cannot be reached, or the reset fails part-way | The publish is undone; the earlier version stays live | "Could not apply now; nothing changed" |
+| Publish into an empty room | Nobody inside | No reset needed | Publishes as before |
+| Browser reload | 200 browsers reload at once | Random 0 to 5 second wait | A short "the office is updating" screen |
+| Stale tab | A tab open across a publish reconnects with the old map | Map version check on reconnect | The page reloads |
+| Two admins | Both press Publish | Version number (exists) | The second is refused with the current version |
+| Audit | The record cannot be written | Written in the same step as the change, so both succeed or both fail | The change is refused, not silently unrecorded |
+
+### Failure modes registry
+
+Every row above is rescued, tested (listed below) and visible to the person or in a log. No critical gap is left open. The one that was open, the map mismatch, is closed by 4A.
+
+### What already exists and is reused
+
+The map format and checks, the role rules, the saved-versions table and routes, the room's failover reset, the plate drawing code (the builder's preview), and the plan lookup used for the participant limit. Nothing is rebuilt.
+
+### Not in scope
+
+Teammates walking a private draft (E2); assigned desks and "go to my desk" (E4); furniture that blocks walking (an engine change); the server sending its own map to each browser (later, needs a server message change); the "save as my own template" idea (E5, in TODOS.md).
+
+### Tests added by this review
+
+- The who-may-do-what table gets a plan column: role x plan x action, one test per cell.
+- A Startup member cannot save a draft or publish; a Startup admin can pick a template.
+- A downgrade keeps the map, locks editing, and keeps every version.
+- Publishing into an occupied room resets it, and the rejoined room uses the new map (real database and server); a failed reset undoes the publish.
+- A stale page reloads on reconnect.
+- One audit line is written per action, with the right person, and none when the action is refused.
+- At a phone width no edit handles appear in the builder.
+
+### Build tasks (each stops for review)
+
+1. **P1** The plan rule and its test table; the audit table and its writes. Human about 3 days, Claude about 2 hours.
+2. **P1** Publish into an occupied room: confirm box, reset through the existing failover path, undo on failure, reload after 0 to 5 seconds, and the version check on reconnect. Human about 5 days, Claude about 4 hours.
+3. **P1** The template picker for every plan (Startup limited to it). Human about 3 days, Claude about 2 hours.
+4. **P1** The set-up-from-needs arrangement (D12) with the map check (E6). Human about 1 week, Claude about half a day.
+5. **P2** The flat drag builder with Preview, undo, redo, version history (D10, 11A, 11B). Human about 2 weeks, Claude about 1 day.
+6. **P2** The Startup try-out with a browser-only draft (E1). Human about 2 days, Claude about 1 hour.
+7. **P2** New workspaces start from the starter map (step F).
+
+Outside voice: not run in this review (no second reviewer was available here). That is missing coverage, not a clean result.
