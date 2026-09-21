@@ -1,13 +1,11 @@
 import { Container, Graphics, Matrix, Text } from "pixi.js";
 import { uprightMatrix } from "./isoMath";
+import { ACCENT, BLACK, INK, NAME_TAG_TEXT, PERSON_SLATE, WHITE } from "./palette";
 
 // The Gemini design's people: a slate dot for everyone else, an amber dot with a soft glow for you, and a small dark
 // name tag above (docs/designs/gemini-landing.html.html).
 const RADIUS = 15;
 const YOU_RADIUS = 17;
-const AMBER = 0xf5a623;
-const SLATE = 0x64748b;
-const LABEL_COLOR = 0xe2e8f0;
 const SEATED_RING_RADIUS = RADIUS + 7;
 
 /**
@@ -36,16 +34,16 @@ export class Avatar {
     this.container.addChild(this.body);
 
     if (isLocal) {
-      const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: AMBER, alpha: 0.22 });
+      const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: ACCENT, alpha: 0.22 });
       this.body.addChild(glow);
     }
     const dot = new Graphics()
       .circle(0, 0, isLocal ? YOU_RADIUS : RADIUS)
-      .fill(isLocal ? AMBER : SLATE)
-      .stroke({ width: isLocal ? 3 : 2.5, color: isLocal ? 0xffffff : 0x1a1a1a });
+      .fill(isLocal ? ACCENT : PERSON_SLATE)
+      .stroke({ width: isLocal ? 3 : 2.5, color: isLocal ? WHITE : INK });
     this.body.addChild(dot);
 
-    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: AMBER, alpha: 0.7 });
+    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: ACCENT, alpha: 0.7 });
     this.seatedRing.visible = false;
     this.body.addChild(this.seatedRing);
 
@@ -54,7 +52,7 @@ export class Avatar {
     this.label = new Text({
       text: name,
       style: {
-        fill: isLocal ? AMBER : LABEL_COLOR,
+        fill: isLocal ? ACCENT : NAME_TAG_TEXT,
         fontSize: 13,
         fontWeight: isLocal ? "600" : "500",
         fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
@@ -75,8 +73,8 @@ export class Avatar {
     this.tag
       .clear()
       .roundRect(-width / 2, centreY - height / 2, width, height, height / 2)
-      .fill({ color: 0x000000, alpha: 0.8 })
-      .stroke({ width: 1, color: isLocal ? AMBER : 0xffffff, alpha: isLocal ? 0.3 : 0.1 });
+      .fill({ color: BLACK, alpha: 0.8 })
+      .stroke({ width: 1, color: isLocal ? ACCENT : WHITE, alpha: isLocal ? 0.3 : 0.1 });
     this.label.position.set(0, centreY);
   }
 

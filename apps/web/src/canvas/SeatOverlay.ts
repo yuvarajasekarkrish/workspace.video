@@ -1,10 +1,11 @@
 import { Container, Graphics, Matrix } from "pixi.js";
 import type { Point, RoomLayout } from "@workspace-video/shared";
 import { slabAt, type FloorPlan } from "./slabPlan";
+import { ACCENT } from "./palette";
 import { uprightMatrix } from "./isoMath";
 
 const MARKER_RADIUS = 9;
-const OCCUPIED_COLOR = 0xf5a623; // the Gemini design's amber
+const OCCUPIED_COLOR = ACCENT;
 
 /**
  * The one small piece of DYNAMIC furniture rendering — a tint marker over

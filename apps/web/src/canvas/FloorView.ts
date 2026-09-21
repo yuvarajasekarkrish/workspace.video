@@ -3,6 +3,7 @@ import type { RoomLayout, FurniturePiece, LayoutZone } from "@workspace-video/sh
 import { tileRectToWorld } from "@workspace-video/shared";
 import { liftVector, screenStep } from "./lift";
 import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
+import { ACCENT, BLACK, CHAIR_FILL, LINE, PANEL_FILL, PLANT_GREEN, SLAB_EDGE, WHITE } from "./palette";
 
 /**
  * The office floor: a layout's areas and furniture, drawn once in the Gemini design's look (charcoal panels, soft
@@ -12,10 +13,6 @@ import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
  * (SeatOverlay.ts): this module only draws the room as it exists at rest.
  */
 
-const AMBER = 0xf5a623;
-const GREEN = 0x10b981;
-const CHAIR_FILL = 0x334155;
-const PANEL_FILL = 0x1e1e1e;
 // Nearly solid, so the shadow under a raised area does not show through it.
 const PANEL_FILL_ALPHA = 0.92;
 // How far the shadow sits down and to the left of an area at rest, on the screen. Raising the area pushes it further.
@@ -23,8 +20,6 @@ const REST_SHADOW_OFFSET = 6;
 // How thick a slab looks, in screen pixels before zoom: the strip of side wall seen below its top face.
 const AREA_THICKNESS = 14;
 const GROUP_THICKNESS = 9;
-const EDGE_FILL = 0x121212;
-const LINE = 0xffffff;
 
 function drawPanel(layer: Container, box: Box, radius: number): void {
   layer.addChild(
@@ -40,7 +35,7 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): void {
   const label = new Text({
     text: zone.label,
     style: {
-      fill: 0xffffff,
+      fill: WHITE,
       fontSize: 15,
       letterSpacing: 2,
       fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
@@ -63,7 +58,7 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
       break;
     }
     case "plant": {
-      g.circle(x + width / 2, y + height / 2, width / 2).fill({ color: GREEN, alpha: 0.15 }).stroke({ width: 2, color: GREEN, alpha: 0.4 });
+      g.circle(x + width / 2, y + height / 2, width / 2).fill({ color: PLANT_GREEN, alpha: 0.15 }).stroke({ width: 2, color: PLANT_GREEN, alpha: 0.4 });
       break;
     }
     case "desk": {
@@ -75,7 +70,7 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
       break;
     }
     case "sofa": {
-      g.roundRect(x, y, width, height, height / 2).fill({ color: AMBER, alpha: 0.15 }).stroke({ width: 2, color: AMBER, alpha: 0.3 });
+      g.roundRect(x, y, width, height, height / 2).fill({ color: ACCENT, alpha: 0.15 }).stroke({ width: 2, color: ACCENT, alpha: 0.3 });
       break;
     }
     case "counter": {
@@ -133,7 +128,7 @@ class FloorSlab {
     this.container.addChild(
       new Graphics()
         .roundRect(box.x + wall.x, box.y + wall.y, box.width, box.height, radius)
-        .fill(EDGE_FILL)
+        .fill(SLAB_EDGE)
         .stroke({ width: 1.5, color: LINE, alpha: 0.08 }),
     );
     drawPanel(this.container, box, radius);
@@ -142,7 +137,7 @@ class FloorSlab {
     this.shadow = new Graphics();
     // Three stacked, slightly larger copies with faint fills make a soft edge without a blur filter (which is costly).
     for (const [grow, alpha] of [[14, 0.12], [8, 0.16], [2, 0.22]] as const) {
-      this.shadow.roundRect(box.x - grow, box.y - grow, box.width + grow * 2, box.height + grow * 2, radius + grow).fill({ color: 0x000000, alpha });
+      this.shadow.roundRect(box.x - grow, box.y - grow, box.width + grow * 2, box.height + grow * 2, radius + grow).fill({ color: BLACK, alpha });
     }
     this.setLift(0);
   }

@@ -12,6 +12,7 @@ import { createBackground } from "./Background";
 import { buildFloorView, type FloorView } from "./FloorView";
 import { LiftState, liftVector, pickSlab } from "./lift";
 import { slabAt } from "./slabPlan";
+import { GROUND_CSS } from "./palette";
 import { SeatOverlay } from "./SeatOverlay";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
@@ -101,7 +102,7 @@ export class PixiStage {
 
     await this.app.init({
       resizeTo: options.canvasContainer,
-      background: "#0a0a0a",
+      background: GROUND_CSS,
       antialias: true,
       // Not started by Pixi: the IdleGate starts the loop when there is something to draw and stops it when
       // there is not, so a room with nobody moving asks the browser for no frames at all.

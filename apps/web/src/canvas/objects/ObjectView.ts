@@ -1,15 +1,23 @@
 import { Container, Graphics, Text, Sprite, Assets, Texture } from "pixi.js";
 import type { ObjectState } from "@workspace-video/shared";
 import type { ObjectRender } from "@/store/objectsStore";
+import {
+  ACCENT,
+  EMBED_FILL,
+  EMBED_STROKE,
+  EMBED_TEXT,
+  IMAGE_PLACEHOLDER_FILL,
+  IMAGE_PLACEHOLDER_STROKE,
+  INK,
+  LINK_STROKE,
+  NOTE_FILL,
+  SHAPE_FILL,
+  WHITE,
+  ZONE_COLOR,
+  cssHex,
+} from "../palette";
 
-const SELECTION_COLOR = 0xf5a623; // the Gemini design's one accent, amber
-const NOTE_FILL: Record<string, number> = {
-  yellow: 0xfff3a0,
-  pink: 0xffc9de,
-  blue: 0xaee1ff,
-  green: 0xc4f2c2,
-  purple: 0xdcc9ff,
-};
+const SELECTION_COLOR = ACCENT;
 
 function hexToNumber(hex: string, fallback: number): number {
   const parsed = Number.parseInt(hex.replace("#", ""), 16);
@@ -36,7 +44,7 @@ function hexToNumber(hex: string, fallback: number): number {
 export class ObjectView {
   readonly container = new Container();
   private readonly body = new Graphics();
-  private readonly label = new Text({ text: "", style: { fontSize: 13, fill: 0x1a1a1a, wordWrap: true } });
+  private readonly label = new Text({ text: "", style: { fontSize: 13, fill: INK, wordWrap: true } });
   private readonly selectionOutline = new Graphics();
   private readonly resizeHandles = new Graphics();
   private sprite: Sprite | null = null;
@@ -94,7 +102,7 @@ export class ObjectView {
         break;
       }
       case "link": {
-        this.body.roundRect(0, 0, rect.width, rect.height, 6).fill(0xffffff).stroke({ width: 1, color: 0xd0d4dc });
+        this.body.roundRect(0, 0, rect.width, rect.height, 6).fill(WHITE).stroke({ width: 1, color: LINK_STROKE });
         const title = typeof state.data.title === "string" ? state.data.title : "";
         const url = typeof state.data.url === "string" ? state.data.url : "";
         this.label.text = title || url;
@@ -104,8 +112,8 @@ export class ObjectView {
       }
       case "shape": {
         const kind = typeof state.data.kind === "string" ? state.data.kind : "rect";
-        const fill = hexToNumber(typeof state.data.fill === "string" ? state.data.fill : "#4f8cff", 0x4f8cff);
-        const stroke = hexToNumber(typeof state.data.stroke === "string" ? state.data.stroke : "#ffffff", 0xffffff);
+        const fill = hexToNumber(typeof state.data.fill === "string" ? state.data.fill : cssHex(SHAPE_FILL), SHAPE_FILL);
+        const stroke = hexToNumber(typeof state.data.stroke === "string" ? state.data.stroke : cssHex(WHITE), WHITE);
         const strokeWidth = typeof state.data.strokeWidth === "number" ? state.data.strokeWidth : 2;
         if (kind === "ellipse") {
           this.body.ellipse(rect.width / 2, rect.height / 2, rect.width / 2, rect.height / 2);
@@ -118,7 +126,7 @@ export class ObjectView {
         break;
       }
       case "zone": {
-        const color = hexToNumber(typeof state.data.color === "string" ? state.data.color : "#50c878", 0x50c878);
+        const color = hexToNumber(typeof state.data.color === "string" ? state.data.color : cssHex(ZONE_COLOR), ZONE_COLOR);
         this.body.rect(0, 0, rect.width, rect.height).fill({ color, alpha: 0.12 }).stroke({ width: 2, color, alpha: 0.5 });
         this.label.text = typeof state.data.label === "string" ? state.data.label : "";
         this.label.style.fill = color;
@@ -129,16 +137,16 @@ export class ObjectView {
         const url = typeof state.data.url === "string" ? state.data.url : null;
         // Placeholder while (or if) the texture never loads — matches this
         // module's "never crash on unexpected data" rule for embed too.
-        this.body.rect(0, 0, rect.width, rect.height).fill(0x1c2130).stroke({ width: 1, color: 0x3a4266 });
+        this.body.rect(0, 0, rect.width, rect.height).fill(IMAGE_PLACEHOLDER_FILL).stroke({ width: 1, color: IMAGE_PLACEHOLDER_STROKE });
         if (url) this.loadImage(url, rect);
         break;
       }
       case "embed":
       default: {
         // Not implemented this phase — inert placeholder, never a crash.
-        this.body.rect(0, 0, rect.width, rect.height).fill(0x2a2f3d).stroke({ width: 1, color: 0x4a5066 });
+        this.body.rect(0, 0, rect.width, rect.height).fill(EMBED_FILL).stroke({ width: 1, color: EMBED_STROKE });
         this.label.text = "Embed (not supported yet)";
-        this.label.style.fill = 0x8890a0;
+        this.label.style.fill = EMBED_TEXT;
         this.label.position.set(8, 8);
         break;
       }
@@ -185,7 +193,7 @@ export class ObjectView {
     for (const [hx, hy] of positions) {
       this.resizeHandles
         .rect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize)
-        .fill(0xffffff)
+        .fill(WHITE)
         .stroke({ width: 1, color: SELECTION_COLOR });
     }
   }
