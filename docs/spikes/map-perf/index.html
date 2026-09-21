@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map performance test</title>
+<!--
+  A throwaway measurement page, NOT part of the product (docs/architecture/company-map-builder.md, step D).
+  It moves N people around the real starter map (spatialMap@1) in one of three ways and measures the browser:
+
+    ?mode=css   plain HTML. The world is drawn once. Each person is one element, moved by a CSS transform that the
+                browser animates itself; the page only writes a new target 10 times a second (like the server's tick).
+    ?mode=raf   plain HTML, but the page moves every person on every screen refresh (the simplest way to do it).
+    ?mode=pixi  the same scene drawn on a canvas with the Pixi library (what the room screen uses today).
+
+  Other settings: n=200 (people), secs=15 (measured seconds), auto=1 (start at once). Open it from a local web server
+  (for example: node docs/spikes/map-perf/serve.mjs), for example  http://127.0.0.1:8123/docs/spikes/map-perf/index.html?mode=css&auto=1
+  The numbers appear on the page and in window.__result. Nothing here talks to a server.
+  map-data.js is generated from packages/shared (spatialMap1: floor, zones, seats).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0a0a; color: #ddd; font: 14px system-ui, sans-serif; overflow: hidden; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #world { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; }
+  .area { position: absolute; box-sizing: border-box; border: 2px solid rgba(255,255,255,.18); background: rgba(255,255,255,.05); border-radius: 12px; }
+  .area span { position: absolute; right: 16px; bottom: 10px; font-size: 30px; color: rgba(255,255,255,.55); white-space: nowrap; }
+  .seat { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 4px; background: rgba(255,255,255,.16); }
+  .p { position: absolute; left: 0; top: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: #a9afba; }
+  .css .p { transition: transform 100ms linear; }
+  #hud { position: absolute; left: 8px; top: 8px; z-index: 5; white-space: pre; background: rgba(0,0,0,.75); padding: 8px 10px; border-radius: 6px; font: 13px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="world"></div></div>
+<div id="hud">starting...</div>
+<script src="map-data.js"></script>
+<script>
+  // Pixi is only needed for mode=pixi; loaded lazily so the other modes do not carry it.
+  if (new URLSearchParams(location.search).get("mode") === "pixi") document.write('<script src="../../../apps/web/node_modules/pixi.js/dist/pixi.min.js"><\/script>');
+</script>
+<script>
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const MODE = q.get("mode") || "css";
+  const N = Number(q.get("n") || 200);
+  const SECS = Number(q.get("secs") || 15);
+  const AUTO = q.get("auto") === "1";
+  const hud = document.getElementById("hud");
+  const world = document.getElementById("world");
+  const { floor, zones, seats } = window.MAP;
+  const W = floor.cols * 160, H = floor.rows * 160;
+  const TICK_MS = 100, SPEED = 250; // px per second: a brisk walk on this map
+
+  // The whole world is one tilted box (the same tilt as the Gemini map): rotateX 55, rotateZ -45, fitted to the window.
+  const fit = Math.min(innerWidth / ((W + H) / Math.SQRT2), innerHeight / (((W + H) / Math.SQRT2) * Math.cos(55 * Math.PI / 180))) * 0.95;
+  world.style.cssText += `width:${W}px;height:${H}px;margin:${-H / 2}px 0 0 ${-W / 2}px;transform:scale(${fit}) rotateX(55deg) rotateZ(-45deg);`;
+  if (MODE === "css") document.body.classList.add("css");
+
+  // ---- people: a random walk, stepped 10 times a second like the server's tick
+  const people = Array.from({ length: N }, () => {
+    const x = 100 + Math.random() * (W - 200), y = 100 + Math.random() * (H - 200);
+    return { px: x, py: y, tx: x, ty: y, heading: Math.random() * Math.PI * 2, t0: 0, el: null, sprite: null };
+  });
+  function step(now) {
+    for (const p of people) {
+      p.px = p.tx; p.py = p.ty;
+      if (Math.random() < 0.1) p.heading += (Math.random() - 0.5) * 2;
+      let nx = p.tx + Math.cos(p.heading) * SPEED * TICK_MS / 1000, ny = p.ty + Math.sin(p.heading) * SPEED * TICK_MS / 1000;
+      if (nx < 60 || nx > W - 60) { p.heading = Math.PI - p.heading; nx = Math.min(W - 60, Math.max(60, nx)); }
+      if (ny < 60 || ny > H - 60) { p.heading = -p.heading; ny = Math.min(H - 60, Math.max(60, ny)); }
+      p.tx = nx; p.ty = ny; p.t0 = now;
+    }
+  }
+
+  // ---- the world, built once
+  const built0 = performance.now();
+  let renderFrame = () => {};
+  let app = null, scale = 1;
+
+  if (MODE === "css" || MODE === "raf") {
+    const frag = document.createDocumentFragment();
+    for (const z of zones) {
+      const d = document.createElement("div");
+      d.className = "area";
+      d.style.cssText = `left:${z.rect.col * 160}px;top:${z.rect.row * 160}px;width:${z.rect.cols * 160}px;height:${z.rect.rows * 160}px`;
+      d.innerHTML = `<span>${z.label}</span>`;
+      frag.appendChild(d);
+    }
+    for (const s of seats) {
+      const d = document.createElement("div");
+      d.className = "seat";
+      d.style.cssText = `left:${s.x}px;top:${s.y}px`;
+      frag.appendChild(d);
+    }
+    for (const p of people) {
+      p.el = document.createElement("div");
+      p.el.className = "p";
+      p.el.style.transform = `translate3d(${p.tx}px,${p.ty}px,0)`;
+      frag.appendChild(p.el);
+    }
+    world.appendChild(frag);
+    if (MODE === "css") {
+      // The page only hands the browser a new target; the browser animates between targets itself.
+      renderFrame = null;
+    } else {
+      renderFrame = (now) => {
+        const f = Math.min(1, (now - people[0].t0) / TICK_MS);
+        for (const p of people) p.el.style.transform = `translate3d(${p.px + (p.tx - p.px) * f}px,${p.py + (p.ty - p.py) * f}px,0)`;
+      };
+    }
+  } else if (MODE === "pixi") {
+    scale = 0.5; // the canvas is drawn at half size and stretched, like a screen-sized canvas would be
+    app = new PIXI.Application();
+    await app.init({ width: W * scale, height: H * scale, background: 0x0a0a0a, antialias: false, resolution: 1, autoDensity: false });
+    app.canvas.style.width = W + "px";
+    app.canvas.style.height = H + "px";
+    world.appendChild(app.canvas);
+    const g = new PIXI.Graphics();
+    for (const z of zones) g.roundRect(z.rect.col * 160 * scale, z.rect.row * 160 * scale, z.rect.cols * 160 * scale, z.rect.rows * 160 * scale, 8).fill({ color: 0xffffff, alpha: 0.05 }).stroke({ width: 2, color: 0xffffff, alpha: 0.18 });
+    for (const s of seats) g.roundRect((s.x - 8) * scale, (s.y - 8) * scale, 16 * scale, 16 * scale, 2).fill({ color: 0xffffff, alpha: 0.16 });
+    app.stage.addChild(g);
+    const dot = new PIXI.Graphics().circle(0, 0, 10 * scale).fill(0xa9afba);
+    const texture = app.renderer.generateTexture(dot);
+    for (const p of people) {
+      p.sprite = new PIXI.Sprite(texture);
+      p.sprite.anchor.set(0.5);
+      p.sprite.position.set(p.tx * scale, p.ty * scale);
+      app.stage.addChild(p.sprite);
+    }
+    app.ticker.stop(); // drawn by our own loop below, once per screen refresh, so all modes are measured alike
+    renderFrame = (now) => {
+      const f = Math.min(1, (now - people[0].t0) / TICK_MS);
+      for (const p of people) p.sprite.position.set((p.px + (p.tx - p.px) * f) * scale, (p.py + (p.ty - p.py) * f) * scale);
+      app.render();
+    };
+  }
+  const buildMs = performance.now() - built0;
+  const nodes = document.getElementsByTagName("*").length;
+
+  // ---- run: warm up 2 s, then measure SECS seconds
+  let stepMsTotal = 0, stepCount = 0, renderMsTotal = 0, renderCount = 0;
+  const intervals = [];
+  let last = 0, startAt = 0, measuring = false, endAt = 0;
+
+  const tickTimer = setInterval(() => {
+    const s0 = performance.now();
+    step(s0);
+    if (MODE === "css") for (const p of people) p.el.style.transform = `translate3d(${p.tx}px,${p.ty}px,0)`;
+    if (measuring) { stepMsTotal += performance.now() - s0; stepCount++; }
+  }, TICK_MS);
+
+  function frame(now) {
+    if (!startAt) { startAt = now; endAt = now + 2000 + SECS * 1000; }
+    if (renderFrame) {
+      const r0 = performance.now();
+      renderFrame(now);
+      if (measuring) { renderMsTotal += performance.now() - r0; renderCount++; }
+    }
+    if (now - startAt > 2000) {
+      if (!measuring) { measuring = true; window.__measureStart = performance.now(); }
+      if (last) intervals.push(now - last);
+    }
+    last = now;
+    if (now < endAt) return requestAnimationFrame(frame);
+    finish();
+  }
+
+  function pct(sorted, p) { return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]; }
+  function finish() {
+    clearInterval(tickTimer);
+    const sorted = [...intervals].sort((a, b) => a - b);
+    const total = intervals.reduce((a, b) => a + b, 0);
+    const r = {
+      mode: MODE, people: N, seconds: SECS,
+      frames: intervals.length,
+      fps: +(intervals.length / (total / 1000)).toFixed(1),
+      frameMs: { p50: +pct(sorted, 0.5).toFixed(1), p95: +pct(sorted, 0.95).toFixed(1), p99: +pct(sorted, 0.99).toFixed(1), max: +sorted[sorted.length - 1].toFixed(1) },
+      framesOver33ms: sorted.filter((v) => v > 33.4).length,
+      framesOver50ms: sorted.filter((v) => v > 50).length,
+      pageWorkPerFrameMs: renderCount ? +(renderMsTotal / renderCount).toFixed(3) : 0,
+      pageWorkPerTickMs: stepCount ? +(stepMsTotal / stepCount).toFixed(3) : 0,
+      buildMs: +buildMs.toFixed(1),
+      elements: nodes,
+      measureStartedAt: window.__measureStart,
+      measureEndedAt: performance.now(),
+    };
+    window.__result = r;
+    window.__done = true;
+    hud.textContent = `mode ${r.mode} · ${r.people} people · ${r.seconds}s\nfps ${r.fps} · frame p50 ${r.frameMs.p50} p95 ${r.frameMs.p95} p99 ${r.frameMs.p99} max ${r.frameMs.max} ms\nframes >33ms: ${r.framesOver33ms} · >50ms: ${r.framesOver50ms}\npage work per frame ${r.pageWorkPerFrameMs} ms · per tick ${r.pageWorkPerTickMs} ms\nbuilt in ${r.buildMs} ms · ${r.elements} page elements`;
+  }
+
+  hud.textContent = `mode ${MODE} · ${N} people ready`;
+  if (AUTO) requestAnimationFrame(frame);
+  else { hud.textContent += "\nclick anywhere to start"; addEventListener("click", () => requestAnimationFrame(frame), { once: true }); }
+})();
+</script>
+</body>
+</html>
