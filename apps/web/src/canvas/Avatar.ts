@@ -1,4 +1,5 @@
-import { Container, Graphics, Text } from "pixi.js";
+import { Container, Graphics, Matrix, Text } from "pixi.js";
+import { uprightMatrix } from "./isoMath";
 
 // The Gemini design's people: a slate dot for everyone else, an amber dot with a soft glow for you, and a small dark
 // name tag above (docs/designs/gemini-landing.html.html).
@@ -20,6 +21,8 @@ const SEATED_RING_RADIUS = RADIUS + 7;
  */
 export class Avatar {
   readonly container: Container;
+  /** Everything visible lives in here, un-tilted, so the dot stays round and the name stays level on the tilted floor. */
+  private readonly body = new Container();
   private readonly label: Text;
   private readonly tag: Graphics;
   private readonly seatedRing: Graphics;
@@ -28,23 +31,26 @@ export class Avatar {
   constructor(name: string, isLocal: boolean) {
     this.isLocal = isLocal;
     this.container = new Container();
+    const u = uprightMatrix();
+    this.body.setFromMatrix(new Matrix(u.a, u.b, u.c, u.d, 0, 0));
+    this.container.addChild(this.body);
 
     if (isLocal) {
       const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: AMBER, alpha: 0.22 });
-      this.container.addChild(glow);
+      this.body.addChild(glow);
     }
     const dot = new Graphics()
       .circle(0, 0, isLocal ? YOU_RADIUS : RADIUS)
       .fill(isLocal ? AMBER : SLATE)
       .stroke({ width: isLocal ? 3 : 2.5, color: isLocal ? 0xffffff : 0x1a1a1a });
-    this.container.addChild(dot);
+    this.body.addChild(dot);
 
     this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: AMBER, alpha: 0.7 });
     this.seatedRing.visible = false;
-    this.container.addChild(this.seatedRing);
+    this.body.addChild(this.seatedRing);
 
     this.tag = new Graphics();
-    this.container.addChild(this.tag);
+    this.body.addChild(this.tag);
     this.label = new Text({
       text: name,
       style: {
@@ -55,7 +61,7 @@ export class Avatar {
       },
     });
     this.label.anchor.set(0.5, 0.5);
-    this.container.addChild(this.label);
+    this.body.addChild(this.label);
     this.layoutTag(isLocal);
   }
 

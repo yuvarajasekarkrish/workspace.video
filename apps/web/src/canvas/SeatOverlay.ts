@@ -1,5 +1,6 @@
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, Matrix } from "pixi.js";
 import type { RoomLayout } from "@workspace-video/shared";
+import { uprightMatrix } from "./isoMath";
 
 const MARKER_RADIUS = 9;
 const OCCUPIED_COLOR = 0xf5a623; // the Gemini design's amber
@@ -18,9 +19,10 @@ export class SeatOverlay {
   private readonly markers = new Map<string, Graphics>();
 
   constructor(layout: RoomLayout) {
+    const u = uprightMatrix(); // markers stand up straight on the tilted floor, so they stay round
     for (const seat of layout.seats) {
       const marker = new Graphics().circle(0, 0, MARKER_RADIUS).fill(OCCUPIED_COLOR);
-      marker.position.set(seat.anchor.x, seat.anchor.y);
+      marker.setFromMatrix(new Matrix(u.a, u.b, u.c, u.d, seat.anchor.x, seat.anchor.y));
       marker.visible = false;
       this.container.addChild(marker);
       this.markers.set(seat.id, marker);
