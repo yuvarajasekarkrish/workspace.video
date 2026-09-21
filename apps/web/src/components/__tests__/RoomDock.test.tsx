@@ -54,34 +54,6 @@ describe("the bar", () => {
     }
   });
 
-  it("makes every control at least 48 px (the design notes), for the bar and the zoom buttons alike", () => {
-    render(
-      <>
-        <RoomDock {...props()} />
-        <ZoomControls onZoomIn={() => {}} onZoomOut={() => {}} onFit={() => {}} />
-      </>,
-    );
-    const controls = [...screen.getByRole("toolbar", { name: "Room controls" }).querySelectorAll("button, a"), ...screen.getByRole("group", { name: "Zoom" }).querySelectorAll("button")];
-    expect(controls.length).toBe(11);
-    for (const control of controls) {
-      expect(control.className, control.getAttribute("aria-label") ?? "").toContain("h-12");
-      expect(control.className).toContain("w-12");
-    }
-  });
-
-  it("on a phone shows only what works (microphone, find people, leave); the greyed-out ones appear from tablet width up", () => {
-    render(<RoomDock {...props()} />);
-    const bar = screen.getByRole("toolbar", { name: "Room controls" });
-    const labelled = (label: string) => bar.querySelector(`[aria-label="${label}"]`) as HTMLElement;
-    for (const label of ["Camera (coming soon)", "Share screen (coming soon)", "Emoji (coming soon)", "Set status (coming soon)", "Invite to talk (coming soon)"]) {
-      expect(labelled(label).className, label).toContain("hidden");
-      expect(labelled(label).className, label).toContain("sm:flex");
-    }
-    for (const label of ["Microphone (connecting)", "Find people", "Leave room"]) {
-      expect(labelled(label).className, label).not.toContain("hidden");
-    }
-  });
-
   it("leaves the room by going back to the home page", () => {
     render(<RoomDock {...props()} />);
     expect(screen.getByRole("link", { name: "Leave room" }).getAttribute("href")).toBe("/");

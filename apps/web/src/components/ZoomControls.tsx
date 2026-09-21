@@ -16,7 +16,7 @@ function ZoomButton({ label, icon, onClick }: { label: string; icon: IconName; o
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="flex h-12 w-12 items-center justify-center rounded-full text-neutral-200 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      className="flex h-10 w-10 items-center justify-center rounded-full text-neutral-200 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Icon name={icon} />
     </button>
@@ -30,7 +30,7 @@ export function ZoomControls({ onZoomIn, onZoomOut, onFit }: ZoomControlsProps) 
     <div
       role="group"
       aria-label="Zoom"
-      className="absolute bottom-[92px] right-4 z-30 sm:bottom-4 flex flex-col items-center gap-0.5 rounded-full border border-white/10 bg-black/60 p-1 shadow-lg shadow-black/40 backdrop-blur-md"
+      className="absolute bottom-[84px] right-4 z-30 sm:bottom-4 flex flex-col items-center gap-0.5 rounded-full border border-white/10 bg-black/60 p-1 shadow-lg shadow-black/40 backdrop-blur-md"
     >
       <ZoomButton label="Zoom in" icon="plus" onClick={onZoomIn} />
       <ZoomButton label="Zoom out" icon="minus" onClick={onZoomOut} />
