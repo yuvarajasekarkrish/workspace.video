@@ -1,10 +1,7 @@
-import { Container } from "pixi.js";
+import { Container, Matrix } from "pixi.js";
 import type { Point } from "@workspace-video/shared";
-import {
-  exceedsDragThreshold,
-  computeCursorAnchoredZoom,
-  screenToWorld as pureScreenToWorld,
-} from "./viewportMath";
+import { exceedsDragThreshold } from "./viewportMath";
+import { fitFloor, isoMatrix, project, unproject, zoomAtCursor } from "./isoMath";
 
 export interface ViewportCallbacks {
   /** Fired on a left click that never exceeded the drag threshold. */
@@ -34,9 +31,11 @@ export interface ViewportCallbacks {
 }
 
 /**
- * Imperative shell around viewportMath.ts's pure functions: owns the
- * `world` container's pan/zoom transform and translates raw DOM pointer/
- * wheel/keyboard events into calls to that pure logic. Pointer arbitration
+ * Imperative shell around viewportMath.ts and isoMath.ts's pure functions: owns the
+ * `world` container's tilted (2.5D) pan/zoom transform and translates raw DOM pointer/
+ * wheel/keyboard events into calls to that pure logic. The floor is turned 45 degrees and leaned back
+ * 55 degrees, like the Gemini map, so every screen position is un-tilted (isoMath.unproject) before it
+ * is handed to anything that thinks in flat floor positions. Pointer arbitration
  * (click vs pan vs space-pan vs middle-pan) follows the milestone's fixed
  * rule table:
  *
@@ -44,7 +43,7 @@ export interface ViewportCallbacks {
  *   left drag beyond 5px                      -> pan (click cancelled)
  *   space held + left drag                    -> pan, always, any distance
  *   middle-button drag                        -> pan
- *   wheel                                     -> cursor-anchored zoom, 0.25x-3x
+ *   wheel                                     -> cursor-anchored zoom, 0.1x-3x
  *
  * All DOM listeners this attaches are removed in `dispose()` — see the
  * plan's lifecycle-disposal requirement; a leaked listener here is exactly
@@ -53,6 +52,9 @@ export interface ViewportCallbacks {
  */
 export class Viewport {
   readonly world = new Container();
+  /** Where the floor's top-left corner is on the screen, and the zoom. Together with the fixed tilt they are the whole view. */
+  private origin: Point = { x: 0, y: 0 };
+  private zoom = 1;
 
   private spaceHeld = false;
   private activePointerId: number | null = null;
@@ -68,7 +70,27 @@ export class Viewport {
     private readonly canvas: HTMLCanvasElement,
     private readonly callbacks: ViewportCallbacks,
   ) {
+    this.applyTransform();
     this.attach();
+  }
+
+  /** Puts the tilt, zoom and position onto the world container. */
+  private applyTransform(): void {
+    const m = isoMatrix(this.zoom);
+    this.world.setFromMatrix(new Matrix(m.a, m.b, m.c, m.d, this.origin.x, this.origin.y));
+  }
+
+  /** Shows the whole floor, centred, inside a window of this size. Used when the room opens and for a "fit" button. */
+  fitToFloor(floor: { width: number; height: number }, view: { width: number; height: number }): void {
+    const fit = fitFloor(floor, view);
+    this.zoom = fit.scale;
+    this.origin = fit.position;
+    this.applyTransform();
+  }
+
+  /** Where a flat floor position appears on the screen (used to place the note editor over a note). */
+  worldToScreen(world: Point): Point {
+    return project(world, this.origin, this.zoom);
   }
 
   private attach(): void {
@@ -90,14 +112,14 @@ export class Viewport {
   }
 
   screenToWorld(screen: Point): Point {
-    return pureScreenToWorld(screen, { x: this.world.position.x, y: this.world.position.y }, this.world.scale.x);
+    return unproject(screen, this.origin, this.zoom);
   }
 
   /** Current zoom scale — needed by object interaction's resize-handle
    *  hit-testing so a handle's hit area stays a constant size on screen
    *  regardless of zoom (see objectHitTest.ts's hitTestResizeHandle). */
   getScale(): number {
-    return this.world.scale.x;
+    return this.zoom;
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -123,7 +145,7 @@ export class Viewport {
     this.pointerButton = e.button;
     this.pressStart = { x: e.clientX, y: e.clientY };
     this.panOriginScreen = { x: e.clientX, y: e.clientY };
-    this.panOriginWorld = { x: this.world.position.x, y: this.world.position.y };
+    this.panOriginWorld = { x: this.origin.x, y: this.origin.y };
 
     // Space-held always forces panning regardless of what's under the
     // cursor — the deliberate escape hatch to pan over objects — so object
@@ -158,10 +180,11 @@ export class Viewport {
     }
 
     if (this.isPanning) {
-      this.world.position.set(
-        this.panOriginWorld.x + (e.clientX - this.panOriginScreen.x),
-        this.panOriginWorld.y + (e.clientY - this.panOriginScreen.y),
-      );
+      this.origin = {
+        x: this.panOriginWorld.x + (e.clientX - this.panOriginScreen.x),
+        y: this.panOriginWorld.y + (e.clientY - this.panOriginScreen.y),
+      };
+      this.applyTransform();
     }
   };
 
@@ -206,14 +229,9 @@ export class Viewport {
     const cursorScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
 
-    const { scale, position } = computeCursorAnchoredZoom(
-      cursorScreen,
-      { x: this.world.position.x, y: this.world.position.y },
-      this.world.scale.x,
-      zoomFactor,
-    );
-
-    this.world.scale.set(scale);
-    this.world.position.set(position.x, position.y);
+    const { scale, position } = zoomAtCursor(cursorScreen, this.origin, this.zoom, zoomFactor);
+    this.zoom = scale;
+    this.origin = position;
+    this.applyTransform();
   };
 }

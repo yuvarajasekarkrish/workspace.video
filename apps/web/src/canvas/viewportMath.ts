@@ -1,6 +1,7 @@
 import type { Point } from "@workspace-video/shared";
 
-export const MIN_ZOOM = 0.25;
+// Small enough that the whole tilted floor of the biggest allowed map (50 x 50 tiles) fits a phone screen.
+export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 3;
 export const PAN_DRAG_THRESHOLD_PX = 5;
 
@@ -14,39 +15,4 @@ export function exceedsDragThreshold(pressStart: Point, current: Point, threshol
 
 export function clampZoom(scale: number, min = MIN_ZOOM, max = MAX_ZOOM): number {
   return Math.min(Math.max(scale, min), max);
-}
-
-/** Converts a screen-space point to world-space, given the world
- *  container's current position and uniform scale. */
-export function screenToWorld(screen: Point, worldPosition: Point, scale: number): Point {
-  return {
-    x: (screen.x - worldPosition.x) / scale,
-    y: (screen.y - worldPosition.y) / scale,
-  };
-}
-
-/**
- * Computes the new world scale + position for a cursor-anchored zoom step,
- * clamped to [min, max]: the world point currently under the cursor stays
- * under the cursor after the zoom, which is what makes wheel-zoom feel
- * anchored rather than always re-centering on the origin.
- */
-export function computeCursorAnchoredZoom(
-  cursorScreen: Point,
-  worldPosition: Point,
-  currentScale: number,
-  zoomFactor: number,
-  min = MIN_ZOOM,
-  max = MAX_ZOOM,
-): { scale: number; position: Point } {
-  const worldPointUnderCursor = screenToWorld(cursorScreen, worldPosition, currentScale);
-  const newScale = clampZoom(currentScale * zoomFactor, min, max);
-
-  return {
-    scale: newScale,
-    position: {
-      x: cursorScreen.x - worldPointUnderCursor.x * newScale,
-      y: cursorScreen.y - worldPointUnderCursor.y * newScale,
-    },
-  };
 }

@@ -90,7 +90,7 @@ export class PixiStage {
 
     await this.app.init({
       resizeTo: options.canvasContainer,
-      background: "#0b0d12",
+      background: "#0a0a0a",
       antialias: true,
       // Not started by Pixi: the IdleGate starts the loop when there is something to draw and stops it when
       // there is not, so a room with nobody moving asks the browser for no frames at all.
@@ -140,6 +140,11 @@ export class PixiStage {
     this.viewport.world.addChild(this.objectLayer);
     this.viewport.world.addChild(this.avatarLayer);
     this.app.stage.addChild(this.world);
+    // Show the whole floor, centred, when the room opens.
+    this.viewport.fitToFloor(
+      { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx },
+      { width: this.app.screen.width, height: this.app.screen.height },
+    );
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
@@ -418,17 +423,23 @@ export class PixiStage {
     const record = objectsStore.getState().objects.get(objectId);
     if (!record) return;
 
-    const topLeftScreen = this.worldToScreen({ x: record.render.x, y: record.render.y });
+    // Notes lie flat on the tilted floor, so the editor box is centred on where the note's middle appears.
     const scale = this.viewport.getScale();
+    const width = record.render.width * scale;
+    const height = record.render.height * scale;
+    const centreScreen = this.viewport.worldToScreen({
+      x: record.render.x + record.render.width / 2,
+      y: record.render.y + record.render.height / 2,
+    });
     const initialText = typeof record.state.data.text === "string" ? record.state.data.text : "";
 
     this.noteEditor.open(
       this.app.canvas.parentElement ?? document.body,
       {
-        x: topLeftScreen.x,
-        y: topLeftScreen.y,
-        width: record.render.width * scale,
-        height: record.render.height * scale,
+        x: centreScreen.x - width / 2,
+        y: centreScreen.y - height / 2,
+        width,
+        height,
       },
       initialText,
       (text) => {
@@ -451,14 +462,6 @@ export class PixiStage {
         });
       },
     );
-  }
-
-  private worldToScreen(world: Point): Point {
-    const scale = this.viewport.getScale();
-    return {
-      x: this.viewport.world.position.x + world.x * scale,
-      y: this.viewport.world.position.y + world.y * scale,
-    };
   }
 
   /** Creates a new object centered in the current viewport, for the
