@@ -94,7 +94,7 @@ The builder snaps to the grid because the engine already stores zones as tile re
 | Step | What | Changes behaviour for existing rooms? |
 |---|---|---|
 | A | The map format, its checks, and `resolveRoomLayout` in the shared package (no screens). **Done, 2026-09-21** (`packages/shared/src/layouts/roomMap.ts`, 18 tests) | No |
-| B | Server, room page, canvas and chip use `resolveRoomLayout` | No (same result for every room that exists) |
+| B | Server, room page, canvas and chip use `resolveRoomLayout`. **Done, 2026-09-21** (commits `14967b0`, `d0a07a1`) | No (same result for every room that exists, checked against the old lookup) |
 | C | The strict rules: the `designer` role, the versions table, and the server checks for draft, publish, restore and role changes, with a record of who changed what. A full who-may-do-what test table | No (nothing calls it yet) |
 | D | The map screen with real people and click-to-move. **Start with a measurement** of 100 moving people in a browser, on this design | Only for rooms on the new map |
 | E | The builder in the admin panel: the setup from needs (D12), drag, resize, rename, delete, undo, the preview at screen sizes, fit to screen (D11), publish and go back (D10) | Only for editors |
