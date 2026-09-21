@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
  * a request body can name someone else.
  */
 
-const STATUS_FOR_REASON = { forbidden: 403, not_found: 404, invalid: 400, conflict: 409, last_owner: 409 } as const;
+const STATUS_FOR_REASON = { forbidden: 403, plan_required: 403, not_found: 404, invalid: 400, conflict: 409, last_owner: 409 } as const;
 
 type Failure = { ok: false; reason: keyof typeof STATUS_FOR_REASON; message: string };
 

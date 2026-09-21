@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PLAN_IDS, PLAN_PARTICIPANT_LIMITS, PLAN_LABELS, PlanIdSchema } from "../plans";
+import { PLAN_IDS, PLAN_PARTICIPANT_LIMITS, PLAN_LABELS, PlanIdSchema, canUseMapBuilder } from "../plans";
 
 describe("plans", () => {
   it("every PlanId has a positive participant limit", () => {
@@ -29,5 +29,23 @@ describe("plans", () => {
 
   it("rejects an unknown plan id", () => {
     expect(PlanIdSchema.safeParse("campus").success).toBe(false);
+  });
+});
+
+// Only plans that allow MORE than 10 people online may draw their own office map; the smallest plan (10) gets
+// ready-made templates only (docs/architecture/company-map-builder.md, D16). The rule reads the same limit table
+// as the participant limit, so a change to a plan's size moves both together.
+describe("canUseMapBuilder", () => {
+  it("is refused for the plan that allows only 10 people, and allowed for every larger plan", () => {
+    expect(canUseMapBuilder("startup")).toBe(false);
+    for (const plan of ["team", "company", "large", "enterprise"] as const) {
+      expect(canUseMapBuilder(plan), plan).toBe(true);
+    }
+  });
+
+  it("follows the participant limit: exactly the plans above 10 people are allowed", () => {
+    for (const id of PLAN_IDS) {
+      expect(canUseMapBuilder(id), id).toBe(PLAN_PARTICIPANT_LIMITS[id] > 10);
+    }
   });
 });

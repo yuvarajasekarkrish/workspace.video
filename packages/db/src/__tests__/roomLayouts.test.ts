@@ -35,9 +35,9 @@ async function makeUser(label: string) {
 }
 
 /** A workspace with one room and one person in each role, plus an outsider who is in none. */
-async function setup() {
+async function setup(plan: "startup" | "team" | "company" | "large" | "enterprise" = "team") {
   const suffix = crypto.randomUUID();
-  const workspace = await prisma.workspace.create({ data: { name: `Layout Test ${suffix}`, slug: `layout-test-${suffix}` } });
+  const workspace = await prisma.workspace.create({ data: { name: `Layout Test ${suffix}`, slug: `layout-test-${suffix}`, plan } });
   workspaceIds.push(workspace.id);
   const room = await prisma.room.create({ data: { workspaceId: workspace.id, name: "Main", config: { layoutId: "openOffice@1" } } });
   const people = {} as Record<WorkspaceRoleName | "outsider", string>;
@@ -263,5 +263,51 @@ describe("changing someone's role", () => {
       changeMemberRole({ workspaceId: workspace.id, actorUserId: people.admin, targetUserId: people.owner, newRole: "member" }),
     ]);
     expect(await prisma.workspaceMember.count({ where: { workspaceId: workspace.id, role: "owner" } })).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// The plan rule (D16): a workspace on the plan that allows only 10 people may not save, publish or restore its own
+// map; every larger plan may. It is checked on the server on every call, AFTER the role, and a downgrade keeps the
+// map and the history readable (decision 1A of the design review).
+describe("the plan rule for the map builder (through the database)", () => {
+  it("lets every plan above 10 people save a map", async () => {
+    for (const plan of ["team", "company", "large", "enterprise"] as const) {
+      const { room, people } = await setup(plan);
+      expect(await saveLayoutVersion({ roomId: room.id, actorUserId: people.owner, map: starter(), baseVersion: 0 }), plan).toMatchObject({ ok: true, version: 1 });
+    }
+  });
+
+  it("refuses save, publish and restore on the smallest plan, even for an owner, with a plain reason", async () => {
+    const { room, people } = await setup("startup");
+    const saved = await saveLayoutVersion({ roomId: room.id, actorUserId: people.owner, map: starter(), baseVersion: 0 });
+    expect(saved).toMatchObject({ ok: false, reason: "plan_required" });
+    const published = await publishLayoutVersion({ roomId: room.id, actorUserId: people.owner, version: 1, expectedLiveVersion: null });
+    expect(published).toMatchObject({ ok: false, reason: "plan_required" });
+    const restored = await restoreLayoutVersion({ roomId: room.id, actorUserId: people.owner, version: 1 });
+    expect(restored).toMatchObject({ ok: false, reason: "plan_required" });
+    expect((saved as { message: string }).message).toMatch(/plan does not include the map builder/i);
+    expect((saved as { message: string }).message).toMatch(/template/i);
+  });
+
+  it("checks the role first: a member on the smallest plan is forbidden and an outsider not found, so nothing about plans leaks", async () => {
+    const { room, people } = await setup("startup");
+    expect(await saveLayoutVersion({ roomId: room.id, actorUserId: people.member, map: starter(), baseVersion: 0 })).toMatchObject({ ok: false, reason: "forbidden" });
+    expect(await saveLayoutVersion({ roomId: room.id, actorUserId: people.outsider, map: starter(), baseVersion: 0 })).toMatchObject({ ok: false, reason: "not_found" });
+  });
+
+  it("after a downgrade keeps the map and the history, locks editing, and still lets the history be read", async () => {
+    const { workspace, room, people } = await setup("team");
+    await saveLayoutVersion({ roomId: room.id, actorUserId: people.owner, map: starter(), baseVersion: 0 });
+    await publishLayoutVersion({ roomId: room.id, actorUserId: people.owner, version: 1, expectedLiveVersion: null });
+    await prisma.workspace.update({ where: { id: workspace.id }, data: { plan: "startup" } });
+
+    expect(await saveLayoutVersion({ roomId: room.id, actorUserId: people.owner, map: smaller(), baseVersion: 1 })).toMatchObject({ ok: false, reason: "plan_required" });
+    expect(await restoreLayoutVersion({ roomId: room.id, actorUserId: people.owner, version: 1 })).toMatchObject({ ok: false, reason: "plan_required" });
+
+    const history = await listLayoutVersions({ roomId: room.id, actorUserId: people.owner });
+    expect(history).toMatchObject({ ok: true, liveVersion: 1 });
+    expect((history as { versions: unknown[] }).versions).toHaveLength(1);
+    const live = await prisma.room.findUniqueOrThrow({ where: { id: room.id }, select: { config: true } });
+    expect(resolveRoomLayout(live.config).layout.zones.length).toBeGreaterThan(5); // the company's own map is still what the room uses
   });
 });

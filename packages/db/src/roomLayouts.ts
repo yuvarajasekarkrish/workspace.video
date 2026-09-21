@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import {
   canDoLayoutAction,
+  canUseMapBuilder,
   checkRoleChange,
   validateRoomMap,
   type LayoutAction,
@@ -26,7 +27,7 @@ import { withTransientRetry } from "./membership";
  * layout for as long as anyone is inside it (decision D5).
  */
 
-export type LayoutFailureReason = "forbidden" | "not_found" | "invalid" | "conflict";
+export type LayoutFailureReason = "forbidden" | "not_found" | "invalid" | "conflict" | "plan_required";
 
 export interface LayoutFailure {
   ok: false;
@@ -50,6 +51,7 @@ const fail = (reason: LayoutFailureReason, message: string, extra: Partial<Layou
 // A person who is not in the workspace is told "not found", never "forbidden", so the answer does
 // not reveal whether a room exists.
 const NOT_FOUND = "That room was not found.";
+const PLAN_REQUIRED_MESSAGE = "Your plan does not include the map builder. Choose a ready-made template instead.";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -64,6 +66,13 @@ async function authorizeRoom(db: Db, roomId: string, actorUserId: string, action
   const role = await roleOf(db, room.workspaceId, actorUserId);
   if (role === null) return fail("not_found", NOT_FOUND);
   if (!canDoLayoutAction(role, action)) return fail("forbidden", "Only an owner, an admin or a designer can do that.");
+  // The plan is checked AFTER the role, so nobody outside the right roles learns anything about the plan. Reading the
+  // live map and the history stays open on every plan, so a workspace that moves to a smaller plan keeps its map,
+  // can still see its history, and is only locked out of changing it (decision 1A of the design review).
+  if (action === "saveDraft" || action === "publish" || action === "restore") {
+    const workspace = await db.workspace.findUnique({ where: { id: room.workspaceId }, select: { plan: true } });
+    if (!workspace || !canUseMapBuilder(workspace.plan)) return fail("plan_required", PLAN_REQUIRED_MESSAGE);
+  }
   return { ok: true as const, room, role };
 }
 

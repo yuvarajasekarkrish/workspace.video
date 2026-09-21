@@ -30,3 +30,15 @@ export const PLAN_LABELS: Record<PlanId, string> = {
   large: "Large",
   enterprise: "Enterprise",
 };
+
+/** A workspace whose plan allows MORE than this many people online may draw its own office map (the map builder). */
+export const MAP_BUILDER_ABOVE_PEOPLE = 10;
+
+/**
+ * Whether a plan includes the map builder: the smallest plan (10 people) gets ready-made templates only, every
+ * larger plan may save, publish and restore its own map (docs/architecture/company-map-builder.md, D16). It reads
+ * the same limit table as the participant limit, so changing a plan's size moves both together.
+ */
+export function canUseMapBuilder(plan: PlanId): boolean {
+  return PLAN_PARTICIPANT_LIMITS[plan] > MAP_BUILDER_ABOVE_PEOPLE;
+}
