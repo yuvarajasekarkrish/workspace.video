@@ -14,11 +14,15 @@ import {
  *
  *   LOAD_HARNESS_LAYOUT_ID       a layout name, for example spatialMap@1 (default openOffice@1)
  *   LOAD_HARNESS_SEATED_FRACTION 0 to 1, the share of people who take a seat (default 0.5)
+ *   LOAD_HARNESS_WALK_TO_SEAT    1 = walk each person to their seat before they sit, because the
+ *                                server refuses a seat unless the person is within 120 px of it
+ *                                (default off, which is how every earlier run was made)
  */
 export interface HarnessOptions {
   layout: RoomLayout;
   movement: MovementConfig;
   seatedFraction: number;
+  walkToSeat: boolean;
 }
 
 export function parseHarnessOptions(env: Record<string, string | undefined>): HarnessOptions {
@@ -34,7 +38,12 @@ export function parseHarnessOptions(env: Record<string, string | undefined>): Ha
     throw new Error(`LOAD_HARNESS_SEATED_FRACTION must be a number between 0 and 1, got "${raw}"`);
   }
 
-  return { layout, movement: movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG), seatedFraction };
+  return {
+    layout,
+    movement: movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG),
+    seatedFraction,
+    walkToSeat: env.LOAD_HARNESS_WALK_TO_SEAT === "1",
+  };
 }
 
 /** How many people take a seat: the wanted share of n, but never more than the people who can

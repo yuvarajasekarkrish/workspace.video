@@ -22,6 +22,9 @@
  *   LOAD_HARNESS_INCLUDE_500=1   also run N=500 (server needs LOAD_HARNESS_LIMIT_OVERRIDE=500)
  *   LOAD_HARNESS_LAYOUT_ID       layout the throwaway room uses, e.g. spatialMap@1 (default openOffice@1)
  *   LOAD_HARNESS_SEATED_FRACTION share of people who take a seat, 0 to 1 (default 0.5)
+ *   LOAD_HARNESS_WALK_TO_SEAT    1 = walk each person to their seat before sitting (the server refuses a
+ *                                seat unless they are within 120 px). Default off, as in every earlier run.
+ *                                The report always prints how many seat claims the server accepted.
  *   LOAD_HARNESS_PROXIMITY_BATCH  default off. 1 = every client declares proximityBatch in join_room and
  *                                 receives proximity:batch (one frame per tick) instead of one
  *                                 proximity:update per change. The report prints frames AND updates
@@ -58,8 +61,18 @@ import type { GcSnapshot } from "../gcRecorder";
 import { formatStallReport } from "../stallReport";
 import { checkProximityDelivery } from "../proximityDelivery";
 import { parseHarnessOptions, seatTargetCount } from "../loadHarnessOptions";
+import { stepToward, summarizeSeatAcks } from "../loadHarnessSeating";
 
-const { layout: LAYOUT, movement: ROOM_MOVEMENT_CONFIG, seatedFraction: SEATED_FRACTION } = parseHarnessOptions(process.env);
+const {
+  layout: LAYOUT,
+  movement: ROOM_MOVEMENT_CONFIG,
+  seatedFraction: SEATED_FRACTION,
+  walkToSeat: WALK_TO_SEAT,
+} = parseHarnessOptions(process.env);
+// Walking to a seat stays under the server's speed limit (2000 px/s) and is not part of the measured window.
+const SEAT_WALK_SPEED_PX_PER_SEC = 1500;
+const SEAT_WALK_TIMEOUT_MS = 20_000;
+const SEAT_CLAIM_TIMEOUT_MS = 10_000;
 
 const REALTIME_URL = process.env.REALTIME_URL ?? "http://localhost:4001";
 const METRICS_URL = `${REALTIME_URL}/internal/metrics`;
@@ -299,6 +312,19 @@ async function teardownWorkspace(workspaceId: string, userIds: string[]): Promis
   await postJson("/internal/load-harness/teardown", { workspaceId, userIds }).catch((err) =>
     console.error("  teardown failed:", (err as Error).message),
   );
+}
+
+/** Walks a joined socket to `target` in steps the server's speed limit accepts, so a seat claim
+ *  from there is inside the server's 120 px range. Ends at the target or after the time limit. */
+async function walkTo(c: ConnectedSocket, target: Point): Promise<void> {
+  let position = c.spawnPosition;
+  const stepPx = (SEAT_WALK_SPEED_PX_PER_SEC * MOVE_INTERVAL_MS) / 1000;
+  const deadline = performance.now() + SEAT_WALK_TIMEOUT_MS;
+  while ((position.x !== target.x || position.y !== target.y) && performance.now() < deadline) {
+    position = stepToward(position, target, stepPx);
+    c.socket.emit("move", { position, clientTs: Date.now() });
+    await new Promise<void>((resolve) => setTimeout(resolve, MOVE_INTERVAL_MS));
+  }
 }
 
 function mintToken(userId: string, email: string): string {
@@ -655,17 +681,26 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     const seatCandidates = connected.filter((c) => !c.isIdleCanary);
     const seatTargets = LAYOUT.seats.slice(0, seatTargetCount(n, seatCandidates.length, LAYOUT.seats.length, SEATED_FRACTION));
     const seatedSockets = new Set<ConnectedSocket>();
+    const seatAcks: unknown[] = [];
     await Promise.all(
-      seatTargets.map(
-        (seat, i) =>
-          new Promise<void>((resolve) => {
-            const candidate = seatCandidates[i]!;
-            seatedSockets.add(candidate);
-            candidate.socket.emit("seat:claim", { seatId: seat.id }, () => resolve());
-          }),
-      ),
+      seatTargets.map(async (seat, i) => {
+        const candidate = seatCandidates[i]!;
+        seatedSockets.add(candidate);
+        if (WALK_TO_SEAT) await walkTo(candidate, seat.anchor);
+        await new Promise<void>((resolve) => {
+          // A timeout counts as "no reply" rather than hanging the run.
+          candidate.socket.timeout(SEAT_CLAIM_TIMEOUT_MS).emit("seat:claim", { seatId: seat.id }, (err: Error | null, ack: unknown) => {
+            seatAcks.push(err ? undefined : ack);
+            resolve();
+          });
+        });
+      }),
     );
-    console.log(`  seated: ${seatTargets.length}`);
+    const seatSummary = summarizeSeatAcks(seatAcks);
+    console.log(
+      `  seated: ${seatTargets.length} asked · server accepted ${seatSummary.accepted} · refused ${JSON.stringify(seatSummary.refused)}` +
+        (WALK_TO_SEAT ? " (each walked to their seat first)" : " (NOT walked to the seat: claims sent from the arrival spot)"),
+    );
 
     // Reset counters and the server's "since last read" deltas so everything
     // below describes only the steady-state window.
@@ -1060,6 +1095,8 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       layoutId: LAYOUT.id,
       seatedFraction: SEATED_FRACTION,
       seated: seatTargets.length,
+      seatClaims: seatSummary,
+      walkToSeat: WALK_TO_SEAT,
       movesSent,
       corrections,
       correctionRatePct,
