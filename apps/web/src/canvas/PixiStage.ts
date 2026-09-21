@@ -1,4 +1,4 @@
-import { Application, Container } from "pixi.js";
+import { Application, Container, EventsTicker, Ticker } from "pixi.js";
 import type { Point, RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
@@ -14,6 +14,7 @@ import { SeatOverlay } from "./SeatOverlay";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
 import { stepToward, hasConverged, stepScalarToward } from "./interpolation";
+import { IdleGate, tickerGroup, wakeOnActivity } from "./idleGate";
 import { MovementController } from "@/input/MovementController";
 import { RealtimeClient } from "@/net/RealtimeClient";
 import { ObjectView } from "./objects/ObjectView";
@@ -68,6 +69,11 @@ export class PixiStage {
   private detachKeyboard: (() => void) | null = null;
   private detachObjectKeyboard: (() => void) | null = null;
   private detachDblClick: (() => void) | null = null;
+  /** Lets the drawing loop rest when nothing changes and wakes it on activity (see idleGate.ts). */
+  private gate!: IdleGate;
+  private detachWake: (() => void) | null = null;
+  private unsubscribePeersWake: (() => void) | null = null;
+  private unsubscribeObjectsWake: (() => void) | null = null;
   private roomId!: string;
   private localUserId!: string;
   private disposed = false;
@@ -86,7 +92,14 @@ export class PixiStage {
       resizeTo: options.canvasContainer,
       background: "#0b0d12",
       antialias: true,
+      // Not started by Pixi: the IdleGate starts the loop when there is something to draw and stops it when
+      // there is not, so a room with nobody moving asks the browser for no frames at all.
+      autoStart: false,
     });
+    // This screen does its own pointer handling (Viewport.ts and objectHitTest.ts) and deliberately uses none of
+    // Pixi's pointer events. Pixi still starts a small clock of its own to keep those events fresh, which would ask
+    // the browser for a frame about 60 times a second forever. Nothing here depends on it, so switch it off.
+    EventsTicker.removeTickerListener();
     if (this.disposed) {
       // Unmounted while init() was still in flight — tear down immediately
       // rather than attaching a canvas nobody will ever see.
@@ -127,6 +140,8 @@ export class PixiStage {
     this.viewport.world.addChild(this.objectLayer);
     this.viewport.world.addChild(this.avatarLayer);
     this.app.stage.addChild(this.world);
+    // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
+    this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
     this.movementController = new MovementController(
       options.initialLocalPosition,
@@ -179,8 +194,13 @@ export class PixiStage {
       (occupancy) => {
         this.seatOverlay.update(occupancy);
         this.updateSeatedAvatars(occupancy);
+        this.gate.wake();
       },
     );
+    // Anyone moving, joining or leaving, and any object change, may need drawing. These fire at network speed
+    // (about ten times a second), never per frame, and only wake the loop; they draw nothing themselves.
+    this.unsubscribePeersWake = peersStore.subscribe(() => this.gate.wake());
+    this.unsubscribeObjectsWake = objectsStore.subscribe(() => this.gate.wake());
     this.seatOverlay.update(seatsStore.getState().occupancy);
 
     this.detachObjectKeyboard = this.attachObjectKeyboard(window);
@@ -190,8 +210,16 @@ export class PixiStage {
       const dtSeconds = ticker.deltaMS / 1000;
       const now = Date.now();
       this.movementController.update(dtSeconds, now);
-      this.renderFrame(dtSeconds);
+      const stillChanging = this.renderFrame(dtSeconds);
+      // Rest after a few quiet frames; anything that happens later wakes the loop again (see idleGate.ts).
+      this.gate.frameDone(stillChanging || this.movementController.needsFrames());
     });
+    this.detachWake = wakeOnActivity(this.gate, {
+      window,
+      canvas: this.app.canvas as HTMLCanvasElement,
+      document,
+    });
+    this.gate.wake(); // draw the first frame
 
     await this.realtimeClient.connect();
   }
@@ -272,8 +300,11 @@ export class PixiStage {
   /** Runs every ticker frame. Reads the stores directly via getState() —
    *  never via a React hook — and mutates Pixi display objects in place.
    *  This is the loop the "React must never re-render on movement/drag"
-   *  rule protects: nothing here can trigger a component render. */
-  private renderFrame(dtSeconds: number): void {
+   *  rule protects: nothing here can trigger a component render.
+   *  Returns whether anything is still moving toward its target, so the
+   *  IdleGate knows when the loop can rest. */
+  private renderFrame(dtSeconds: number): boolean {
+    let stillChanging = false;
     const peers = peersStore.getState();
 
     for (const [userId, peer] of peers.peers) {
@@ -295,6 +326,7 @@ export class PixiStage {
         // notifies any subscriber, React or otherwise.
         peer.renderPosition.x = next.x;
         peer.renderPosition.y = next.y;
+        stillChanging = true;
       }
       avatar.setPosition(peer.renderPosition.x, peer.renderPosition.y);
     }
@@ -308,7 +340,9 @@ export class PixiStage {
       // immediately (applyLocalEdit already wrote the exact rect) — no
       // smoothing, same local/remote split renderFrame uses for avatars.
       // Everything else converges toward its authoritative rect.
-      if (!record.locallyDirty) {
+      if (record.locallyDirty) {
+        stillChanging = true;
+      } else {
         const target = { x: record.state.x, y: record.state.y, width: record.state.width, height: record.state.height };
         if (
           Math.abs(record.render.x - target.x) > 0.05 ||
@@ -320,6 +354,7 @@ export class PixiStage {
           record.render.y = stepScalarToward(record.render.y, target.y, dtSeconds);
           record.render.width = stepScalarToward(record.render.width, target.width, dtSeconds);
           record.render.height = stepScalarToward(record.render.height, target.height, dtSeconds);
+          stillChanging = true;
         }
       }
 
@@ -329,6 +364,7 @@ export class PixiStage {
         objects.selectedId === objectId,
       );
     }
+    return stillChanging;
   }
 
   /** Delete/Backspace deletes the current selection; Escape deselects.
@@ -457,10 +493,15 @@ export class PixiStage {
     this.detachKeyboard?.();
     this.detachObjectKeyboard?.();
     this.detachDblClick?.();
+    this.detachWake?.();
     this.noteEditor.dispose();
     this.unsubscribeSnapshotWatch?.();
     this.unsubscribeObjectsWatch?.();
     this.unsubscribeSeatsWatch?.();
+    this.unsubscribePeersWake?.();
+    this.unsubscribeObjectsWake?.();
+    // Leave Pixi's shared internal clock as we found it: it may have been put to sleep while the room rested.
+    Ticker.system.start();
     this.realtimeClient?.dispose();
     this.viewport?.dispose();
     for (const avatar of this.avatars.values()) avatar.destroy();
