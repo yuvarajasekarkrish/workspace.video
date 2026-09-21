@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { siteMetadata } from "@/lib/siteMetadata";
 
-export const metadata: Metadata = {
-  title: "workspace.video",
-  description: "Spatial collaboration workspace — Milestone 1",
-};
+export const metadata: Metadata = siteMetadata;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

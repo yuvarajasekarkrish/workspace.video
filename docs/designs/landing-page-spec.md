@@ -70,3 +70,24 @@ Brand column with logo and social icons; **Product** links (Product, Use cases, 
 2. The sections below it: How it feels, Use cases, the In development section, Pricing, FAQ, closing call to action, footer.
 3. The pages behind links: changelog, Terms and Privacy drafts, contact.
 4. Sign-in page changes: the legal line now; Google and Microsoft when the owner has the setup.
+
+## Update: the owner's Gemini design replaces the landing page (2026-09-21)
+
+The owner supplied a design made with Gemini (`gemini-landing.html.html`, next to this file) and asked for it to be used as drawn, replacing the page built from the element-by-element decisions above. The landing page is now that design: five screens (home, the 2.5D map with its admin builder, an instant space, pricing, sign in), Inter, the gradient headline, Gemini's words and colours. Two real parts were added: the email sign-in box (home and sign-in screens) and the Terms and Privacy line. The owner will change the content later.
+
+Words in the design that are not true today, kept on the owner's instruction: "up to 200 users per workspace", the Admin Drag and Drop Builder, Instant Space and its video screen, and the "online" count. Not built: the "In development" section, FAQ, footer, Request a Demo, and the What's new pill (the changelog, Terms and Privacy pages still exist). Everything else in this file describes the earlier page and is superseded where it disagrees.
+
+## Build status (2026-09-21, local only, not yet pushed)
+
+Built to this spec: the top bar (with a phone menu), the What's new pill and /changelog, the headline and support line, the email box with "Get started" and the Terms and Privacy line, the drawn 2.5D scene (peeking, faded at the bottom), How it feels, Use cases (stacked), In development, Pricing, FAQ, closing call to action, the footer, and draft /terms and /privacy pages. The page title, description, link preview text and icon are fixed. Guarded by 361 passing tests.
+
+Switched on by configuration, and not drawn until set (so nothing is a dead link): `DEMO_URL` (Request a Demo), `CONTACT_EMAIL`, `SOCIAL_X_URL`, `SOCIAL_INSTAGRAM_URL`, `SOCIAL_LINKEDIN_URL`. Not built: the live chat bubble, the recorded tour, Google and Microsoft sign-in, the company sign-in link.
+
+Choices made by the builder, for the owner to confirm or change:
+1. Under the drawn scene: "Concept illustration. The real space is on the way." (the scene is tilted 2.5D, today's room is flat).
+2. Three empty template frames, named Island campus, Plain office, Small buildings.
+3. The What's new pill text: "sign in with an email link" (the one real recent update).
+4. Pricing wording: pay for people online at the same time plus usage; an added person is on the next monthly bill; guest passes for about 20 minutes are marked as coming.
+5. The terms and privacy drafts, with every undecided item in square brackets ("to confirm").
+6. A placeholder logo mark (an amber tile with a dot) until a real logo exists.
+7. Rules from the taste review kept in the code and tests: one label ("Get started"), no dots or numbering, no three-column grid, no em dashes, no reviews or awards, no measured claims about battery or speed.

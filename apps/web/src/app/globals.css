@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@fontsource-variable/instrument-sans";
+@import "@fontsource-variable/inter";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
 
@@ -8,21 +8,47 @@
    text-fg-muted, border-line, bg-accent, text-on-accent, text-link, text-danger). The
    colour pairs are checked against the contrast rules by lib/__tests__/designTokens.test.ts. */
 @theme {
-  --color-ground: #0b0d12; /* the page */
-  --color-surface: #14171f; /* inputs and panels sitting on the page */
+  --color-ground: #0a0a0a; /* the page (the Gemini design's charcoal) */
+  --color-charcoal: #0a0a0a; /* same as ground; the name the Gemini design uses */
+  --color-surface: #171717; /* inputs and panels sitting on the page */
   --color-line: #343a47; /* borders */
   --color-fg: #e6e8eb; /* body text */
   --color-fg-muted: #a9afba; /* secondary text; 4.5:1 or better on ground and surface */
-  --color-accent: #2563eb; /* the one accent: primary buttons */
-  --color-accent-hover: #3b82f6;
-  --color-on-accent: #ffffff; /* text on the accent */
-  --color-link: #60a5fa; /* links and text buttons on ground */
+  --color-accent: #f5a623; /* the one accent: primary buttons, highlights */
+  --color-accent-hover: #e09612;
+  --color-on-accent: #0a0a0a; /* text on the accent (the ground colour, dark) */
+  --color-link: #f2c27e; /* links and text buttons on ground */
   --color-danger: #f87171; /* error text */
   --color-focus: #93c5fd; /* the keyboard focus ring */
 
   /* A real UI face, and a number face for counts. Swap either here, in one place. */
-  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  /* Headlines use the same face (the owner kept Inter from the Gemini design); the name stays so
+     it can be changed in one place. */
+  --font-display: var(--font-sans);
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* The two entrance animations the landing design uses (animate-fade-in, animate-slide-up). */
+  --animate-fade-in: fade-in 0.3s ease-out forwards;
+  --animate-slide-up: slide-up 0.4s ease-out forwards;
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 
 :root {

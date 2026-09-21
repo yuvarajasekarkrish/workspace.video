@@ -1,7 +1,7 @@
 import { prisma } from "@workspace-video/db";
 import { getSessionUser } from "@/lib/session";
 import { env } from "@/lib/env";
-import { SignInForm } from "@/components/SignInForm";
+import { LandingPage } from "@/components/landing/LandingPage";
 import { SignOutButton } from "@/components/SignOutButton";
 import Link from "next/link";
 import { WelcomeEmptyState } from "@/components/WelcomeEmptyState";
@@ -25,11 +25,7 @@ export default async function HomePage({
     // sign-in link they opened had expired or was already used.
     const params = await searchParams;
     const returnTo = safeReturnPath(params.next) ?? undefined;
-    return (
-      <main className="flex min-h-screen items-center justify-center p-8">
-        <SignInForm devAuth={env.devAuthEnabled} returnTo={returnTo} notice={describeLinkError(params.error)} />
-      </main>
-    );
+    return <LandingPage devAuth={env.devAuthEnabled} returnTo={returnTo} notice={describeLinkError(params.error)} />;
   }
 
   const memberships = await prisma.workspaceMember.findMany({

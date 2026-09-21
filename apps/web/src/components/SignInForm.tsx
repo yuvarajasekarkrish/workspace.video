@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { DevSignInForm } from "./DevSignInForm";
 import { signInAddressFor } from "@/lib/returnPath";
 
@@ -54,11 +55,20 @@ export function SignInForm({
   devAuth = false,
   returnTo,
   notice,
+  variant = "page",
+  secondaryAction,
 }: {
   devAuth?: boolean;
   returnTo?: string;
   notice?: string;
+  /** "hero": sits inside the landing page (no page title, inline field and button, and the
+   *  page keeps its one main heading). "page": the standalone sign-in screen. */
+  variant?: "page" | "hero";
+  /** Beside the submit button in the hero (for example a "Request a Demo" link). */
+  secondaryAction?: React.ReactNode;
 }) {
+  const hero = variant === "hero";
+  const Title = hero ? "h2" : "h1";
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [shownNotice, setShownNotice] = useState<string | undefined>(notice);
@@ -105,9 +115,9 @@ export function SignInForm({
   if (status.kind === "sent") {
     const waiting = secondsLeft > 0;
     return (
-      <div className="w-full max-w-sm space-y-3">
+      <div className={hero ? "mx-auto w-full max-w-md space-y-3 text-center" : "w-full max-w-sm space-y-3"}>
         <div aria-live="polite" className="space-y-3">
-          <h1 className="text-lg font-semibold">Check your email</h1>
+          <Title className="text-lg font-semibold">Check your email</Title>
           <p className="text-base text-fg">
             We sent a sign-in link to <span className="font-medium">{status.email}</span>. It works once and expires in
             15 minutes.
@@ -150,41 +160,62 @@ export function SignInForm({
   const sending = status.kind === "sending";
 
   return (
-    <div className="w-full max-w-sm space-y-6">
+    <div className={hero ? "mx-auto w-full max-w-3xl space-y-4" : "w-full max-w-sm space-y-6"}>
       {shownNotice && (
         <p role="alert" className="rounded border border-line bg-surface px-3 py-2 text-base text-fg">
           {shownNotice}
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
-        <h1 className="text-lg font-semibold">Sign in</h1>
-        <p className="text-base text-fg-muted">We&apos;ll email you a link. No password.</p>
-        <label htmlFor="signin-email" className="block text-base font-medium text-fg">
-          Email
+        {!hero && (
+          <>
+            <h1 className="text-lg font-semibold">Sign in</h1>
+            <p className="text-base text-fg-muted">We&apos;ll email you a link. No password.</p>
+          </>
+        )}
+        <label htmlFor="signin-email" className={hero ? "block text-base font-medium text-fg-muted" : "block text-base font-medium text-fg"}>
+          {hero ? "Work email" : "Email"}
         </label>
-        <input
-          id="signin-email"
-          type="email"
-          required
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
-        />
-        <button
-          type="submit"
-          disabled={sending}
-          className="min-h-12 w-full rounded bg-accent px-3 py-2 text-base font-medium text-on-accent disabled:opacity-50"
-        >
-          {sending ? "Sending…" : "Email me a link"}
-        </button>
+        <div className={hero ? "flex flex-col gap-3 sm:flex-row sm:justify-center" : "space-y-3"}>
+          <input
+            id="signin-email"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={hero ? "you@company.com" : undefined}
+            className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base sm:max-w-md sm:flex-1"
+          />
+          <button
+            type="submit"
+            disabled={sending}
+            className={`min-h-12 rounded bg-accent px-5 py-2 text-base font-semibold text-on-accent hover:bg-accent-hover disabled:opacity-50 ${hero ? "w-full sm:w-auto" : "w-full"}`}
+          >
+            {sending ? "Sending…" : hero ? "Get started" : "Email me a link"}
+          </button>
+          {hero && secondaryAction}
+        </div>
+        {hero && (
+          <p className="text-base text-fg-muted">
+            By continuing you accept our{" "}
+            <Link href="/terms" className="text-link underline underline-offset-4">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="text-link underline underline-offset-4">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+        )}
         {status.kind === "error" && (
           <p role="alert" className="text-base text-danger">
             {status.message}
           </p>
         )}
       </form>
-      {devAuth && <DevSignInForm />}
+      {devAuth && !hero && <DevSignInForm />}
     </div>
   );
 }

@@ -6,7 +6,7 @@ Records decisions 5A (template design review) and D1, D4-D14 (landing and sign-i
 
 ## Look
 
-Dark, calm, one accent. A tool people sit in all day, so the interface stays quiet and the space is the point. Cards only where the card itself is the thing you press (for example the plan choices). No gradients, glows, or decorative shadows.
+Dark, calm, one accent. A tool people sit in all day, so the interface stays quiet and the space is the point. Cards only where the card itself is the thing you press (for example the plan choices). The signed-out landing page is the owner's Gemini design, ported as drawn ([docs/designs/gemini-landing.html.html](docs/designs/gemini-landing.html.html)): centred hero, grey-to-white gradient headline, Inter, and an interactive 2.5D map built from HTML and CSS. It uses blur and glow effects the rest of the app does not. Blur costs battery, so the page must not claim to be light on battery until it is measured. Its styles are in `apps/web/src/components/landing/landing.css` (classes prefixed `gl-`).
 
 ## Colour tokens
 
@@ -17,8 +17,8 @@ Dark, calm, one accent. A tool people sit in all day, so the interface stays qui
 | `line` | #343a47 | Borders |
 | `fg` | #e6e8eb | Body text |
 | `fg-muted` | #a9afba | Secondary text |
-| `accent` | #2563eb | The one accent: primary buttons (label in `on-accent`, white) |
-| `link` | #60a5fa | Links and text buttons |
+| `accent` | #f2b35a | The one accent (amber): primary buttons and the highlighted headline words (label in `on-accent`, the dark ground colour) |
+| `link` | #f2c27e | Links and text buttons |
 | `danger` | #f87171 | Error text |
 | `focus` | #93c5fd | Keyboard focus ring, caret |
 
@@ -26,7 +26,7 @@ Every text colour must reach 4.5:1 on `ground` and on `surface`; interface parts
 
 ## Type
 
-- **UI face:** Instrument Sans (variable), self-hosted through `@fontsource-variable/instrument-sans`. Set as `--font-sans`.
+- **UI and headline face:** Inter (variable), self-hosted through `@fontsource-variable/inter`, chosen by the owner from the Gemini design. Set as `--font-sans`; `--font-display` points at it.
 - **Number face:** IBM Plex Mono, for counts and timers (`.tabular`). Set as `--font-mono`.
 - Either can be swapped by changing the token and the package import in `globals.css`.
 - Body text is 16 px. Headings step up from there. Nothing reads smaller than 16 px on the pages in this system.
@@ -45,5 +45,4 @@ Every text colour must reach 4.5:1 on `ground` and on `surface`; interface parts
 
 ## Open
 
-- The display face for the landing page (T7) and the final font pair are not chosen yet.
 - The room screen (canvas, heads-up display) still uses its own colours and sizes; it moves onto these tokens in a later pass.

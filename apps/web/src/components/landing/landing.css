@@ -1,0 +1,324 @@
+/*
+ * The owner's Gemini landing design, copied from docs/designs/gemini-landing.html.html. The
+ * rules are the same as in that file; only the class names carry a "gl-" prefix so they cannot
+ * clash with anything else in the app. Colours other than white and black shades are the ones
+ * Gemini used.
+ */
+
+.gl-root {
+  background-color: #0a0a0a;
+  color: #ffffff;
+  overflow-x: hidden;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center center;
+}
+
+.gl-glass-panel {
+  background: rgba(23, 23, 23, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.gl-app-view {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 72px);
+  width: 100%;
+  animation: gl-fade-in 0.4s ease-out;
+}
+
+@keyframes gl-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* --- 2.5D WORKSPACE ENGINE --- */
+.gl-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 72px);
+  overflow: hidden;
+  background: radial-gradient(circle at center, #151515 0%, #050505 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+.gl-viewport:active {
+  cursor: grabbing;
+}
+
+.gl-iso-scene {
+  position: absolute;
+  /* Gemini moved the scene with left and top calc(); the drag offset arrives as --tx and --ty. */
+  left: calc(50% - 1500px + var(--tx, 0px));
+  top: calc(50% - 1200px + var(--ty, 0px));
+  width: 3000px;
+  height: 2400px;
+  transform-style: preserve-3d;
+  transform: scale(0.35) rotateX(55deg) rotateZ(-45deg);
+  transition: transform 0.1s linear;
+  transform-origin: center center;
+}
+
+.gl-platform {
+  position: absolute;
+  background: rgba(30, 30, 30, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 2px solid rgba(255, 255, 255, 0.15);
+  border-left: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  box-shadow:
+    -15px 15px 40px rgba(0, 0, 0, 0.6),
+    inset 0 0 20px rgba(255, 255, 255, 0.02);
+  transform-style: preserve-3d;
+  transform: translateZ(40px);
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease;
+}
+.gl-platform:hover {
+  transform: translateZ(50px);
+  box-shadow: -20px 20px 50px rgba(0, 0, 0, 0.8);
+}
+
+.gl-zone-group {
+  position: absolute;
+  transform-style: preserve-3d;
+}
+
+/* Detailed furniture and seating */
+.gl-desk-pod {
+  position: absolute;
+  width: 140px;
+  height: 140px;
+  transform: translateZ(2px);
+}
+.gl-desk-pod-surface {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 100px;
+  height: 100px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  box-shadow: -4px 4px 10px rgba(0, 0, 0, 0.4);
+}
+.gl-desk-divider-v {
+  position: absolute;
+  top: 20px;
+  left: 69px;
+  width: 2px;
+  height: 100px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.gl-desk-divider-h {
+  position: absolute;
+  top: 69px;
+  left: 20px;
+  width: 100px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.gl-chair {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: #334155;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: -2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+.gl-chair::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.gl-monitor {
+  position: absolute;
+  width: 16px;
+  height: 6px;
+  background: #1e293b;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(245, 166, 35, 0.3);
+}
+
+.gl-board-table {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 40px;
+  box-shadow: -6px 6px 12px rgba(0, 0, 0, 0.6);
+  transform: translateZ(2px);
+}
+
+.gl-reception-desk {
+  position: absolute;
+  border: 8px solid rgba(255, 255, 255, 0.2);
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  box-shadow: -4px 4px 10px rgba(0, 0, 0, 0.5);
+  transform: translateZ(6px);
+}
+
+.gl-focus-pod-desk {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  transform: translateZ(2px);
+  box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.gl-drafting-table {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  transform: translateZ(5px) rotateX(15deg);
+  box-shadow: -3px 5px 8px rgba(0, 0, 0, 0.4);
+}
+.gl-stool {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #475569;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: -2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.gl-bar-counter {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  transform: translateZ(4px);
+  box-shadow: -3px 4px 8px rgba(0, 0, 0, 0.5);
+}
+.gl-lounge-rug {
+  position: absolute;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.1);
+  border-radius: 12px;
+}
+.gl-sofa-curved {
+  position: absolute;
+  border: 16px solid rgba(245, 166, 35, 0.15);
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  box-shadow: -4px 4px 8px rgba(0, 0, 0, 0.5);
+  transform: translateZ(2px) rotate(45deg);
+}
+.gl-whiteboard {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.8);
+  border: 2px solid #333;
+  box-shadow: -2px 2px 5px rgba(0, 0, 0, 0.4);
+  transform: translateZ(10px);
+}
+.gl-plant {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 2px solid rgba(16, 185, 129, 0.4);
+  border-radius: 50%;
+  box-shadow: -3px 3px 6px rgba(0, 0, 0, 0.6);
+  transform: translateZ(4px);
+}
+.gl-plant::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 50%;
+}
+
+.gl-zone-label {
+  position: absolute;
+  bottom: 24px;
+  right: 32px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 24px;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  user-select: none;
+  transform: translateZ(1px);
+}
+
+.gl-user-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: #64748b;
+  border-radius: 50%;
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%) translateZ(6px);
+  transition: transform 0.2s ease;
+}
+.gl-user-dot:hover {
+  transform: translate(-50%, -50%) translateZ(12px) scale(1.2);
+}
+.gl-user-dot.gl-speaking {
+  background-color: #10b981;
+  border-color: #fff;
+  box-shadow:
+    0 0 12px rgba(16, 185, 129, 0.6),
+    0 4px 8px rgba(0, 0, 0, 0.6);
+}
+.gl-user-dot.gl-you {
+  background-color: #f5a623;
+  border-color: #fff;
+  width: 14px;
+  height: 14px;
+  z-index: 100;
+  box-shadow:
+    0 0 16px rgba(245, 166, 35, 0.8),
+    0 4px 8px rgba(0, 0, 0, 0.6);
+}
+.gl-user-name {
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 4px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.gl-user-dot.gl-you .gl-user-name {
+  color: #f5a623;
+  font-weight: 600;
+  border-color: rgba(245, 166, 35, 0.3);
+}
