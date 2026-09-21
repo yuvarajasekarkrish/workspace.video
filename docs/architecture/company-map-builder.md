@@ -486,7 +486,7 @@ A map that would break a limit is never shown; the map check (E6) runs first and
 ### Open for the owner
 
 1. Approve the five questions and the rule table, or change any of them.
-2. Indigo readability: use the lighter `#6d70f2` (recommended) or keep `#6366f1`.
+2. Indigo readability: DECIDED (owner, 2026-09-22): use the lighter `#6d70f2`, measured 4.95 to 1 with dark text (passes 4.5). Its hover shade stays `#4f46e5` until checked in use.
 3. Is the colour option for every plan, or only above 10 people like the builder?
 
 ### Build items this adds
