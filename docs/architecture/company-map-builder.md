@@ -57,7 +57,27 @@ The builder snaps to the grid because the engine already stores zones as tile re
 - To sit, a person walks to the seat and clicks it (engine rule: within 120 px). They then stand up by walking away.
 - Not in version 1: an assigned desk, "jump to my desk", remembering your seat between visits. Add them when a pilot team asks; the seat ids must then stay stable, which is why pods get ids from their grid position, not from their order.
 
-**D4. Who may edit.** Owner and admin only, checked on the server every time a map is saved. A member gets a refusal, not a hidden button.
+**D4. Who may change the layout: strict, on the server, every time.** The owner and admins only. Nobody else, unless an admin gives them a role that allows it. Hiding a button is never the protection: every save, delete, restore and role change is checked on the server against the person's real role, and a refusal says why.
+- **Roles:** `owner`, `admin`, a new role `designer` (may change the layout and nothing else: cannot invite, remove or promote anyone, and cannot change the plan), and `member` (sees the map, can walk and sit, cannot change it).
+- **Who can give a role:** only an owner or admin. A designer cannot give anyone a role, including themselves. The last owner cannot be removed or demoted.
+- **Every change is recorded:** who, when, and which version. Nothing is edited in place; each save is a new version.
+- **This needs two small database additions** (a new role value, and a table of layout versions). They add data; they do not change how the engine works.
+
+**D10. Draft, preview, publish, and going back.**
+- An editor works on a **draft** that only editors see. Members keep seeing the live map until the editor presses **Publish**.
+- **Preview** shows the draft exactly as members will see it (drawn by the same code), at the size of a laptop, a large monitor or a phone, with sample people standing in it, clearly labelled "Preview".
+- The editor can **add** an area, **move** it, **resize** it, **rename** it, **change its type**, **duplicate** it and **delete** it, with undo and redo, and can **reset to a template**.
+- **Old versions are kept.** The editor can go back to any earlier one. Deleting an area never destroys the history.
+- Publishing still follows D5: the new map is used the next time the room is empty.
+- Two editors at once: the second Publish is refused with the current version, so nobody overwrites anyone by accident.
+
+**D11. The map must fit the screen.**
+- The screen opens with the **whole map fitted** to the window, on a laptop, a monitor or a phone, and zooms to fit again when the window changes.
+- If fitting the whole map would make people too small to read (a minimum size, proposed and to be tested), the screen opens on the arrival area and offers zoom and drag.
+- The builder shows a **screen frame** on the map and a warning when the map's shape is far wider or taller than a normal screen, and suggests a shape that fits better.
+- The limit on the floor (D6) stays. The builder shows the seat count next to the number of people the plan allows online.
+
+**D12. Setting up from needs, for any size, and recommended from 50 people.** The first step asks what the team needs (how many people, how many meeting rooms, focus pods, a lounge). The system **arranges a first layout automatically** on the grid, in a shape that fits a screen, and shows the preview. The admin then edits it (D10) or picks a template instead. The arrangement is a plain, repeatable rule (rows of desk areas, meeting rooms along one side, lounge and plaza in the middle), not guesswork, and it is tested to stay inside the limits. The admin decides; nothing goes live until they publish.
 
 **D5. When an edit goes live.** Each save makes a new version. A room that already has people keeps its current map until it next empties, because the server holds the layout for as long as anyone is inside. The admin panel says so. "Apply now" (asking everyone to reconnect) is a later addition. This needs no change to the engine.
 
@@ -75,9 +95,9 @@ The builder snaps to the grid because the engine already stores zones as tile re
 |---|---|---|
 | A | The map format, its checks, and `resolveRoomLayout` in the shared package (no screens). **Done, 2026-09-21** (`packages/shared/src/layouts/roomMap.ts`, 18 tests) | No |
 | B | Server, room page, canvas and chip use `resolveRoomLayout` | No (same result for every room that exists) |
-| C | Admin save: owner or admin only, checked, versioned | No (nothing calls it yet) |
+| C | The strict rules: the `designer` role, the versions table, and the server checks for draft, publish, restore and role changes, with a record of who changed what. A full who-may-do-what test table | No (nothing calls it yet) |
 | D | The map screen with real people and click-to-move. **Start with a measurement** of 100 moving people in a browser, on this design | Only for rooms on the new map |
-| E | The builder in the admin panel | Only for admins |
+| E | The builder in the admin panel: the setup from needs (D12), drag, resize, rename, delete, undo, the preview at screen sizes, fit to screen (D11), publish and go back (D10) | Only for editors |
 | F | New workspaces start from the starter map | Yes, deliberately, after D and E |
 
 ## Failure modes (one realistic failure each)
@@ -91,6 +111,12 @@ The builder snaps to the grid because the engine already stores zones as tile re
 | Live room | Admin edits while people are inside | D5: the old map holds until empty; the panel says so |
 | Sit | A seat sits outside its own area, so audio and counts miss the person | A test that every seat is inside its area (exists for the starter map) |
 | Click | Clicks land in the wrong place on the tilted map | The inverse tilt and its round-trip test (step D) |
+| Permissions | A member calls the save address directly, skipping the screen | The server checks the role on every call; a test for each role and each action (D4) |
+| Permissions | A designer promotes themselves, or the last owner is removed | Refused on the server; tests for both |
+| Permissions | A person who lost the role keeps an old tab open and saves | The role is checked at save time, not at page load |
+| Fit | A very wide map is unreadable on a phone | D11: opens on the arrival area with zoom and drag, plus a warning in the builder |
+| Setup | The automatic arrangement breaks a limit or overlaps meeting rooms | The arrangement is tested against every rule in D6 before it is shown |
+| History | An area is deleted by mistake | Every version is kept; restore any earlier one (D10) |
 
 ## Not in scope (considered and deferred)
 
@@ -100,5 +126,6 @@ Assigned desks; jump to a person, area or seat; polygons and art templates; seve
 
 - **Shared (step A):** valid starter map accepted and equal to `spatialMap@1`; every rule in D6 refused with a clear message; unknown fields dropped; `resolveRoomLayout` gives the default for empty settings, the named layout for a known name, the custom map for a valid `map`, and the default plus a problem message for a broken one.
 - **Wiring (B):** existing rooms resolve exactly as before; a room whose settings hold a custom map joins on it (real database); server and browser agree.
-- **Admin save (C):** not signed in refused; a member refused; an owner and an admin accepted; invalid map refused with reasons; a stale version refused; a saved map is what the next fresh room uses.
+- **Strict rules (C), a table with one test per cell:** for each of not signed in, member, designer, admin and owner, and for each of read the live map, save a draft, publish, restore an old version, and change someone's role: allowed or refused, exactly as D4 says. Plus: the last owner cannot be removed, a designer cannot promote anyone, a stale version is refused, an invalid map is refused with reasons, and every change is recorded with who and when.
+- **Builder (E):** the preview is drawn by the same code as the live map; the automatic arrangement stays inside every limit for headcounts from 5 to 200; the map fits a laptop, a monitor and a phone; undo, redo, delete and restore work.
 - **Map screen (D):** the click and world round-trip; a person sits when walking to a seat and clicking; the 100-person browser measurement is taken once and reported before anything else is built on it.
