@@ -4,19 +4,30 @@ import { env } from "@/lib/env";
 import { SignInForm } from "@/components/SignInForm";
 import { SignOutButton } from "@/components/SignOutButton";
 import Link from "next/link";
+import { WelcomeEmptyState } from "@/components/WelcomeEmptyState";
+import { safeReturnPath } from "@/lib/returnPath";
+import { describeLinkError } from "@/lib/auth/linkError";
 
 /**
  * Landing page: sign-in with an emailed link (plus the dev sign-in when it is
  * enabled) and, once signed in, a list of the user's workspace rooms. Minimum UI
  * around the spatial room, which is the point, not this.
  */
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await getSessionUser();
 
   if (!session) {
+    // `next` is where the person was going (an invited room); `error` is set when a
+    // sign-in link they opened had expired or was already used.
+    const params = await searchParams;
+    const returnTo = safeReturnPath(params.next) ?? undefined;
     return (
       <main className="flex min-h-screen items-center justify-center p-8">
-        <SignInForm devAuth={env.devAuthEnabled} />
+        <SignInForm devAuth={env.devAuthEnabled} returnTo={returnTo} notice={describeLinkError(params.error)} />
       </main>
     );
   }
@@ -44,11 +55,7 @@ export default async function HomePage() {
         </div>
       </div>
 
-      {memberships.length === 0 && (
-        <p className="text-sm text-neutral-500">
-          No workspaces yet — create one above, or run the db seed script.
-        </p>
-      )}
+      {memberships.length === 0 && <WelcomeEmptyState />}
 
       {memberships.map((m) => (
         <div key={m.workspace.id} className="mb-4 rounded-lg border border-neutral-800 p-4">

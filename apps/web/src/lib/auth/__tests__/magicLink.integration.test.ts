@@ -248,3 +248,37 @@ describe("signing out", () => {
     expect(await sessionUser(c, cookie)).toBeNull();
   });
 });
+
+describe("coming back to the page the person was going to", () => {
+  let c: Ctx;
+  beforeEach(() => {
+    c = makeAuth();
+  });
+
+  it("lands in the room they were invited to after the link is opened", async () => {
+    const email = uniqueEmail();
+    await requestLink(c, email, { callbackURL: "/room/r1", errorCallbackURL: "/?next=%2Froom%2Fr1" });
+    const res = await openLink(c, c.sent.at(-1)!.url);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${BASE}/room/r1`);
+    expect(sessionCookie(res)).toBeTruthy();
+  });
+
+  it("sends a used link back to the sign-in address with the room and the error both readable", async () => {
+    const email = uniqueEmail();
+    await requestLink(c, email, { callbackURL: "/room/r1", errorCallbackURL: "/?next=%2Froom%2Fr1" });
+    const url = c.sent.at(-1)!.url;
+    await openLink(c, url);
+    const again = await openLink(c, url);
+    const location = new URL(again.headers.get("location")!, BASE);
+    expect(location.pathname).toBe("/");
+    expect(location.searchParams.get("next")).toBe("/room/r1");
+    expect(location.searchParams.get("error")).toBe("INVALID_TOKEN");
+  });
+
+  it("refuses a return address on another site", async () => {
+    const res = await requestLink(c, uniqueEmail(), { callbackURL: "https://evil.example/room/r1" });
+    expect(res.status).toBe(400);
+    expect(c.sent).toHaveLength(0);
+  });
+});

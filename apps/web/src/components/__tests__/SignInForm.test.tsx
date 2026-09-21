@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { SignInForm } from "../SignInForm";
 
 const push = vi.fn();
@@ -144,5 +144,98 @@ describe("SignInForm: the dev sign-in", () => {
     render(<SignInForm devAuth />);
     fireEvent.click(screen.getByRole("button", { name: /^sign in as$/i }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/no such seeded user/i);
+  });
+});
+
+describe("SignInForm: returning to where the person was going", () => {
+  it("asks for the emailed link to come back to that page, and errors to return to sign-in with it remembered", async () => {
+    fetchMock.mockReturnValue(reply(200, { status: true }));
+    render(<SignInForm returnTo="/room/r1" />);
+    submit("ana@example.com");
+    await screen.findByText(/check your email/i);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      email: "ana@example.com",
+      callbackURL: "/room/r1",
+      errorCallbackURL: "/?next=%2Froom%2Fr1",
+    });
+  });
+});
+
+describe("SignInForm: a link that did not work", () => {
+  it("shows the message above the form and keeps the form ready", () => {
+    render(<SignInForm notice="That link has expired or was already used. Enter your email to get a new one." />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toMatch(/expired or was already used/i);
+    expect(emailInput()).toBeTruthy();
+    expect(alert.compareDocumentPosition(emailInput()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("clears the message once a new link is asked for", async () => {
+    fetchMock.mockReturnValue(reply(200, { status: true }));
+    render(<SignInForm notice="That link has expired or was already used. Enter your email to get a new one." />);
+    submit("ana@example.com");
+    await screen.findByText(/check your email/i);
+    expect(screen.queryByText(/expired or was already used/i)).toBeNull();
+  });
+});
+
+describe("SignInForm: the email has not arrived", () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  async function toSentScreen(props: { returnTo?: string } = {}) {
+    fetchMock.mockReturnValue(reply(200, { status: true }));
+    render(<SignInForm {...props} />);
+    submit("ana@example.com");
+    await screen.findByText(/check your email/i);
+  }
+  /** The countdown schedules each second after the previous render, so time passes one second at a time. */
+  async function waitSeconds(n: number) {
+    for (let i = 0; i < n; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  }
+  const resendButton = () => screen.getByRole("button", { name: /send it again/i }) as HTMLButtonElement;
+
+  it("mentions the spam folder", async () => {
+    await toSentScreen();
+    expect(screen.getByText(/spam/i)).toBeTruthy();
+  });
+
+  it("only allows sending again after a short wait, and says so in words", async () => {
+    await toSentScreen();
+    expect(resendButton().disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toMatch(/30 seconds/i);
+    await waitSeconds(30);
+    expect(resendButton().disabled).toBe(false);
+    expect(screen.getByRole("status").textContent).toMatch(/send.*again now|now/i);
+  });
+
+  it("sends again to the same address, to the same destination, without retyping", async () => {
+    await toSentScreen({ returnTo: "/room/r1" });
+    await waitSeconds(30);
+    fetchMock.mockReturnValue(reply(200, { status: true }));
+    fireEvent.click(resendButton());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({
+      email: "ana@example.com",
+      callbackURL: "/room/r1",
+      errorCallbackURL: "/?next=%2Froom%2Fr1",
+    });
+    // the wait starts again
+    await waitFor(() => expect(resendButton().disabled).toBe(true));
+  });
+
+  it("shows the limit message on the same screen when the server refuses", async () => {
+    await toSentScreen();
+    await waitSeconds(30);
+    fetchMock.mockReturnValue(reply(429, { error: "too_many_requests", message: "Too many sign-in requests for this address. Please try again in a few minutes." }));
+    fireEvent.click(resendButton());
+    expect(await screen.findByText(/too many sign-in requests/i)).toBeTruthy();
+    expect(screen.getByText(/check your email/i)).toBeTruthy();
+  });
+
+  it("leaves no timer running when the screen goes away", async () => {
+    await toSentScreen();
+    cleanup();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

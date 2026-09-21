@@ -12,6 +12,8 @@ import {
 } from "@workspace-video/shared";
 import { getSessionUser } from "@/lib/session";
 import { RoomCanvas } from "@/components/RoomCanvas";
+import { NoRoomAccess } from "@/components/NoRoomAccess";
+import { returnPathForRoom, signInAddressFor } from "@/lib/returnPath";
 
 /**
  * RSC guard: sign-in + workspace membership check before rendering the
@@ -27,13 +29,15 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
 
   const session = await getSessionUser();
   if (!session) {
-    redirect("/");
+    // Sign in, then come back to this room (an invite link lands here).
+    redirect(signInAddressFor(returnPathForRoom(roomId)));
   }
 
   try {
     await assertRoomMembership(session.userId, roomId);
   } catch {
-    redirect("/");
+    // Signed in, but not a member (or no such room: the person is not told which).
+    return <NoRoomAccess email={session.email} />;
   }
 
   const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
