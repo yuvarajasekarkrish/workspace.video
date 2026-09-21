@@ -14,3 +14,4 @@ export * from "@prisma/client";
 export * from "./membership";
 export * from "./objects";
 export * from "./participantLimits";
+export * from "./roomLayouts";
