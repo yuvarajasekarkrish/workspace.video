@@ -2,8 +2,6 @@ import { Application, Container } from "pixi.js";
 import type { Point, RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
-  resolveLayout,
-  DEFAULT_LAYOUT_ID,
   movementConfigForLayout,
   hitTestSeats,
 } from "@workspace-video/shared";
@@ -28,12 +26,11 @@ export interface PixiStageOptions {
   roomId: string;
   localUserId: string;
   initialLocalPosition: Point;
-  /** Resolved on the room page from Room.config (see parseRoomConfig) —
-   *  the layout is bundled into the client (packages/shared), so only the
-   *  id crosses the wire, never furniture geometry. Falls back to the
-   *  default layout for an unknown id, mirroring the server's own fallback,
-   *  so a stale client build can never fail to render a floor at all. */
-  layoutId: string;
+  /** The room's layout, decided on the room page by resolveRoomLayout (the same function the
+   *  realtime server uses), so client and server always agree on the floor and the spawn point.
+   *  Passed as the layout itself, not a name, because a company's own map has no name in the
+   *  built-in list. */
+  layout: RoomLayout;
 }
 
 /**
@@ -118,10 +115,8 @@ export class PixiStage {
     });
     this.world.addChild(this.viewport.world);
 
-    // Resolved client-side from a bundled id (see PixiStageOptions.layoutId
-    // docs) — the same fallback-to-default rule the server applies to a
-    // stale/unknown Room.config, so a bad id can never leave a blank floor.
-    this.layout = resolveLayout(options.layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+    // Already resolved (with the server's own fallback rule) by the room page.
+    this.layout = options.layout;
     const movementConfig = movementConfigForLayout(this.layout, DEFAULT_MOVEMENT_CONFIG);
 
     this.viewport.world.addChild(createBackground(movementConfig));
