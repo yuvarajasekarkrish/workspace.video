@@ -161,3 +161,67 @@ describe("MovementController", () => {
     });
   });
 });
+
+describe("MovementController.needsFrames: does the screen still have to draw for this person?", () => {
+  const keyboard = () => {
+    const { controller, onSendMove } = makeController();
+    const target = new EventTarget();
+    controller.attachKeyboard(target);
+    const press = (code: string) => target.dispatchEvent(Object.assign(new Event("keydown"), { code }));
+    const release = (code: string) => target.dispatchEvent(Object.assign(new Event("keyup"), { code }));
+    return { controller, onSendMove, press, release };
+  };
+
+  it("is false when nobody is doing anything", () => {
+    expect(makeController().controller.needsFrames()).toBe(false);
+  });
+
+  it("is true while a movement key is held, and false once it is released and the last position has been sent", () => {
+    const { controller, press, release } = keyboard();
+    press("KeyD");
+    expect(controller.needsFrames()).toBe(true);
+    controller.update(1 / 60, 1000); // moves and sends at once
+    release("KeyD");
+    expect(controller.needsFrames()).toBe(false);
+  });
+
+  it("stays true after a key is released if the newest position has not been sent yet, until it is", () => {
+    const { controller, onSendMove, press, release } = keyboard();
+    press("KeyD");
+    controller.update(1 / 60, 1000); // sent
+    controller.update(1 / 60, 1010); // moved again, too soon to send
+    release("KeyD");
+    expect(onSendMove).toHaveBeenCalledTimes(1);
+    expect(controller.needsFrames()).toBe(true);
+    controller.update(1 / 60, 1100); // the throttle has passed: the last position is sent
+    expect(onSendMove).toHaveBeenCalledTimes(2);
+    expect(controller.needsFrames()).toBe(false);
+  });
+
+  it("is true while walking to a clicked spot, and false once there", () => {
+    const { controller } = makeController();
+    controller.setWalkTarget({ x: 300, y: 0 });
+    expect(controller.needsFrames()).toBe(true);
+    let now = 1000;
+    for (let i = 0; i < 1000 && controller.needsFrames(); i++) controller.update(0.1, (now += 100));
+    expect(controller.needsFrames()).toBe(false);
+  });
+
+  it("is false while seated, even right after sitting down", () => {
+    const { controller } = makeController();
+    controller.setWalkTarget({ x: 300, y: 0 });
+    controller.update(0.1, 1000);
+    controller.applyTeleport({ x: 500, y: 500 });
+    expect(controller.needsFrames()).toBe(false);
+  });
+
+  it("is true after the server corrects the position, until the corrected position has been sent", () => {
+    const { controller } = makeController();
+    controller.setWalkTarget({ x: 300, y: 0 });
+    controller.update(0.1, 1000); // moved and sent
+    controller.applyCorrection({ x: 5, y: 5 });
+    expect(controller.needsFrames()).toBe(true);
+    controller.update(0.1, 1200);
+    expect(controller.needsFrames()).toBe(false); // the corrected position went out, so no more frames are needed
+  });
+});

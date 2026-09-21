@@ -125,6 +125,16 @@ export class MovementController {
     this.callbacks.onLocalPositionChanged(position);
   }
 
+  /** Whether the screen still has to keep drawing frames for this person: a movement key is held, a click-to-walk
+   *  is under way, or the newest position has not yet been sent to the server (so the last step of a walk is never
+   *  left unsent when the loop rests). Always false while seated. Lets the drawing loop rest when nothing is happening. */
+  needsFrames(): boolean {
+    if (this.seated) return false;
+    if (this.heldKeys.size > 0 || this.walkTarget !== null) return true;
+    const sent = this.lastSentPosition;
+    return sent !== null && (sent.x !== this.position.x || sent.y !== this.position.y);
+  }
+
   /** Called once per Pixi ticker frame with elapsed seconds. While seated,
    *  this is a deliberate no-op — no movement math, no move traffic at all,
    *  which is also what makes many seated occupants nearly free on the
