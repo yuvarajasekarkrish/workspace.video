@@ -1,0 +1,59 @@
+# Single-machine pilot: adds the database and the media server to the app stack, so the
+# whole product runs on one box. Layer it over the production file:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.pilot.yml --env-file .env up -d
+#
+# Trade-off (chosen for cost): one machine is one point of failure, and a busy video call
+# shares CPU with sign-in. Moving to separate machines later means dropping this file and
+# pointing DATABASE_URL and LIVEKIT_URL elsewhere.
+
+services:
+  caddy:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MEDIA_ADDRESS: ${MEDIA_ADDRESS:?set MEDIA_ADDRESS in .env}
+    volumes:
+      # Same file as production plus the media address block; replaces the mount at the same path.
+      - ./Caddyfile.pilot:/etc/caddy/Caddyfile:ro
+
+  web:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  realtime:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  migrate:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # The database. Reachable only from this machine (127.0.0.1), never from the internet.
+  # The containers and the deploy script's backup both reach it as host.docker.internal:5432
+  # (server-setup.sh maps that name to 127.0.0.1 on the host too).
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # The media server. Host networking because it needs a range of 10,000 UDP ports,
+  # which Docker's per-port mapping handles badly. Its signalling port (7880) is
+  # only reached through Caddy, over https, at MEDIA_ADDRESS.
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit/livekit.generated.yaml:/etc/livekit.yaml:ro
+
+volumes:
+  postgres_data:

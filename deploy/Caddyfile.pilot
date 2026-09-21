@@ -1,0 +1,24 @@
+# Single-machine pilot proxy: everything in Caddyfile, plus the media server's address.
+# Keep the first block identical to Caddyfile (see the notes there about /internal).
+
+{$APP_ADDRESS} {
+	encode zstd gzip
+
+	handle /socket.io/* {
+		reverse_proxy {$REALTIME_UPSTREAM:realtime:4001}
+	}
+
+	handle /health {
+		reverse_proxy {$REALTIME_UPSTREAM:realtime:4001}
+	}
+
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+}
+
+# The media server's signalling (a websocket), over https. Media itself goes straight
+# to the machine on UDP/TCP ports 7881 and 50000-60000, not through here.
+{$MEDIA_ADDRESS} {
+	reverse_proxy host.docker.internal:7880
+}
