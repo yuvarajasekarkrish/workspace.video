@@ -126,20 +126,14 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
-      <div className="absolute left-3 top-3 z-30 flex flex-col items-start gap-2">
-        <ConnectionBadge />
-        <OccupancyBadge />
-        <ZoneHudChip layout={layout} />
-      </div>
+      <ConnectionBadge />
+      <OccupancyBadge />
+      <ZoneHudChip layout={layout} />
       <ZoneToast />
+      <RoomHud />
       <RoomDock onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} onGoToPerson={handleGoToPerson} />
       <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onFit={handleFit} />
-      {/* From tablet width up only: on a phone this stack would cover the area chip, and "find people" in the bar
-          already replaces the people list. */}
-      <div className="absolute right-3 top-3 z-30 hidden max-w-[55vw] flex-col items-end gap-2 sm:flex">
-        <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
-        <RoomHud />
-      </div>
+      <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
       <CapacityScreen onRetry={handleRetryJoin} />
     </div>
   );

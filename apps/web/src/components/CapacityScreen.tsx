@@ -21,11 +21,11 @@ export function CapacityScreen({ onRetry }: CapacityScreenProps) {
   const { active = 0, limit = 0 } = capacity ?? {};
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-ground/90">
-      <div className="mx-4 max-w-sm rounded-lg border border-line bg-surface p-6 text-center shadow-xl">
-        <h2 className="mb-2 text-lg font-semibold text-fg">This workspace is full</h2>
-        <p className="mb-4 text-base text-fg-muted">
-          <span className="font-mono text-fg">
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <div className="mx-4 max-w-sm rounded-lg bg-neutral-900 p-6 text-center shadow-xl">
+        <h2 className="mb-2 text-lg font-semibold text-neutral-100">This workspace is full</h2>
+        <p className="mb-4 text-sm text-neutral-400">
+          <span className="font-mono text-neutral-200">
             {active} / {limit}
           </span>{" "}
           people online. A spot will open up when someone leaves.
@@ -33,7 +33,7 @@ export function CapacityScreen({ onRetry }: CapacityScreenProps) {
         <button
           type="button"
           onClick={onRetry}
-          className="h-12 rounded-lg bg-accent px-6 text-base font-medium text-on-accent hover:bg-accent-hover"
+          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent hover:bg-accent-hover"
         >
           Try again
         </button>

@@ -31,33 +31,33 @@ export function ObjectToolbar({ localUserId, onCreate, onDeleteSelected }: Objec
   }
 
   return (
-    <div className="flex flex-col items-end gap-2 text-base">
-      <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-line bg-surface p-2">
+    <div className="absolute right-3 top-3 flex flex-col items-end gap-2 text-xs">
+      <div className="flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 backdrop-blur">
         <button
           type="button"
           onClick={() => onCreate("note", { text: "New note", color: "yellow" })}
-          className="h-12 rounded-full border border-line px-4 text-fg hover:bg-ground"
+          className="rounded-full bg-neutral-700 px-3 py-1 text-white hover:bg-neutral-600"
         >
           + Note
         </button>
         <button
           type="button"
           onClick={() => onCreate("shape", { kind: "rect" })}
-          className="h-12 rounded-full border border-line px-4 text-fg hover:bg-ground"
+          className="rounded-full bg-neutral-700 px-3 py-1 text-white hover:bg-neutral-600"
         >
           + Shape
         </button>
         <button
           type="button"
           onClick={() => onCreate("zone", { label: "Zone" })}
-          className="h-12 rounded-full border border-line px-4 text-fg hover:bg-ground"
+          className="rounded-full bg-neutral-700 px-3 py-1 text-white hover:bg-neutral-600"
         >
           + Zone
         </button>
         <button
           type="button"
           onClick={() => setShowImagePrompt((v) => !v)}
-          className="h-12 rounded-full border border-line px-4 text-fg hover:bg-ground"
+          className="rounded-full bg-neutral-700 px-3 py-1 text-white hover:bg-neutral-600"
         >
           + Image
         </button>
@@ -67,7 +67,7 @@ export function ObjectToolbar({ localUserId, onCreate, onDeleteSelected }: Objec
             onClick={onDeleteSelected}
             disabled={!selected.isCreator}
             title={selected.isCreator ? "Delete selected object" : "Only the creator can delete this object"}
-            className="h-12 rounded-full border border-danger px-4 text-danger hover:bg-ground disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-full bg-red-700 px-3 py-1 text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Delete
           </button>
@@ -75,19 +75,18 @@ export function ObjectToolbar({ localUserId, onCreate, onDeleteSelected }: Objec
       </div>
 
       {showImagePrompt && (
-        <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-line bg-surface p-2">
+        <div className="flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 backdrop-blur">
           <input
             type="url"
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
             placeholder="https://example.com/image.png"
-            aria-label="Image address"
-            className="h-12 w-56 max-w-full rounded-lg border border-line bg-ground px-3 text-base text-fg placeholder:text-fg-muted"
+            className="w-56 rounded border border-neutral-600 bg-neutral-900 px-2 py-1 text-white"
             onKeyDown={(e) => {
               if (e.key === "Enter") handleAddImage();
             }}
           />
-          <button type="button" onClick={handleAddImage} className="h-12 rounded-lg bg-accent px-4 text-base font-medium text-on-accent hover:bg-accent-hover">
+          <button type="button" onClick={handleAddImage} className="rounded bg-emerald-600 px-2 py-1 text-white">
             Add
           </button>
         </div>
