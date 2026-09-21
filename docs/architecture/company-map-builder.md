@@ -417,3 +417,81 @@ By design the builder draws nothing while idle (the same "rest when still" rule 
 4. Measure the builder's battery cost once built.
 
 Outside voices: not run in this review (no second reviewer was available). That is missing coverage, not a clean result.
+
+## D18. Workspace colour option and the first-time set-up flow (2026-09-22, the owner's request)
+
+This adds to the plan; nothing decided in D1 to D17 is changed. Note: after D17 the owner asked to go back to the earlier look of the room (text sizes, panel colours, bar size and the amber accent), so those code changes were reverted (commits f1fa12f, f7173ec, 39360f3). The words in D17 about 16 px text, 48 px bar buttons and the teal accent describe what was decided then, not what the room shows today. Whatever the room shows today is the **default** below.
+
+### 1. Workspace colour (an option, not a redesign)
+
+An owner or admin can choose one accent colour for their workspace from six ready-made palettes. **The system default stays exactly as it is today; nothing changes until an admin picks one.** Only colours change. **No text size and no button size changes.**
+
+| Palette | Accent | Hover | Glow | Monitor / chair glow | Vibe |
+|---|---|---|---|---|---|
+| Sunset Coral & Rose | `#f43f5e` | `#e11d48` | rgba(244, 63, 94, 0.35) | `#fda4af` / `#f43f5e` | Warm, high-energy |
+| Electric Cyan | `#0ea5e9` | `#0284c7` | rgba(14, 165, 233, 0.35) | `#7dd3fc` / `#0ea5e9` | Technical, clean |
+| Emerald & Teal | `#10b981` | `#059669` | rgba(16, 185, 129, 0.35) | `#6ee7b7` / `#10b981` | Calm, growth |
+| Electric Indigo | `#6366f1` | `#4f46e5` | rgba(99, 102, 241, 0.35) | `#c7d2fe` / `#6366f1` | Deep focus, premium |
+| Twilight Amethyst | `#8b5cf6` | `#7c3aed` | rgba(139, 92, 246, 0.35) | `#c4b5fd` / `#8b5cf6` | Creative, calm |
+| Cyber Lime | `#22c55e` | `#16a34a` | rgba(34, 197, 94, 0.35) | `#86efac` / `#22c55e` | High-tech, energetic |
+
+- **Where it applies:** the accent (main buttons, selected item, links), its hover colour, the glow, and the glow on a person's monitor or chair in the room. Everything else (ground, panels, text, sizes) is untouched.
+- **Who may set it:** owner and admin, checked on the server every time, like every other admin change (D4). It applies to everyone in that workspace, in the room and in the admin screen.
+- **Stored** as a palette name on the workspace (one small database addition, later), not as free text, so only the six known palettes can ever be saved.
+- **Readability check (measured on the ground `#0a0a0a`):** dark text on the accent must reach 4.5 to 1. Coral 5.4, Cyan 7.1, Emerald 7.8, Lime 8.7, Amethyst 4.7 pass. **Indigo `#6366f1` reaches 4.43, just under 4.5** (white text on it reaches 4.47, also just under). Proposal: keep the palette but use the slightly lighter `#6d70f2` as its accent (to be re-measured), or accept the small miss. The owner decides; a test will check every palette.
+- **Preview before saving:** picking a palette shows it on a small sample (a button, a link, a person dot) before "Save colour".
+
+### 2. First-time set-up: what is already decided, and what is new
+
+Already decided and reused: the office exists from a starter map (D9); the first step asks what the team needs and arranges a layout by a plain rule (D12); templates for Startup, full builder above 10 people (D16); the map check (E6); preview tilted, edit flat (11A); publish rules (D17). New in this section: the exact questions, the rule table, the transition and the first-drag hint.
+
+**The questions (five, one per screen, each with a "Not sure" answer that picks the middle option):**
+
+1. **What is the office for?** Company team, School or class, Community or event, Something else. (Decides the names and the mix of areas.)
+2. **How many people will use it at the same time?** Up to 10, 25, 50, 100, 200. (Sets the size of the map; this is a suggestion, the plan still decides who may join.)
+3. **Which areas do you need?** Tick any: Desk areas (always on), Meeting rooms (how many: 1 to 6), Focus pods, Lounge, Reception or plaza (on by default).
+4. **How is your team organised?** One group, or named groups (type up to 6 names, such as Product, Sales). (Each named group gets its own desk area.)
+5. **Which colour suits you?** The six palettes (section 1), or "Keep the default". Skipping is fine and it can be changed later.
+
+### 3. How the answers set the starting office (a fixed rule, not guesswork)
+
+| Answer | What appears |
+|---|---|
+| People (2) | Number of desk seats about the same as the people count, rounded to whole desk groups of 4; the map size follows (fits one screen, D11) |
+| Groups (4) | One desk area per named group, named by the admin; with "one group", a single area named "Desks" |
+| Meeting rooms (3) | The chosen number of meeting rooms along one side |
+| Focus pods (3) | A row of single-seat pods, one per 10 people, at least 2 |
+| Lounge / Reception (3) | Lounge in the middle; the arrival plaza is always placed |
+| Purpose (1) | Only the area names and starter notes: Company (Desks, Meeting room), School (Classroom, Breakout room), Community (Stage, Chat corner) |
+| Colour (5) | The palette from section 1 |
+
+A map that would break a limit is never shown; the map check (E6) runs first and the question that caused it is highlighted with a plain sentence. Startup (10 people) skips this flow and goes to templates (D16).
+
+### 4. The transition from the last question to the canvas
+
+1. Last question, button **"Build my office"**.
+2. A short screen with the office outline drawing in area by area (about 2 seconds, skipped at once if the person has asked their device for reduced motion) and the sentence "Arranging your office...".
+3. The tilted preview appears with the sample people, and the sentence "Your office is ready. Nothing is live until you publish."
+4. One press of "Edit" flattens it into the drag builder. The layout shape never changes between the preview and the editor, so it feels like the same place.
+5. It only uses a simple outline and a fade, no blur or glow effects, so it costs almost no battery, and the loop stops when the drawing ends.
+
+### 5. The first drag prompt on the canvas
+
+- One hint, not a tour: a small note pointing at the largest desk area says **"Drag this area to move it."** It disappears as soon as the admin moves anything, and never comes back.
+- After the first move, one second hint appears once: **"Drag the corner to resize."**
+- A quiet "Take a tour" link stays in the top bar for anyone who wants more.
+- The hints can be operated by keyboard too (D17, 6A): the note says "Or press Tab, then the arrow keys."
+- Whether the hints were seen is saved per admin so they never repeat.
+
+### Open for the owner
+
+1. Approve the five questions and the rule table, or change any of them.
+2. Indigo readability: use the lighter `#6d70f2` (recommended) or keep `#6366f1`.
+3. Is the colour option for every plan, or only above 10 people like the builder?
+
+### Build items this adds
+
+1. Palette list as one shared file with a test that every palette meets the readability limit.
+2. A palette name on the workspace (small database addition) and a server-checked save.
+3. The room, the admin screen and the landing page read the palette; the default is unchanged.
+4. The five-question flow, the rule that turns answers into a map (with tests that it stays inside the limits), the transition and the two hints.
