@@ -56,29 +56,63 @@ function areaZone(zone: MapZone, kind: LayoutZone["kind"]): LayoutZone {
   return { id: zoneIdOf(zone), label: zone.name, kind, rect: zone.rect, capacity: zone.targetUsers };
 }
 
-function deskArea(zone: MapZone): ModuleResult {
-  const box = tileRectToWorld(zone.rect);
+/** Where an area's desk pods sit, in pixels from the area's top-left corner, with their row and
+ *  column. Used both to place the seats and to count them before anything is built. */
+function deskPodCells(rect: TileRect): { r: number; c: number; left: number; top: number }[] {
+  const box = tileRectToWorld(rect);
   const cols = Math.floor(box.width / POD_PITCH);
   const rows = Math.floor(box.height / POD_PITCH);
   const padX = (box.width - cols * POD_PITCH) / 2;
   const padY = (box.height - rows * POD_PITCH) / 2;
-  const seats: Seat[] = [];
-  let pod = 0;
+  const cells: { r: number; c: number; left: number; top: number }[] = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (c % 3 === 2) continue; // a walkway after every second pod
-      pod += 1;
-      POD_SEATS.forEach((seat, k) => {
-        seats.push({
-          id: `${zone.id}-pod-${r}-${c}-${k}`,
-          label: `${zone.name} pod ${pod}`,
-          anchor: { x: box.x + padX + c * POD_PITCH + POD_INSET + seat.x, y: box.y + padY + r * POD_PITCH + POD_INSET + seat.y },
-          zoneId: zoneIdOf(zone),
-        });
-      });
+      cells.push({ r, c, left: padX + c * POD_PITCH + POD_INSET, top: padY + r * POD_PITCH + POD_INSET });
     }
   }
+  return cells;
+}
+
+function deskArea(zone: MapZone): ModuleResult {
+  const box = tileRectToWorld(zone.rect);
+  const seats: Seat[] = [];
+  deskPodCells(zone.rect).forEach((cell, i) => {
+    POD_SEATS.forEach((seat, k) => {
+      seats.push({
+        id: `${zone.id}-pod-${cell.r}-${cell.c}-${k}`,
+        label: `${zone.name} pod ${i + 1}`,
+        anchor: { x: box.x + cell.left + seat.x, y: box.y + cell.top + seat.y },
+        zoneId: zoneIdOf(zone),
+      });
+    });
+  });
   return { furniture: [], seats, zones: [areaZone(zone, "open")] };
+}
+
+/** How many seats a list of areas will have, worked out without building them, so a map that would
+ *  be far too large can be refused cheaply. Uses the same code that builds them. */
+export function estimateMapSeats(zones: readonly MapZone[]): number {
+  let total = 0;
+  for (const zone of zones) {
+    switch (zone.type) {
+      case "desks":
+        total += deskPodCells(zone.rect).length * POD_SEATS.length;
+        break;
+      case "focus":
+        total += FOCUS_ROWS * FOCUS_COLS;
+        break;
+      case "cafe":
+        total += STOOL_COUNT;
+        break;
+      case "meeting":
+        total += meetingRoom(zone.id, zone.rect, { label: zone.name, capacity: zone.targetUsers }).seats.length;
+        break;
+      default:
+        break; // hub and creative areas have no seats
+    }
+  }
+  return total;
 }
 
 function focusArea(zone: MapZone): ModuleResult {
