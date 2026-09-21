@@ -146,3 +146,29 @@ The person asking is always the signed-in person; the rules run in the database 
 ## Deployment note
 
 The new role value and table are additive, so deployment (which backs up first) is safe. One caution: once anyone has been given the `designer` role, rolling back to an older version of the app would fail to read that person's membership. Roll back before giving out the role, or roll forward.
+
+## Step D, part 1: the browser measurement (measured 2026-09-21, 200 people)
+
+The launch target is **up to 200 people in one space** (the Enterprise plan's cap). One measurement page moves 200 people around the real starter map in three ways. Each way was run once, for 15 seconds, with the processor slowed to a quarter of its speed to imitate a weak laptop. Page: `docs/spikes/map-perf/index.html` (a throwaway test, not part of the product).
+
+| | Plain HTML, the browser animates | Plain HTML, the page moves everyone each frame | Canvas (Pixi, what the room screen uses) |
+|---|---|---|---|
+| Frames per second | 38.6 | 39.0 | **58.3** |
+| Frame time, 95th percentile | 50.3 ms | 50.1 ms | **17.4 ms** |
+| Frame time, 99th percentile | 149.8 ms | 116.8 ms | **32.3 ms** |
+| Slowest frame | 633 ms | 466 ms | **216 ms** |
+| Frames slower than 50 ms | 36 of 579 | 30 of 585 | **3 of 875** |
+| Share of the main thread busy | 75% | 84% | **12%** |
+| Page elements | 336 | 336 | 15 |
+| Set-up time | 8 ms | 14 ms | 426 ms |
+
+**How to read it.** In this test the canvas was much lighter than plain HTML for 200 moving people. The HTML versions kept the browser busy three quarters of the time and dropped many frames. A likely reason, not verified: every moving element makes the browser repaint part of one large tilted layer, while a canvas draws all the people in a single pass. One thing not tried: giving each person a layer of their own, which may help HTML but costs memory for 200 layers.
+
+**What this does not show.** It was run in a browser with no graphics chip (software drawing) on a small PC, so it says nothing about battery, and a real laptop or phone may differ. To repeat it on your own device: run `node docs/spikes/map-perf/serve.mjs`, open `http://127.0.0.1:8123/docs/spikes/map-perf/index.html?mode=css&auto=1` (then `mode=raf` and `mode=pixi`), wait 20 seconds, and read the numbers on the page. Stop the server with Ctrl+C.
+
+**D13. Decision from this evidence: the live map is drawn on the canvas, as today.**
+- The world is drawn from the same map data, in the Gemini look and tilt, and the fixed parts (floor, areas, furniture) are drawn once into a cached picture, not redrawn.
+- People are simple sprites, with no blur or glow.
+- The canvas stops drawing when nothing moves. Today the room screen's loop runs every frame even when idle; making it stop itself is part of the light-weight work and is not done yet.
+- Plain HTML and CSS stay for the home-page demo, the panels, the builder's controls and the preview frame, where there are few moving parts.
+- This overrules my earlier plan to draw the whole map as plain HTML. If a real device shows a different result, this decision can be revisited.
