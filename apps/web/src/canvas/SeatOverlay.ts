@@ -1,8 +1,8 @@
 import { Container, Graphics } from "pixi.js";
 import type { RoomLayout } from "@workspace-video/shared";
 
-const MARKER_RADIUS = 10;
-const OCCUPIED_COLOR = 0x2e9e73;
+const MARKER_RADIUS = 9;
+const OCCUPIED_COLOR = 0xf5a623; // the Gemini design's amber
 
 /**
  * The one small piece of DYNAMIC furniture rendering — a tint marker over

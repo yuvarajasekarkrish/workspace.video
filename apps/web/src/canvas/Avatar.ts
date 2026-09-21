@@ -1,11 +1,13 @@
 import { Container, Graphics, Text } from "pixi.js";
 
-const RADIUS = 22;
-const LOCAL_COLOR = 0x4f8cff;
-const REMOTE_COLOR = 0x50c878;
-const LABEL_COLOR = 0xe6e8eb;
-const SEATED_RING_COLOR = 0x4c6fe0;
-const SEATED_RING_RADIUS = RADIUS + 6;
+// The Gemini design's people: a slate dot for everyone else, an amber dot with a soft glow for you, and a small dark
+// name tag above (docs/designs/gemini-landing.html.html).
+const RADIUS = 15;
+const YOU_RADIUS = 17;
+const AMBER = 0xf5a623;
+const SLATE = 0x64748b;
+const LABEL_COLOR = 0xe2e8f0;
+const SEATED_RING_RADIUS = RADIUS + 7;
 
 /**
  * One display object per peer. Deliberately dumb: it exposes only
@@ -18,34 +20,58 @@ const SEATED_RING_RADIUS = RADIUS + 6;
  */
 export class Avatar {
   readonly container: Container;
-  private readonly circle: Graphics;
   private readonly label: Text;
+  private readonly tag: Graphics;
   private readonly seatedRing: Graphics;
+  private readonly isLocal: boolean;
 
   constructor(name: string, isLocal: boolean) {
+    this.isLocal = isLocal;
     this.container = new Container();
 
-    this.circle = new Graphics()
-      .circle(0, 0, RADIUS)
-      .fill(isLocal ? LOCAL_COLOR : REMOTE_COLOR)
-      .stroke({ width: isLocal ? 3 : 2, color: 0xffffff, alpha: isLocal ? 0.9 : 0.4 });
-    this.container.addChild(this.circle);
+    if (isLocal) {
+      const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: AMBER, alpha: 0.22 });
+      this.container.addChild(glow);
+    }
+    const dot = new Graphics()
+      .circle(0, 0, isLocal ? YOU_RADIUS : RADIUS)
+      .fill(isLocal ? AMBER : SLATE)
+      .stroke({ width: isLocal ? 3 : 2.5, color: isLocal ? 0xffffff : 0x1a1a1a });
+    this.container.addChild(dot);
 
-    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: SEATED_RING_COLOR });
+    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: AMBER, alpha: 0.7 });
     this.seatedRing.visible = false;
     this.container.addChild(this.seatedRing);
 
+    this.tag = new Graphics();
+    this.container.addChild(this.tag);
     this.label = new Text({
       text: name,
       style: {
-        fill: LABEL_COLOR,
+        fill: isLocal ? AMBER : LABEL_COLOR,
         fontSize: 13,
-        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+        fontWeight: isLocal ? "600" : "500",
+        fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
       },
     });
-    this.label.anchor.set(0.5, 0);
-    this.label.position.set(0, RADIUS + 6);
+    this.label.anchor.set(0.5, 0.5);
     this.container.addChild(this.label);
+    this.layoutTag(isLocal);
+  }
+
+  /** Sizes the dark name tag to the name and places it above the dot. */
+  private layoutTag(isLocal: boolean): void {
+    const padX = 10;
+    const padY = 4;
+    const width = this.label.width + padX * 2;
+    const height = this.label.height + padY * 2;
+    const centreY = -((isLocal ? YOU_RADIUS : RADIUS) + 8 + height / 2);
+    this.tag
+      .clear()
+      .roundRect(-width / 2, centreY - height / 2, width, height, height / 2)
+      .fill({ color: 0x000000, alpha: 0.8 })
+      .stroke({ width: 1, color: isLocal ? AMBER : 0xffffff, alpha: isLocal ? 0.3 : 0.1 });
+    this.label.position.set(0, centreY);
   }
 
   setPosition(x: number, y: number): void {
@@ -53,7 +79,9 @@ export class Avatar {
   }
 
   setName(name: string): void {
-    if (this.label.text !== name) this.label.text = name;
+    if (this.label.text === name) return;
+    this.label.text = name;
+    this.layoutTag(this.isLocal);
   }
 
   /** Derived purely from seat occupancy (see seatsStore.ts) — never a

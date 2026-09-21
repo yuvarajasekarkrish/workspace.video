@@ -1,12 +1,14 @@
 import { Container, Graphics } from "pixi.js";
 
-const GRID_SPACING = 100;
-const GRID_COLOR = 0x1c2130;
-const BOUNDS_COLOR = 0x3a4266;
-const BACKGROUND_COLOR = 0x11141c;
+// The Gemini design's floor: charcoal, with a faint dot grid instead of lines (docs/designs/gemini-landing.html.html).
+const DOT_SPACING = 80;
+const DOT_RADIUS = 1.6;
+const DOT_ALPHA = 0.1;
+const BOUNDS_ALPHA = 0.12;
+const BACKGROUND_COLOR = 0x0a0a0a;
 
 /**
- * A visible world grid + bounds border, sized to the room's own floor
+ * The floor: charcoal ground, a faint dot grid and a soft border, sized to the room's own floor
  * bounds (see @workspace-video/shared's movementConfigForLayout) so what's drawn
  * always matches where an avatar can actually go — never the global
  * DEFAULT_MOVEMENT_CONFIG, which would draw the wrong-sized floor for any
@@ -20,19 +22,16 @@ export function createBackground(bounds: { roomWidthPx: number; roomHeightPx: nu
   const fill = new Graphics().rect(0, 0, roomWidthPx, roomHeightPx).fill(BACKGROUND_COLOR);
   container.addChild(fill);
 
-  const grid = new Graphics();
-  for (let x = 0; x <= roomWidthPx; x += GRID_SPACING) {
-    grid.moveTo(x, 0).lineTo(x, roomHeightPx);
+  const dots = new Graphics();
+  for (let x = DOT_SPACING / 2; x < roomWidthPx; x += DOT_SPACING) {
+    for (let y = DOT_SPACING / 2; y < roomHeightPx; y += DOT_SPACING) {
+      dots.circle(x, y, DOT_RADIUS);
+    }
   }
-  for (let y = 0; y <= roomHeightPx; y += GRID_SPACING) {
-    grid.moveTo(0, y).lineTo(roomWidthPx, y);
-  }
-  grid.stroke({ width: 1, color: GRID_COLOR });
-  container.addChild(grid);
+  dots.fill({ color: 0xffffff, alpha: DOT_ALPHA });
+  container.addChild(dots);
 
-  const border = new Graphics()
-    .rect(0, 0, roomWidthPx, roomHeightPx)
-    .stroke({ width: 4, color: BOUNDS_COLOR });
+  const border = new Graphics().rect(0, 0, roomWidthPx, roomHeightPx).stroke({ width: 3, color: 0xffffff, alpha: BOUNDS_ALPHA });
   container.addChild(border);
 
   return container;
