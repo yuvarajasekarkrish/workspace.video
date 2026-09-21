@@ -1,4 +1,4 @@
-import type { LayoutZone, RoomLayout, Seat, TileRect } from "./types";
+import type { FurnitureKind, FurniturePiece, LayoutZone, RoomLayout, Seat, TileRect } from "./types";
 import { tileRectToWorld } from "./grid";
 import { meetingRoom, mergeModules, type ModuleResult } from "./modules";
 
@@ -21,8 +21,10 @@ import { meetingRoom, mergeModules, type ModuleResult } from "./modules";
  *   meeting  -> "meeting" (table + chairs, from modules)    +-----------+
  *   focus    -> "focus" + one seat per desk
  *
- * Furniture is drawn by the screen, not by the engine, so the layout carries only what the
- * meeting-room module adds.
+ * The layout also carries furniture (desks, chairs, tables, counters, sofas, whiteboards) so the room
+ * screen can draw the map like an office, once, from the same data. The engine ignores furniture. A piece
+ * that would not fit entirely inside its own area is left out, and so is a seat that would fall outside
+ * it, so a small area never draws or seats anything beyond itself.
  */
 
 export type MapZoneKind = "desks" | "creative" | "hub" | "cafe" | "meeting" | "focus";
@@ -56,6 +58,22 @@ function areaZone(zone: MapZone, kind: LayoutZone["kind"]): LayoutZone {
   return { id: zoneIdOf(zone), label: zone.name, kind, rect: zone.rect, capacity: zone.targetUsers };
 }
 
+const CHAIR_SIZE = 32;
+
+function chairAt(id: string, x: number, y: number, size = CHAIR_SIZE): FurniturePiece {
+  return { id, kind: "chair", x: x - size / 2, y: y - size / 2, width: size, height: size, rotation: 0 };
+}
+
+function piece(id: string, kind: FurnitureKind, x: number, y: number, width: number, height: number, label?: string): FurniturePiece {
+  return { id, kind, x, y, width, height, rotation: 0, ...(label ? { label } : {}) };
+}
+
+/** Keeps only the pieces that lie entirely inside the area, so a small area never draws outside itself. */
+function withinArea(rect: TileRect, pieces: FurniturePiece[]): FurniturePiece[] {
+  const box = tileRectToWorld(rect);
+  return pieces.filter((p) => p.x >= box.x && p.y >= box.y && p.x + p.width <= box.x + box.width && p.y + p.height <= box.y + box.height);
+}
+
 /** Where an area's desk pods sit, in pixels from the area's top-left corner, with their row and
  *  column. Used both to place the seats and to count them before anything is built. */
 function deskPodCells(rect: TileRect): { r: number; c: number; left: number; top: number }[] {
@@ -77,17 +95,44 @@ function deskPodCells(rect: TileRect): { r: number; c: number; left: number; top
 function deskArea(zone: MapZone): ModuleResult {
   const box = tileRectToWorld(zone.rect);
   const seats: Seat[] = [];
+  const furniture: FurniturePiece[] = [];
   deskPodCells(zone.rect).forEach((cell, i) => {
+    // The pod's desk is the 100 px square inset 20 px inside the 140 px pod; the four chairs sit at its seats.
+    furniture.push(piece(`${zone.id}-pod-${cell.r}-${cell.c}-desk`, "desk", box.x + cell.left + POD_INSET, box.y + cell.top + POD_INSET, 100, 100));
     POD_SEATS.forEach((seat, k) => {
-      seats.push({
-        id: `${zone.id}-pod-${cell.r}-${cell.c}-${k}`,
-        label: `${zone.name} pod ${i + 1}`,
-        anchor: { x: box.x + cell.left + seat.x, y: box.y + cell.top + seat.y },
-        zoneId: zoneIdOf(zone),
-      });
+      const id = `${zone.id}-pod-${cell.r}-${cell.c}-${k}`;
+      const anchor = { x: box.x + cell.left + seat.x, y: box.y + cell.top + seat.y };
+      seats.push({ id, label: `${zone.name} pod ${i + 1}`, anchor, zoneId: zoneIdOf(zone) });
+      furniture.push(chairAt(`${id}-chair`, anchor.x, anchor.y));
     });
   });
-  return { furniture: [], seats, zones: [areaZone(zone, "open")] };
+  return { furniture, seats, zones: [areaZone(zone, "open")] };
+}
+
+/** Where a focus area's single desks sit, in pixels from the area's top-left corner: only the ones that fit inside it. */
+function focusCells(rect: TileRect): { r: number; c: number; x: number; y: number }[] {
+  const box = tileRectToWorld(rect);
+  const cells: { r: number; c: number; x: number; y: number }[] = [];
+  for (let r = 0; r < FOCUS_ROWS; r++) {
+    for (let c = 0; c < FOCUS_COLS; c++) {
+      const x = 50 + c * 140;
+      const y = 40 + r * 110;
+      if (x + 90 <= box.width && y + 70 <= box.height) cells.push({ r, c, x, y });
+    }
+  }
+  return cells;
+}
+
+/** Where a lounge's stools sit, in pixels from the area's top-left corner: only the ones that fit inside it. */
+function stoolCells(rect: TileRect): { i: number; x: number; y: number }[] {
+  const box = tileRectToWorld(rect);
+  const cells: { i: number; x: number; y: number }[] = [];
+  for (let i = 0; i < STOOL_COUNT; i++) {
+    const x = 100 + i * 70;
+    const y = 120;
+    if (x + 14 <= box.width && y + 14 <= box.height) cells.push({ i, x, y });
+  }
+  return cells;
 }
 
 /** How many seats a list of areas will have, worked out without building them, so a map that would
@@ -100,10 +145,10 @@ export function estimateMapSeats(zones: readonly MapZone[]): number {
         total += deskPodCells(zone.rect).length * POD_SEATS.length;
         break;
       case "focus":
-        total += FOCUS_ROWS * FOCUS_COLS;
+        total += focusCells(zone.rect).length;
         break;
       case "cafe":
-        total += STOOL_COUNT;
+        total += stoolCells(zone.rect).length;
         break;
       case "meeting":
         total += meetingRoom(zone.id, zone.rect, { label: zone.name, capacity: zone.targetUsers }).seats.length;
@@ -118,34 +163,48 @@ export function estimateMapSeats(zones: readonly MapZone[]): number {
 function focusArea(zone: MapZone): ModuleResult {
   const box = tileRectToWorld(zone.rect);
   const seats: Seat[] = [];
-  for (let r = 0; r < FOCUS_ROWS; r++) {
-    for (let c = 0; c < FOCUS_COLS; c++) {
-      seats.push({
-        id: `${zone.id}-desk-${r}-${c}`,
-        label: `${zone.name} desk ${r * FOCUS_COLS + c + 1}`,
-        anchor: { x: box.x + 50 + c * 140 + 45, y: box.y + 40 + r * 110 + 60 },
-        zoneId: zoneIdOf(zone),
-      });
-    }
+  const furniture: FurniturePiece[] = [];
+  for (const cell of focusCells(zone.rect)) {
+    const id = `${zone.id}-desk-${cell.r}-${cell.c}`;
+    const anchor = { x: box.x + cell.x + 45, y: box.y + cell.y + 60 };
+    seats.push({ id, label: `${zone.name} desk ${cell.r * FOCUS_COLS + cell.c + 1}`, anchor, zoneId: zoneIdOf(zone) });
+    furniture.push(piece(`${id}-table`, "desk", box.x + cell.x, box.y + cell.y, 90, 70));
+    furniture.push(chairAt(`${id}-chair`, anchor.x, anchor.y, 28));
   }
-  return { furniture: [], seats, zones: [areaZone(zone, "focus")] };
+  return { furniture, seats, zones: [areaZone(zone, "focus")] };
 }
 
 function cafeArea(zone: MapZone): ModuleResult {
   const box = tileRectToWorld(zone.rect);
   const seats: Seat[] = [];
-  for (let i = 0; i < STOOL_COUNT; i++) {
-    seats.push({
-      id: `${zone.id}-stool-${i}`,
-      label: `${zone.name} stool ${i + 1}`,
-      anchor: { x: box.x + 100 + i * 70, y: box.y + 120 },
-      zoneId: zoneIdOf(zone),
-    });
+  const furniture: FurniturePiece[] = [piece(`${zone.id}-counter`, "counter", box.x + 80, box.y + 60, 350, 45, zone.name)];
+  for (const cell of stoolCells(zone.rect)) {
+    const id = `${zone.id}-stool-${cell.i}`;
+    const anchor = { x: box.x + cell.x, y: box.y + cell.y };
+    seats.push({ id, label: `${zone.name} stool ${cell.i + 1}`, anchor, zoneId: zoneIdOf(zone) });
+    furniture.push(chairAt(`${id}-chair`, anchor.x, anchor.y, 28));
   }
-  return { furniture: [], seats, zones: [areaZone(zone, "open")] };
+  furniture.push(piece(`${zone.id}-sofa`, "sofa", box.x + box.width - 200, box.y + box.height - 120, 150, 56));
+  return { furniture, seats, zones: [areaZone(zone, "open")] };
 }
 
-function convert(zone: MapZone): ModuleResult {
+function hubArea(zone: MapZone): ModuleResult {
+  const box = tileRectToWorld(zone.rect);
+  const reception = piece(`${zone.id}-reception`, "counter", box.x + box.width / 2 - 100, box.y + 60, 200, 50, "Reception");
+  return { furniture: [reception], seats: [], zones: [areaZone(zone, "lobby")] };
+}
+
+function creativeArea(zone: MapZone): ModuleResult {
+  const box = tileRectToWorld(zone.rect);
+  const furniture: FurniturePiece[] = [piece(`${zone.id}-whiteboard`, "whiteboard", box.x + 150, box.y + 20, 200, 8)];
+  for (let c = 0; c < 2; c++) {
+    furniture.push(piece(`${zone.id}-table-${c}`, "desk", box.x + 150 + c * 160, box.y + 120, 80, 60));
+    furniture.push(chairAt(`${zone.id}-stool-${c}`, box.x + 190 + c * 160, box.y + 190, 24));
+  }
+  return { furniture, seats: [], zones: [areaZone(zone, "open")] };
+}
+
+function convertArea(zone: MapZone): ModuleResult {
   switch (zone.type) {
     case "desks":
       return deskArea(zone);
@@ -157,10 +216,15 @@ function convert(zone: MapZone): ModuleResult {
       // The existing, tested module: a table with chairs around it, in a "meeting" zone.
       return meetingRoom(zone.id, zone.rect, { label: zone.name, capacity: zone.targetUsers });
     case "hub":
-      return { furniture: [], seats: [], zones: [areaZone(zone, "lobby")] };
+      return hubArea(zone);
     case "creative":
-      return { furniture: [], seats: [], zones: [areaZone(zone, "open")] };
+      return creativeArea(zone);
   }
+}
+
+function convert(zone: MapZone): ModuleResult {
+  const result = convertArea(zone);
+  return { ...result, furniture: withinArea(zone.rect, result.furniture) };
 }
 
 /** Turns what a company's builder saves (a list of areas) into a layout the engine can run. */

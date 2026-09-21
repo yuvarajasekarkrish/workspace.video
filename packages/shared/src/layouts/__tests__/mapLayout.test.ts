@@ -134,3 +134,58 @@ describe("layoutFromMapZones: what a company's builder will save", () => {
     expect(result.valid).toBe(false);
   });
 });
+
+describe("spatialMap1: the furniture, so the map looks like an office when drawn", () => {
+  const worldBox = (z: { rect: { col: number; row: number; cols: number; rows: number } }) => ({
+    x: z.rect.col * TILE_PX,
+    y: z.rect.row * TILE_PX,
+    right: (z.rect.col + z.rect.cols) * TILE_PX,
+    bottom: (z.rect.row + z.rect.rows) * TILE_PX,
+  });
+  const inside = (p: { x: number; y: number; width: number; height: number }, b: ReturnType<typeof worldBox>) =>
+    p.x >= b.x && p.y >= b.y && p.x + p.width <= b.right && p.y + p.height <= b.bottom;
+
+  it("draws desks, chairs, tables, counters, sofas and whiteboards from the areas", () => {
+    const kinds = new Set(spatialMap1.furniture.map((f) => f.kind));
+    for (const kind of ["desk", "chair", "table", "counter", "sofa", "whiteboard"] as const) expect(kinds.has(kind), kind).toBe(true);
+  });
+
+  it("puts a chair under every seat, so a seat is never an empty spot on the floor", () => {
+    const chairs = spatialMap1.furniture.filter((f) => f.kind === "chair").map((f) => ({ x: f.x + f.width / 2, y: f.y + f.height / 2 }));
+    for (const seat of spatialMap1.seats) {
+      const near = chairs.some((c) => Math.hypot(c.x - seat.anchor.x, c.y - seat.anchor.y) <= 20);
+      expect(near, `${seat.id} at ${seat.anchor.x},${seat.anchor.y}`).toBe(true);
+    }
+  });
+
+  it("draws one desk for each desk pod: 20 pods across the three desk areas", () => {
+    const podDesks = spatialMap1.furniture.filter((f) => f.kind === "desk" && f.id.includes("-pod-"));
+    expect(podDesks).toHaveLength(20);
+  });
+
+  it("keeps every piece inside one of the map's areas, so nothing is drawn out in the open floor", () => {
+    const boxes = SPATIAL_MAP_DEFAULT_ZONES.map(worldBox);
+    for (const piece of spatialMap1.furniture) {
+      expect(boxes.some((b) => inside(piece, b)), `${piece.id} at ${piece.x},${piece.y}`).toBe(true);
+    }
+  });
+
+  it("stays a modest number of pieces, because the fixed floor is drawn once and every piece costs memory", () => {
+    expect(spatialMap1.furniture.length).toBeGreaterThan(60);
+    expect(spatialMap1.furniture.length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("layoutFromMapZones: furniture in very small areas", () => {
+  const kinds = ["desks", "creative", "hub", "cafe", "meeting", "focus"] as const;
+
+  it("never draws a piece outside the floor, whatever the area type, even when the area is one tile", () => {
+    for (const type of kinds) {
+      for (const rect of [{ col: 0, row: 0, cols: 1, rows: 1 }, { col: 3, row: 2, cols: 1, rows: 2 }, { col: 0, row: 0, cols: 2, rows: 1 }]) {
+        const layout = layoutFromMapZones("small@1", [{ id: "a", type, name: "Small", rect, targetUsers: 6 }]);
+        const result = validateLayout(layout);
+        expect(result.valid, `${type} ${JSON.stringify(rect)}: ${result.valid ? "" : result.errors.join("; ")}`).toBe(true);
+      }
+    }
+  });
+});
