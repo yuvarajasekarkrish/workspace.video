@@ -329,3 +329,91 @@ Teammates walking a private draft (E2); assigned desks and "go to my desk" (E4);
 7. **P2** New workspaces start from the starter map (step F).
 
 Outside voice: not run in this review (no second reviewer was available here). That is missing coverage, not a clean result.
+
+## D17. Design review of the map builder (2026-09-21; the owner decided every item)
+
+Written for: the product owner first, then whoever designs and builds the builder screens.
+Sketches (drawn by hand as web pages; the picture tool needed an OpenAI key, which was not set up): [main screen](../designs/map-builder/wire-builder.png), [teal accent candidates](../designs/map-builder/accent-candidates.png), [no-colour options](../designs/map-builder/neutral-options.png).
+
+Design completeness went from 3 out of 10 to 8 out of 10. Nothing was built in this review; these are requirements for step E.
+
+| Pass | Before | After | Note |
+|---|---|---|---|
+| 1 Information architecture | 3 | 9 | Layout below |
+| 2 States (loading, empty, error, success, partial) | 2 | 9 | Table below |
+| 3 Journey and feelings | 3 | 8 | Storyboard below; wording decided in Pass 7 |
+| 4 Generic-looking design | 6 | 7 | The owner chose "only match DESIGN.md": no extra look rules |
+| 5 Design system alignment | 4 | 9 | Colour, control size and map text decided |
+| 6 Responsive and accessibility | 2 | 9 | Mouse and keyboard together; tablet drawers |
+| 7 Open decisions | n/a | all resolved | Below |
+
+### The screen (decision 1A)
+
+```
+ top bar:  office name | "Draft saved 12:04" | Undo | Redo | Edit / Preview | Publish
+ +-------------+-------------------------------------------+---------------------+
+ | Add an area |                                           | The selected area   |
+ |  Desk area  |        THE MAP  (flat, top-down grid,     |  Name               |
+ |  Meeting    |         a dashed "laptop screen" frame)   |  Type               |
+ |  Focus pods |                                           |  Size (tiles)       |
+ |  Lounge     |                                           |  Seats              |
+ |  Plaza      |                                           |  Duplicate / Delete |
+ | History     |                                           |                     |
+ +-------------+-------------------------------------------+---------------------+
+ bottom strip: "Does my office work?"  (plain sentences; "All good" when fine)
+
+ Team and above:  Set up from needs -> Builder (edit) <-> Preview (tilted) -> Publish -> History
+ Startup:         Pick a template ---------------------------------------> Publish -> History
+                  (Startup sees the builder only as a try-out; Publish is locked)
+```
+
+First, second, third: the map; the selected area's details and Publish; adding areas, history and the notes strip. The builder edits on the flat grid (decision 11A); Preview shows the tilted, raised-tile view drawn by the same code as the live room.
+
+### States (decision 2A)
+
+| Feature | Loading | Empty | Error | Success | Partial |
+|---|---|---|---|---|---|
+| Opening the builder | Grid outline and "Opening your office..." (panels already shown) | A Team workspace with no map: never a blank grid; two buttons, "Set up from your team's needs" and "Choose a template" | "We couldn't open your office. Try again." with a Retry button; the live office is unaffected | The map and "Draft saved" | A saved map that now fails its checks: "This version has a problem: (reason). The live office is not affected." and "Go back to the last good version" |
+| Saving the draft | "Saving..." beside the name | n/a | "Not saved. Your changes are kept on this computer and we'll retry." | "Draft saved 12:04" | Offline: "Saved on this computer only" |
+| Dragging or resizing | n/a | n/a | A broken rule (overlap, outside the floor, too many areas) snaps the area back and says why in one plain sentence under the map, announced to screen readers | Area placed | n/a |
+| Publish | Button says "Publishing...", disabled | n/a | "Someone published version 8 first. Review their version." Any other failure names the reason and says nothing changed | "Published. 12 people are reloading." | The occupied-room box; "the reset failed, nothing changed" |
+| Version history | Grey list rows | "Only version 1 so far" | "Couldn't load history. Try again." | Restore asks "Go back to version 5?" | n/a |
+| "Does my office work?" strip | "Checking..." | "All good. Nothing to note." | "Couldn't run the checks" | The notes list | n/a |
+
+### The journey (Pass 3)
+
+| Step | The admin does | Feels | What the plan provides |
+|---|---|---|---|
+| 1 | Signs up, creates the workspace | Curious, a little worried it will be hard | The office already exists from a starter map (D9) |
+| 2 | Opens the builder the first time | Wants control, easily overwhelmed by a blank page | Never a blank grid: set up from needs, or a template |
+| 3 | Sees the first arranged office | Relief and delight | Tilted Preview with sample people |
+| 4 | Drags things around | In control, afraid of ruining it | Undo, redo, "Draft saved", history |
+| 5 | Reads "Does my office work?" | Reassured | Plain sentences; "All good" when all is fine |
+| 6 | Presses Publish with people inside | Nervous | The "N people" box; "nothing changed" if it fails |
+| 7 | Sees it go live | Pride and relief | "Published. 12 people are reloading." |
+| 8 | (Startup) meets the locked Publish | Mild disappointment; at risk of feeling nagged | One calm message, never repeated |
+
+### Decisions
+
+- **Look (4A).** No invented look rules. The builder and the live room follow `DESIGN.md` exactly: its tokens, controls at least 48 px tall (so 48 px in the builder too), text at least 16 px, the themed focus ring.
+- **Accent colour (owner).** Amber is removed as the accent everywhere. The one accent becomes **soft teal `#2dd4bf`** (readability 10.4 to 1 on the ground `#0b0d12`; dark text on it 10.4 to 1). It goes on the main button, the selected item, the highlighted headline words and the person's own dot in the room. `DESIGN.md`'s `accent` and `link` tokens, the colour test in `designTokens.test.ts`, the room screen (currently amber `#f5a623`), the landing page and sign-in must be changed when this is applied; that is a work item, not done in this review. The neutral options (white or black main button) were considered and not chosen.
+- **The live room follows `DESIGN.md` strictly (owner).** Today the room uses the Gemini mock-up's own values (ground `#0a0a0a`, 40 px bar buttons, 13 to 15 px name tags). Those must move onto the `DESIGN.md` tokens and sizes. The builder's Preview inherits this because it is drawn by the same code.
+- **Text drawn on the map (5B).** Area names always draw at 16 px on screen. A person's name tag draws at 16 px only for the local person, people nearby, the person under the mouse and anyone found through search; everyone else is a plain dot until the map is zoomed in. This keeps 200 people readable and meets the 16 px rule. It needs a small change to how the room draws names.
+- **Keyboard and screen readers (6A), together with mouse and touch.** Tab picks an area; arrow keys move it one tile; Shift plus arrows resizes it; Delete removes it (Undo restores it, so there is no extra confirm); Escape cancels a drag and puts the area back. Every move and every refusal is announced, for example "Product moved to column 5, row 3". Focus is always visible with the `DESIGN.md` ring. A test moves an area using only the keyboard.
+- **Publish into an occupied room (7A).** Title "Publish now?". Body "12 people will reload." Buttons "Publish" and "Not yet". An empty office shows no box and publishes at once. The box has no amber (there is none anywhere now).
+- **Startup message (7B).** Publish stays visible. Pressing it opens one box: "Publishing your own layout is part of the Team plan. Your draft stays here on this computer." Buttons "See plans" and "Choose a ready-made template". A quiet "Try-out: not published" stays in the top bar. Nothing else nags.
+- **Tablet (7C).** Below 1100 px wide the map takes the full width and the two side panels become drawers opened by 48 px buttons at the map's edges. Details open when an area is selected and close with Escape or a tap outside. Phones are view-only (D16, 11B).
+- **Told apart by name, not colour.** Area types are told apart by name and a small type icon, because there is one accent. Deleting has no extra confirmation because Undo restores it.
+
+### Battery (the owner asked)
+
+By design the builder draws nothing while idle (the same "rest when still" rule as the live room, which measured 0 frames idle), draws only while something moves, saves the draft once shortly after editing stops (no background timer) and uses no blur or glow. This is a design, not a measurement: once built, measure idle and drag cost in a real browser as was done for the room.
+
+### Work items this review adds
+
+1. Apply the teal accent to `DESIGN.md`, `globals.css`, `designTokens.test.ts`, the landing page, sign-in and the room.
+2. Move the live room onto the `DESIGN.md` tokens, control sizes (the bar and zoom buttons are 40 px today) and text sizes, including the name-tag rule above.
+3. Builder screens as specified above, with the states table, keyboard test, tablet drawers and phone view-only behaviour.
+4. Measure the builder's battery cost once built.
+
+Outside voices: not run in this review (no second reviewer was available). That is missing coverage, not a clean result.
