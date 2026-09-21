@@ -10,7 +10,7 @@ export interface LoadHarnessWorkspace {
 /** Throwaway Enterprise workspace with n + 1 members (the spare one attempts
  *  the limit+1 join) and one default-layout room. Runs server-side so the
  *  load generator never needs database access. */
-export async function provisionLoadHarnessWorkspace(n: number): Promise<LoadHarnessWorkspace> {
+export async function provisionLoadHarnessWorkspace(n: number, layoutId: string = DEFAULT_LAYOUT_ID): Promise<LoadHarnessWorkspace> {
   const suffix = crypto.randomUUID().slice(0, 8);
   const workspace = await prisma.workspace.create({
     data: { name: `Load Harness ${n} ${suffix}`, slug: `load-harness-${n}-${suffix}`, plan: "enterprise" },
@@ -25,7 +25,7 @@ export async function provisionLoadHarnessWorkspace(n: number): Promise<LoadHarn
   }
 
   const room = await prisma.room.create({
-    data: { workspaceId: workspace.id, name: "Load Harness Office", config: { layoutId: DEFAULT_LAYOUT_ID } },
+    data: { workspaceId: workspace.id, name: "Load Harness Office", config: { layoutId } },
   });
 
   return { workspaceId: workspace.id, roomId: room.id, users };

@@ -1,6 +1,6 @@
 /**
  * Load harness for realtime scaling verification. Connects N Socket.IO
- * clients into one workspace, seats roughly half, walks the rest, and
+ * clients into one workspace, seats half by default (see LOAD_HARNESS_SEATED_FRACTION), walks the rest, and
  * measures the server over a steady-state window.
  *
  * Talks ONLY to the realtime server (REALTIME_URL): workspace/user/room
@@ -20,6 +20,8 @@
  *   LOAD_HARNESS_ONLY_N          run a single N instead of 50/100/200
  *   LOAD_HARNESS_ONLY_SCENARIO   spread | cluster
  *   LOAD_HARNESS_INCLUDE_500=1   also run N=500 (server needs LOAD_HARNESS_LIMIT_OVERRIDE=500)
+ *   LOAD_HARNESS_LAYOUT_ID       layout the throwaway room uses, e.g. spatialMap@1 (default openOffice@1)
+ *   LOAD_HARNESS_SEATED_FRACTION share of people who take a seat, 0 to 1 (default 0.5)
  *   LOAD_HARNESS_PROXIMITY_BATCH  default off. 1 = every client declares proximityBatch in join_room and
  *                                 receives proximity:batch (one frame per tick) instead of one
  *                                 proximity:update per change. The report prints frames AND updates
@@ -47,9 +49,6 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import jwt from "jsonwebtoken";
 import { io as ioClient, type Socket } from "socket.io-client";
 import {
-  openOffice1,
-  DEFAULT_MOVEMENT_CONFIG,
-  movementConfigForLayout,
   ServerEvents,
   DEV_REALTIME_JWT_SECRET,
   type Point,
@@ -58,8 +57,9 @@ import type { EmitTailSnapshot } from "../emitTailRecorder";
 import type { GcSnapshot } from "../gcRecorder";
 import { formatStallReport } from "../stallReport";
 import { checkProximityDelivery } from "../proximityDelivery";
+import { parseHarnessOptions, seatTargetCount } from "../loadHarnessOptions";
 
-const ROOM_MOVEMENT_CONFIG = movementConfigForLayout(openOffice1, DEFAULT_MOVEMENT_CONFIG);
+const { layout: LAYOUT, movement: ROOM_MOVEMENT_CONFIG, seatedFraction: SEATED_FRACTION } = parseHarnessOptions(process.env);
 
 const REALTIME_URL = process.env.REALTIME_URL ?? "http://localhost:4001";
 const METRICS_URL = `${REALTIME_URL}/internal/metrics`;
@@ -292,7 +292,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 type Workspace = { workspaceId: string; roomId: string; users: { id: string; email: string }[] };
 
 function provisionWorkspace(n: number): Promise<Workspace> {
-  return postJson<Workspace>("/internal/load-harness/provision", { n });
+  return postJson<Workspace>("/internal/load-harness/provision", { n, layoutId: LAYOUT.id });
 }
 
 async function teardownWorkspace(workspaceId: string, userIds: string[]): Promise<void> {
@@ -653,7 +653,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
 
     // Phase 12: idle canaries never claim a seat or move — see IDLE_CANARY_COUNT.
     const seatCandidates = connected.filter((c) => !c.isIdleCanary);
-    const seatTargets = openOffice1.seats.slice(0, Math.min(seatCandidates.length, Math.floor(n / 2), openOffice1.seats.length));
+    const seatTargets = LAYOUT.seats.slice(0, seatTargetCount(n, seatCandidates.length, LAYOUT.seats.length, SEATED_FRACTION));
     const seatedSockets = new Set<ConnectedSocket>();
     await Promise.all(
       seatTargets.map(
@@ -682,7 +682,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
 
     let movesSent = 0;
     const walkers = connected.filter((c) => !seatedSockets.has(c) && !c.isIdleCanary);
-    const clusterCenter = walkers[0]?.spawnPosition ?? { x: 880, y: 880 };
+    const clusterCenter = walkers[0]?.spawnPosition ?? { x: ROOM_MOVEMENT_CONFIG.roomWidthPx / 2, y: ROOM_MOVEMENT_CONFIG.roomHeightPx / 2 };
     const moveTimers = walkers.map((c) => {
       let { x, y } = scenario === "cluster" ? clusterCenter : c.spawnPosition;
       let lastSentAt = performance.now();
@@ -1057,6 +1057,8 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       cpu: { ...cpu, ofServer: cpuOfServer },
       rss,
       joinLatencyMs: joinLatency,
+      layoutId: LAYOUT.id,
+      seatedFraction: SEATED_FRACTION,
       seated: seatTargets.length,
       movesSent,
       corrections,

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { listLayoutIds } from "@workspace-video/shared";
 import {
   provisionLoadHarnessWorkspace,
   teardownLoadHarnessWorkspace,
@@ -8,7 +9,8 @@ import {
 const MAX_N = 1000;
 
 export interface LoadHarnessFixtureDeps {
-  provision(n: number): Promise<LoadHarnessWorkspace>;
+  /** `layoutId` (optional) names the layout the throwaway room uses; unset means the default. */
+  provision(n: number, layoutId?: string): Promise<LoadHarnessWorkspace>;
   teardown(workspaceId: string, userIds: string[]): Promise<void>;
   /** Phase 10c diagnostic: live occupancy for a room, so the harness can
    *  poll the server's own idea of "who's really still here" during a
@@ -44,12 +46,18 @@ export function maybeRegisterLoadHarnessRoutes(
   if (!loadHarnessRoutesEnabled(env)) return false;
 
   app.post("/internal/load-harness/provision", async (req, reply) => {
-    const n = (req.body as { n?: unknown } | undefined)?.n;
+    const body = req.body as { n?: unknown; layoutId?: unknown } | undefined;
+    const n = body?.n;
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > MAX_N) {
       reply.code(400);
       return { error: `n must be an integer between 1 and ${MAX_N}` };
     }
-    return deps.provision(n);
+    const layoutId = body?.layoutId;
+    if (layoutId !== undefined && (typeof layoutId !== "string" || !listLayoutIds().includes(layoutId))) {
+      reply.code(400);
+      return { error: `layoutId must be one of: ${listLayoutIds().join(", ")}` };
+    }
+    return deps.provision(n, layoutId);
   });
 
   app.post("/internal/load-harness/teardown", async (req, reply) => {

@@ -60,6 +60,29 @@ describe("load-harness routes guard", () => {
     expect(getOccupancy).toHaveBeenCalledWith("room1");
   });
 
+  it("passes an optional layout name to provision, and leaves it unset when none is sent", async () => {
+    app = Fastify();
+    const provision = vi.fn().mockResolvedValue({ workspaceId: "w", roomId: "r", users: [] });
+    maybeRegisterLoadHarnessRoutes(app, { LOAD_HARNESS_ENABLED: "1" }, { provision, teardown: vi.fn() });
+
+    await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5, layoutId: "spatialMap@1" } });
+    await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5 } });
+    expect(provision).toHaveBeenNthCalledWith(1, 5, "spatialMap@1");
+    expect(provision).toHaveBeenNthCalledWith(2, 5, undefined);
+  });
+
+  it("refuses an unknown layout name with a 400 and provisions nothing", async () => {
+    app = Fastify();
+    const provision = vi.fn();
+    maybeRegisterLoadHarnessRoutes(app, { LOAD_HARNESS_ENABLED: "1" }, { provision, teardown: vi.fn() });
+
+    for (const layoutId of ["nope@1", 5, ""]) {
+      const res = await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5, layoutId } });
+      expect(res.statusCode, String(layoutId)).toBe(400);
+    }
+    expect(provision).not.toHaveBeenCalled();
+  });
+
   it("validates n and the teardown body when enabled", async () => {
     app = Fastify();
     const provision = vi.fn();
