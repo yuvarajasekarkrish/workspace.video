@@ -6,3 +6,4 @@ export * from "./plans";
 export * from "./participantLimit";
 export * from "./layouts";
 export * from "./secrets";
+export * from "./permissions";
