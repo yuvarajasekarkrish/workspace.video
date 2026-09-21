@@ -40,7 +40,7 @@ A new user signs up. An admin panel lets them create their space. Once it exists
 
 ## Decisions
 
-**D1. Where a company's map lives.** In the room's existing settings column as `config.map`: a list of areas and a version number. No database change. The workspace and its first room are still created together, as today, from a starter map. The admin panel edits the map; there is no separate "create room, then workspace" order.
+**D1. Where a company's map lives.** In the room's existing settings column as `config.map`: a list of areas and a version number. No database change is needed for the live map. (The version history in D4 adds one table.) The workspace and its first room are still created together, as today, from a starter map. The admin panel edits the map; there is no separate "create room, then workspace" order.
 
 **D2. Coordinates: three worlds, one rule each.**
 | World | Unit | Who uses it |
@@ -95,7 +95,7 @@ The builder snaps to the grid because the engine already stores zones as tile re
 |---|---|---|
 | A | The map format, its checks, and `resolveRoomLayout` in the shared package (no screens). **Done, 2026-09-21** (`packages/shared/src/layouts/roomMap.ts`, 18 tests) | No |
 | B | Server, room page, canvas and chip use `resolveRoomLayout`. **Done, 2026-09-21** (commits `14967b0`, `d0a07a1`) | No (same result for every room that exists, checked against the old lookup) |
-| C | The strict rules: the `designer` role, the versions table, and the server checks for draft, publish, restore and role changes, with a record of who changed what. A full who-may-do-what test table | No (nothing calls it yet) |
+| C | The strict rules: the `designer` role, the versions table, and the server checks for save, publish, restore and role changes, with a record of who changed what, and a who-may-do-what test table. **Done, 2026-09-21** (C1 rules `f2f7105`, C2 database `49c790e` and `628cc52`, C3 routes below). No screens use it yet | No (nothing calls it yet) |
 | D | The map screen with real people and click-to-move. **Start with a measurement** of 100 moving people in a browser, on this design | Only for rooms on the new map |
 | E | The builder in the admin panel: the setup from needs (D12), drag, resize, rename, delete, undo, the preview at screen sizes, fit to screen (D11), publish and go back (D10) | Only for editors |
 | F | New workspaces start from the starter map | Yes, deliberately, after D and E |
@@ -129,3 +129,20 @@ Assigned desks; jump to a person, area or seat; polygons and art templates; seve
 - **Strict rules (C), a table with one test per cell:** for each of not signed in, member, designer, admin and owner, and for each of read the live map, save a draft, publish, restore an old version, and change someone's role: allowed or refused, exactly as D4 says. Plus: the last owner cannot be removed, a designer cannot promote anyone, a stale version is refused, an invalid map is refused with reasons, and every change is recorded with who and when.
 - **Builder (E):** the preview is drawn by the same code as the live map; the automatic arrangement stays inside every limit for headcounts from 5 to 200; the map fits a laptop, a monitor and a phone; undo, redo, delete and restore work.
 - **Map screen (D):** the click and world round-trip; a person sits when walking to a seat and clicking; the 100-person browser measurement is taken once and reported before anything else is built on it.
+
+## Server routes added in step C (no screen uses them yet)
+
+| Address | Who may | What it does |
+|---|---|---|
+| `GET /api/rooms/[roomId]/layout/versions` | owner, admin, designer | history, newest first, and which version is live |
+| `GET /api/rooms/[roomId]/layout/versions/[version]` | owner, admin, designer | one saved version with its map |
+| `POST /api/rooms/[roomId]/layout/versions` | owner, admin, designer | save a map as a new version (`{ map, baseVersion }`); 409 if it is not based on the newest |
+| `POST /api/rooms/[roomId]/layout/publish` | owner, admin, designer | make a version live (`{ version, expectedLiveVersion }`); 409 if someone published first |
+| `POST /api/rooms/[roomId]/layout/restore` | owner, admin, designer | save an old map again as the newest version (`{ version }`) |
+| `PATCH /api/workspaces/[workspaceId]/members/[userId]` | owner, admin (limits in D4) | give a role (`{ role }`) |
+
+The person asking is always the signed-in person; the rules run in the database functions on every call. A person outside the workspace is told "not found", never "forbidden".
+
+## Deployment note
+
+The new role value and table are additive, so deployment (which backs up first) is safe. One caution: once anyone has been given the `designer` role, rolling back to an older version of the app would fail to read that person's membership. Roll back before giving out the role, or roll forward.
