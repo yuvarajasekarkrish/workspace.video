@@ -191,3 +191,20 @@ The person visibly moves with the keyboard and with a click, and a drag on the c
 **A mistake caught by checking, worth remembering.** While removing a temporary test line I accidentally joined the next line, the one that connects the room to the realtime server, onto the end of a comment, so the room stopped connecting (badge stuck on "Idle"). The unit tests could not see it because the canvas needs a real browser. Comparing against the original code found it. Any change to this file needs a real-browser check that the badge says "Connected".
 
 **Still to do for D13:** draw the company's own map on the canvas from its data with the fixed parts cached, and repeat the browser measurement with 200 moving people on that map.
+
+## D14. The floating bar under the map (the owner's words, 2026-09-21)
+
+The owner asked for a **sleek bar floating below the screen** that never spoils the map: the map keeps everything it has, and the bar sits beneath or over an empty edge, never over the picture of the office.
+
+| In the bar | Who sees it | Built today? |
+|---|---|---|
+| Zoom in, zoom out, fit the whole map | everyone | Zoom by wheel exists; the buttons and "fit" do not |
+| Find a person, or go to my desk | everyone | No. Needs a "go to" action the server does not have (only sitting teleports) |
+| A search box to find and reach people | everyone | No. Needs the list of people (exists in the browser) plus the same "go to" action |
+| Edit map | owner, admin, designer only | No (the rules and routes exist; no screen yet) |
+| Microphone, camera, leave | everyone | Audio switch exists; camera and a clear Leave button to be checked |
+| Live status with counts: green = live, red = away, blue = focus, yellow = idle | everyone | **No. There is no status today.** Needs a status for each person, sent through the realtime server |
+
+**Proposed meaning of the statuses (to be confirmed with the owner before building them):** *Live* = in the room and active. *Away* = the person chose Away, or the tab has been hidden for a while. *Focus* = the person chose Focus (do not disturb: others should not walk up to them). *Idle* = no keyboard or mouse for a few minutes. The bar shows how many people are in each. Adding a status to what the realtime server sends about each person is a small change to the message format, so it needs the owner's approval when we reach it.
+
+**Order of work:** (1) the company's map looks like a real office (furniture drawn from the map's areas), (2) the bar with the buttons that need no server change (zoom, fit, leave, microphone, Edit map), (3) find and go-to, (4) status and counts.
