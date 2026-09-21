@@ -208,3 +208,36 @@ The owner asked for a **sleek bar floating below the screen** that never spoils 
 **Proposed meaning of the statuses (to be confirmed with the owner before building them):** *Live* = in the room and active. *Away* = the person chose Away, or the tab has been hidden for a while. *Focus* = the person chose Focus (do not disturb: others should not walk up to them). *Idle* = no keyboard or mouse for a few minutes. The bar shows how many people are in each. Adding a status to what the realtime server sends about each person is a small change to the message format, so it needs the owner's approval when we reach it.
 
 **Order of work:** (1) the company's map looks like a real office (furniture drawn from the map's areas), (2) the bar with the buttons that need no server change (zoom, fit, leave, microphone, Edit map), (3) find and go-to, (4) status and counts.
+
+## D15. The room screen, tilted, raised and with its bar (built and checked in a real browser, 2026-09-21)
+
+**What changed on screen.** The owner asked for one design everywhere (the Gemini look): dark charcoal, one amber accent, a tilted floor, people as dots. The room screen now does this. It is drawing only: the server, the engine, the layout data and the seats are unchanged.
+
+| Piece | How it works | Where |
+|---|---|---|
+| The tilt | The flat floor is turned 45 degrees and leaned back 55 degrees (the Gemini map's own numbers). Every click, walk, zoom and "fit" goes through a few tested functions, so a click on the tilted picture and a position on the server agree. | `canvas/isoMath.ts` |
+| People and seat markers | Drawn upright inside the tilted floor, so dots stay round and names stay level. | `Avatar.ts`, `SeatOverlay.ts` |
+| Raised plates | Each area with 3 or more desks or tables is drawn as one small plate per desk group with floor between the plates; an area with fewer stays one plate. Any template goes through the same rule. Every seat is on a plate (tested). | `canvas/slabPlan.ts`, `FloorView.ts` |
+| Elevation on hover | The plate under the mouse rises (thickness, higher position, growing shadow). No colour change. The furniture, seat markers and people on it rise with it. | `canvas/lift.ts`, `PixiStage.ts` |
+| The bar under the map | One row of icon buttons: microphone, camera, share screen, find people, emoji, status, invite to talk, leave. | `components/RoomDock.tsx` |
+| Zoom buttons | Zoom in, zoom out and fit, bottom-right (above the bar on a phone). | `components/ZoomControls.tsx` |
+
+**Battery, measured in a real browser.** With nobody moving and the mouse anywhere: 0 frames drawn in 2 seconds. Moving the mouse inside one raised plate: 2 frames in 2 seconds. Crossing onto another plate: about 30 frames over about 0.44 seconds, then the drawing stops by itself again. Nothing keeps a timer running.
+
+**What works and what is shown but switched off in the bar.**
+
+| Button | State |
+|---|---|
+| Microphone | Works. Amber until the person turns audio on with a click (a browser rule), then mute and unmute. |
+| Find people | Works. Lists everyone in the room, narrows as the person types, and a click walks to that person. This needed no server change: it uses the same walk-to-a-point as clicking the floor, so the server's movement checks still apply. (This replaces the earlier note that a server "go to" action was needed.) |
+| Leave | Works. Goes back to the home page. |
+| Camera, share screen | Switched off ("coming soon"). The app has no camera or screen-share support yet. |
+| Emoji, set status, invite to talk | Switched off ("coming soon"). They need new messages through the realtime server, which needs the owner's approval first. |
+| Edit map | Not on the bar yet. Only owners, admins and designers may see it, so it waits for the room page to pass down the person's role. |
+
+**Known limits, to decide later.**
+- Notes, shapes and images lie flat on the tilted floor (readable, but not standing up).
+- The floor is fitted to the window when the room opens and when "fit" is pressed; it does not refit by itself if the window is resized afterwards.
+- The status colours (green, red, blue, yellow) and their counts are still to be built, once the owner confirms the meanings proposed under D14.
+
+**A mistake the browser check caught (again).** The first version of the "fit" button also woke the drawing loop, and it was called during start-up before that loop existed, so the room opened blank. A test run would not have shown it. Any change to `PixiStage.ts` still needs a real-browser look: the badge must say "Connected", the person must move when clicked, and the map must show.
