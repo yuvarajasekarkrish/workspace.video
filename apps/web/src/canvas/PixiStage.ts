@@ -71,6 +71,9 @@ export class PixiStage {
   /** Which area the mouse is over and how high each area is raised (see lift.ts). Holds no timers. */
   private readonly lifts = new LiftState();
   private detachHover: (() => void) | null = null;
+  private readonly onRendererResize = (): void => {
+    if (this.viewport.isFitted()) this.fitView();
+  };
   private unsubscribeSnapshotWatch: (() => void) | null = null;
   private unsubscribeObjectsWatch: (() => void) | null = null;
   private unsubscribeSeatsWatch: (() => void) | null = null;
@@ -219,6 +222,9 @@ export class PixiStage {
     this.detachObjectKeyboard = this.attachObjectKeyboard(window);
     this.detachDblClick = this.attachDoubleClick(this.app.canvas as HTMLCanvasElement);
     this.detachHover = this.attachHover(this.app.canvas as HTMLCanvasElement);
+    // The window (and so the drawing area) changed size: keep showing the whole map, unless the person has zoomed or
+    // moved the view themselves. Pixi announces this after it has resized the canvas, so `app.screen` is already new.
+    this.app.renderer.on("resize", this.onRendererResize);
 
     this.app.ticker.add((ticker) => {
       const dtSeconds = ticker.deltaMS / 1000;
@@ -578,6 +584,7 @@ export class PixiStage {
     this.detachObjectKeyboard?.();
     this.detachDblClick?.();
     this.detachHover?.();
+    this.app.renderer?.off("resize", this.onRendererResize);
     this.detachWake?.();
     this.noteEditor.dispose();
     this.unsubscribeSnapshotWatch?.();

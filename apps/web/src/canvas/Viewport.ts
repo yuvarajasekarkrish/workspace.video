@@ -55,6 +55,8 @@ export class Viewport {
   /** Where the floor's top-left corner is on the screen, and the zoom. Together with the fixed tilt they are the whole view. */
   private origin: Point = { x: 0, y: 0 };
   private zoom = 1;
+  /** True from a fit until the person zooms or moves the view themselves. A window resize re-fits only while true. */
+  private fitted = false;
 
   private spaceHeld = false;
   private activePointerId: number | null = null;
@@ -85,7 +87,13 @@ export class Viewport {
     const fit = fitFloor(floor, view);
     this.zoom = fit.scale;
     this.origin = fit.position;
+    this.fitted = true;
     this.applyTransform();
+  }
+
+  /** Whether the view is still the whole-map fit, untouched by the person since. */
+  isFitted(): boolean {
+    return this.fitted;
   }
 
   /** Where a flat floor position appears on the screen (used to place the note editor over a note). */
@@ -184,6 +192,7 @@ export class Viewport {
         x: this.panOriginWorld.x + (e.clientX - this.panOriginScreen.x),
         y: this.panOriginWorld.y + (e.clientY - this.panOriginScreen.y),
       };
+      this.fitted = false;
       this.applyTransform();
     }
   };
@@ -235,6 +244,7 @@ export class Viewport {
     const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor);
     this.zoom = scale;
     this.origin = position;
+    this.fitted = false;
     this.applyTransform();
   }
 }
