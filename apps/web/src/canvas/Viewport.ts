@@ -227,11 +227,14 @@ export class Viewport {
     e.preventDefault();
     const rect = this.canvas.getBoundingClientRect();
     const cursorScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    this.zoomAt(cursorScreen, e.deltaY < 0 ? 1.1 : 1 / 1.1);
+  };
 
-    const { scale, position } = zoomAtCursor(cursorScreen, this.origin, this.zoom, zoomFactor);
+  /** Zooms by `factor`, keeping the floor position under `anchor` (a screen position) exactly where it is. */
+  zoomAt(anchor: Point, factor: number): void {
+    const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor);
     this.zoom = scale;
     this.origin = position;
     this.applyTransform();
-  };
+  }
 }

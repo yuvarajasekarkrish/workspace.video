@@ -15,7 +15,7 @@ export interface ObjectToolbarProps {
  * timescale selection identity, never coordinates — see objectsStore.ts's
  * hard-rule docs), and calls back into PixiStage's
  * createObjectAtViewCenter/ObjectInteractionController for the actual
- * imperative work, matching AudioControls' relationship to
+ * imperative work, matching RoomDock's relationship to
  * SpatialAudioController: React never holds the imperative object itself.
  */
 export function ObjectToolbar({ localUserId, onCreate, onDeleteSelected }: ObjectToolbarProps) {

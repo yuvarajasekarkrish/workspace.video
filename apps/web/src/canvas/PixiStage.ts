@@ -66,6 +66,8 @@ export class PixiStage {
   private layout!: RoomLayout;
   private seatOverlay!: SeatOverlay;
   private floor!: FloorView;
+  /** The floor's size in pixels, for "fit the whole map". */
+  private floorSize = { width: 0, height: 0 };
   /** Which area the mouse is over and how high each area is raised (see lift.ts). Holds no timers. */
   private readonly lifts = new LiftState();
   private detachHover: (() => void) | null = null;
@@ -148,10 +150,9 @@ export class PixiStage {
     this.viewport.world.addChild(this.avatarLayer);
     this.app.stage.addChild(this.world);
     // Show the whole floor, centred, when the room opens.
-    this.viewport.fitToFloor(
-      { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx },
-      { width: this.app.screen.width, height: this.app.screen.height },
-    );
+    this.floorSize = { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx };
+    // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
+    this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
@@ -521,6 +522,27 @@ export class PixiStage {
         });
       },
     );
+  }
+
+  /** Zooms in (factor above 1) or out (below 1) around the middle of the screen. For the zoom buttons. */
+  zoomBy(factor: number): void {
+    this.viewport.zoomAt({ x: this.app.screen.width / 2, y: this.app.screen.height / 2 }, factor);
+    this.gate.wake();
+  }
+
+  /** Shows the whole floor again, centred. For the "fit" button. */
+  fitView(): void {
+    this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
+    this.gate.wake();
+  }
+
+  /** Walks the local person to where another person is standing. For the people search. Does nothing for an unknown
+   *  or the local person. */
+  walkToPerson(userId: string): void {
+    const peer = peersStore.getState().peers.get(userId);
+    if (!peer || peer.isLocal) return;
+    this.movementController.setWalkTarget({ x: peer.position.x, y: peer.position.y });
+    this.gate.wake();
   }
 
   /** Creates a new object centered in the current viewport, for the

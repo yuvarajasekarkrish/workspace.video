@@ -8,7 +8,8 @@ import { ConnectionBadge } from "./ConnectionBadge";
 import { OccupancyBadge } from "./OccupancyBadge";
 import { CapacityScreen } from "./CapacityScreen";
 import { RoomHud } from "./RoomHud";
-import { AudioControls } from "./AudioControls";
+import { RoomDock } from "./RoomDock";
+import { ZoomControls } from "./ZoomControls";
 import { ObjectToolbar } from "./ObjectToolbar";
 import { ZoneToast } from "./ZoneToast";
 import { ZoneHudChip } from "./ZoneHudChip";
@@ -20,6 +21,9 @@ export interface RoomCanvasProps {
   /** The room's layout itself (decided on the room page), not a name to look up. */
   layout: RoomLayout;
 }
+
+/** How much one press of a zoom button zooms. */
+const ZOOM_STEP = 1.25;
 
 async function fetchLiveKitToken(roomId: string) {
   const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/livekit-token`);
@@ -99,6 +103,14 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }
     void audioControllerRef.current?.setMuted(muted);
   }, []);
 
+  const handleGoToPerson = useCallback((userId: string) => {
+    stageRef.current?.walkToPerson(userId);
+  }, []);
+
+  const handleZoomIn = useCallback(() => stageRef.current?.zoomBy(ZOOM_STEP), []);
+  const handleZoomOut = useCallback(() => stageRef.current?.zoomBy(1 / ZOOM_STEP), []);
+  const handleFit = useCallback(() => stageRef.current?.fitView(), []);
+
   const handleCreateObject = useCallback((type: CanvasObjectType, data: Record<string, unknown>) => {
     stageRef.current?.createObjectAtViewCenter(type, data);
   }, []);
@@ -119,7 +131,8 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }
       <ZoneHudChip layout={layout} />
       <ZoneToast />
       <RoomHud />
-      <AudioControls onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} />
+      <RoomDock onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} onGoToPerson={handleGoToPerson} />
+      <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onFit={handleFit} />
       <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
       <CapacityScreen onRetry={handleRetryJoin} />
     </div>
