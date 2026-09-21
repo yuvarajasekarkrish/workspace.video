@@ -23,13 +23,14 @@ function ZoomButton({ label, icon, onClick }: { label: string; icon: IconName; o
   );
 }
 
-/** Zoom in, zoom out and "fit the whole map", stacked in the bottom-right corner, clear of the bar in the middle. */
+/** Zoom in, zoom out and "fit the whole map", stacked in the bottom-right corner. On a narrow screen the bar under the
+ *  map spans the whole width, so the stack sits just above it instead of on top of its last button. */
 export function ZoomControls({ onZoomIn, onZoomOut, onFit }: ZoomControlsProps) {
   return (
     <div
       role="group"
       aria-label="Zoom"
-      className="absolute bottom-4 right-4 z-30 flex flex-col items-center gap-0.5 rounded-full border border-white/10 bg-black/60 p-1 shadow-lg shadow-black/40 backdrop-blur-md"
+      className="absolute bottom-[84px] right-4 z-30 sm:bottom-4 flex flex-col items-center gap-0.5 rounded-full border border-white/10 bg-black/60 p-1 shadow-lg shadow-black/40 backdrop-blur-md"
     >
       <ZoomButton label="Zoom in" icon="plus" onClick={onZoomIn} />
       <ZoomButton label="Zoom out" icon="minus" onClick={onZoomOut} />

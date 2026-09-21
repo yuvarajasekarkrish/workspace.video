@@ -12,7 +12,7 @@ export function RoomHud() {
   const roster = useRoster();
 
   return (
-    <div className="absolute right-3 top-3 w-48 rounded-lg bg-black/50 p-3 text-xs backdrop-blur">
+    <div className="absolute right-3 top-16 w-48 rounded-lg bg-black/50 p-3 text-xs backdrop-blur">
       <div className="mb-2 font-semibold text-neutral-300">In this room ({roster.length})</div>
       <ul className="space-y-1">
         {roster.map((peer) => (
