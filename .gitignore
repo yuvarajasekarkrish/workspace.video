@@ -18,3 +18,6 @@ coverage/
 deploy/**/*.generated.*
 deploy/**/_smoke/
 vitest-report.json
+
+# Screenshots and traces from the browser check tool
+.playwright-mcp/
