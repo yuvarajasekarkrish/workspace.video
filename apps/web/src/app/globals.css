@@ -14,10 +14,10 @@
   --color-line: #343a47; /* borders */
   --color-fg: #e6e8eb; /* body text */
   --color-fg-muted: #a9afba; /* secondary text; 4.5:1 or better on ground and surface */
-  --color-accent: #f5a623; /* the one accent: primary buttons, highlights */
-  --color-accent-hover: #e09612;
+  --color-accent: #2dd4bf; /* the one accent, a soft teal: primary buttons, highlights */
+  --color-accent-hover: #14b8a6;
   --color-on-accent: #0a0a0a; /* text on the accent (the ground colour, dark) */
-  --color-link: #f2c27e; /* links and text buttons on ground */
+  --color-link: #5eead4; /* links and text buttons on ground */
   --color-danger: #f87171; /* error text */
   --color-focus: #93c5fd; /* the keyboard focus ring */
 

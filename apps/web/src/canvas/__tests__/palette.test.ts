@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ACCENT, GROUND, GROUND_CSS, cssHex } from "../palette";
 
-// Every colour the room canvas draws with lives in canvas/palette.ts. Before this, the same amber was copied into
+// Every colour the room canvas draws with lives in canvas/palette.ts. Before this, the same accent was copied into
 // four files, so changing the accent (or bringing the room onto DESIGN.md's colours) meant hunting for copies and
 // missing one. A colour written anywhere else in the canvas code fails this test.
 
@@ -21,14 +21,14 @@ function sourceFiles(dir: string): string[] {
 
 describe("the canvas palette", () => {
   it("turns a colour number into the CSS text Pixi and the page need", () => {
-    expect(cssHex(0xf5a623)).toBe("#f5a623");
+    expect(cssHex(0x2dd4bf)).toBe("#2dd4bf");
     expect(cssHex(0x0a0a0a)).toBe("#0a0a0a");
     expect(cssHex(0x000000)).toBe("#000000");
     expect(GROUND_CSS).toBe(cssHex(GROUND));
   });
 
-  it("keeps the accent and the ground the room had before the colours moved here", () => {
-    expect(ACCENT).toBe(0xf5a623);
+  it("uses the soft teal chosen in the design review as the one accent, and the ground the room already had", () => {
+    expect(ACCENT).toBe(0x2dd4bf);
     expect(GROUND).toBe(0x0a0a0a);
   });
 

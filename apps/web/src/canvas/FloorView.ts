@@ -7,7 +7,7 @@ import { ACCENT, BLACK, CHAIR_FILL, LINE, PANEL_FILL, PLANT_GREEN, SLAB_EDGE, WH
 
 /**
  * The office floor: a layout's areas and furniture, drawn once in the Gemini design's look (charcoal panels, soft
- * white outlines, one amber accent; docs/designs/gemini-landing.html.html). Built ONCE from the layout and never
+ * white outlines, one accent; docs/designs/gemini-landing.html.html). Built ONCE from the layout and never
  * touched by the per-frame render loop; this is the whole point of keeping furniture out of objectsStore (see the
  * Phase 8 plan's rendering section). Seat occupancy (who's sitting where) is a separate, small overlay added on top
  * (SeatOverlay.ts): this module only draws the room as it exists at rest.

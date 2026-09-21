@@ -2,7 +2,7 @@ import { Container, Graphics, Matrix, Text } from "pixi.js";
 import { uprightMatrix } from "./isoMath";
 import { ACCENT, BLACK, INK, NAME_TAG_TEXT, PERSON_SLATE, WHITE } from "./palette";
 
-// The Gemini design's people: a slate dot for everyone else, an amber dot with a soft glow for you, and a small dark
+// The Gemini design's people: a slate dot for everyone else, an accent-coloured dot with a soft glow for you, and a small dark
 // name tag above (docs/designs/gemini-landing.html.html).
 const RADIUS = 15;
 const YOU_RADIUS = 17;
