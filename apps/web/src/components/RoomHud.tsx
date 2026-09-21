@@ -17,7 +17,7 @@ export function RoomHud() {
       <ul className="space-y-1">
         {roster.map((peer) => (
           <li key={peer.userId} className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${peer.isLocal ? "bg-blue-400" : "bg-emerald-400"}`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${peer.isLocal ? "bg-accent" : "bg-slate-500"}`} />
             <span className="truncate">
               {peer.name} {peer.isLocal && <span className="text-neutral-500">(you)</span>}
             </span>
