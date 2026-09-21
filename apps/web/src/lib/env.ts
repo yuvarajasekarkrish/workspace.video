@@ -1,3 +1,4 @@
+import { optionalEmail, optionalHttpsUrl, socialLinksFrom } from "./publicLinks";
 import { required as requiredFrom, resolveSecret, resolveDatabaseUrl, DEV_REALTIME_JWT_SECRET } from "@workspace-video/shared";
 
 /** Central environment configuration for apps/web, server-side only. */
@@ -46,6 +47,10 @@ export const env = {
   // Signs the short-lived socket token; apps/realtime verifies it with the same
   // value (its REALTIME_JWT_SECRET). Not used for the sign-in cookie.
   realtimeJwtSecret,
+  // Optional addresses for public links. A link without an address is not shown at all.
+  demoUrl: optionalHttpsUrl(process.env.DEMO_URL),
+  contactEmail: optionalEmail(process.env.CONTACT_EMAIL),
+  socialLinks: socialLinksFrom(process.env),
   // Sign-in email provider (Resend). Required in production, where the app refuses to
   // start without them; unused in development, which prints the link instead.
   resendApiKey: resolveSecret(process.env, "RESEND_API_KEY", "", "Set RESEND_API_KEY to your Resend API key."),
