@@ -172,3 +172,22 @@ The launch target is **up to 200 people in one space** (the Enterprise plan's ca
 - The canvas stops drawing when nothing moves. Today the room screen's loop runs every frame even when idle; making it stop itself is part of the light-weight work and is not done yet.
 - Plain HTML and CSS stay for the home-page demo, the panels, the builder's controls and the preview frame, where there are few moving parts.
 - This overrules my earlier plan to draw the whole map as plain HTML. If a real device shows a different result, this decision can be revisited.
+
+## Step D, part 2: the room screen rests when nothing moves (built and measured 2026-09-21)
+
+**What changed.** The room's drawing loop used to ask the browser for a new frame on every screen refresh, all the time. It now rests after five quiet frames and wakes the instant anything happens: a key, a click, a drag, the wheel, a resized window, the tab coming back, or anyone moving, joining, leaving or sitting. Pixi's own two spare clocks (one for pointer events this screen does not use, one for its memory clean-up chores) rest and wake with it. Files: `apps/web/src/canvas/idleGate.ts`, `PixiStage.ts`, `apps/web/src/input/MovementController.ts` (a new `needsFrames()` so the last step of a walk is never left unsent).
+
+**Measured in a real browser** (the room page, signed in, connected to the realtime server; Microsoft Edge without a graphics chip on the owner's small PC, so this shows processor work, not battery):
+
+| | before | after |
+|---|---|---|
+| Frames requested per second, nobody doing anything | about 179 | **0** |
+| Share of the browser's main thread busy, idle | 13% | **about 0.1%** |
+| While a key is held or a walk is under way | drawing every frame | drawing every frame (about 60 a second per clock) |
+| After the person stops | kept drawing | **back to 0** within a fraction of a second |
+
+The person visibly moves with the keyboard and with a click, and a drag on the canvas redraws, so nothing was lost.
+
+**A mistake caught by checking, worth remembering.** While removing a temporary test line I accidentally joined the next line, the one that connects the room to the realtime server, onto the end of a comment, so the room stopped connecting (badge stuck on "Idle"). The unit tests could not see it because the canvas needs a real browser. Comparing against the original code found it. Any change to this file needs a real-browser check that the badge says "Connected".
+
+**Still to do for D13:** draw the company's own map on the canvas from its data with the fixed parts cached, and repeat the browser measurement with 200 moving people on that map.
