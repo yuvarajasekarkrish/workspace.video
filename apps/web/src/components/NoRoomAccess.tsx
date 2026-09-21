@@ -10,7 +10,7 @@ export function NoRoomAccess({ email }: { email: string }) {
     <main className="flex min-h-screen items-center justify-center p-8">
       <div className="w-full max-w-sm space-y-4">
         <h1 className="text-lg font-semibold">You don&apos;t have access to this room</h1>
-        <p className="text-base text-neutral-300">
+        <p className="text-base text-fg">
           You&apos;re signed in as <span className="font-medium">{email}</span>. If you were invited with a different
           address, sign out and open the invite link again with that one.
         </p>
@@ -18,7 +18,7 @@ export function NoRoomAccess({ email }: { email: string }) {
           <SignOutButton />
           <Link
             href="/"
-            className="inline-flex min-h-12 items-center rounded bg-blue-600 px-4 text-base font-medium hover:bg-blue-500"
+            className="inline-flex min-h-12 items-center rounded bg-accent px-4 text-base font-medium text-on-accent hover:bg-accent-hover"
           >
             Go to my workspaces
           </Link>

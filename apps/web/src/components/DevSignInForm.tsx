@@ -41,13 +41,13 @@ export function DevSignInForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-3 border-t border-neutral-800 pt-6">
-      <h2 className="text-sm font-semibold text-neutral-300">Dev sign-in</h2>
-      <p className="text-sm text-neutral-400">
+    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-3 border-t border-line pt-6">
+      <h2 className="text-base font-semibold text-fg">Dev sign-in</h2>
+      <p className="text-base text-fg-muted">
         Enter a seeded user&apos;s email. Run <code>pnpm --filter @workspace-video/db run seed</code> first if you
         haven&apos;t.
       </p>
-      <label htmlFor="dev-signin-email" className="block text-sm font-medium text-neutral-300">
+      <label htmlFor="dev-signin-email" className="block text-base font-medium text-fg">
         Seeded email
       </label>
       <input
@@ -55,17 +55,17 @@ export function DevSignInForm() {
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
       />
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded bg-neutral-700 px-3 py-2 text-sm font-medium disabled:opacity-50"
+        className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base font-medium text-fg disabled:opacity-50"
       >
         {pending ? "Signing in…" : "Sign in as"}
       </button>
       {error && (
-        <p role="alert" className="text-sm text-red-400">
+        <p role="alert" className="text-base text-danger">
           {error}
         </p>
       )}

@@ -44,14 +44,14 @@ export function CreateWorkspaceForm() {
     <form onSubmit={handleSubmit} className="w-full max-w-2xl space-y-6">
       <div>
         <h1 className="mb-1 text-lg font-semibold">Create a workspace</h1>
-        <p className="text-sm text-neutral-400">
+        <p className="text-base text-fg-muted">
           Every workspace gets the same office floor. Your plan sets how many people can be
           inside at the same time.
         </p>
       </div>
 
       <div className="space-y-1">
-        <label htmlFor="workspace-name" className="block text-sm font-medium text-neutral-300">
+        <label htmlFor="workspace-name" className="block text-base font-medium text-fg">
           Workspace name
         </label>
         <input
@@ -61,12 +61,12 @@ export function CreateWorkspaceForm() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Northwind Studio"
-          className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
         />
       </div>
 
       <div className="space-y-2">
-        <span className="block text-sm font-medium text-neutral-300">
+        <span className="block text-base font-medium text-fg">
           How many people will be in the office at once?
         </span>
         <div role="radiogroup" className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -79,28 +79,28 @@ export function CreateWorkspaceForm() {
               onClick={() => setPlan(id)}
               className={`rounded-lg border p-3 text-left transition-colors ${
                 plan === id
-                  ? "border-blue-500 bg-blue-950/40"
-                  : "border-neutral-800 bg-neutral-900 hover:border-neutral-700"
+                  ? "border-accent bg-accent/15"
+                  : "border-line bg-surface hover:border-fg-muted"
               }`}
             >
-              <div className="text-sm font-semibold text-neutral-100">{PLAN_LABELS[id]}</div>
-              <div className="font-mono text-lg text-neutral-100">{PLAN_PARTICIPANT_LIMITS[id]}</div>
-              <div className="text-xs text-neutral-400">people at once</div>
+              <div className="text-base font-semibold text-fg">{PLAN_LABELS[id]}</div>
+              <div className="font-mono text-lg text-fg">{PLAN_PARTICIPANT_LIMITS[id]}</div>
+              <div className="text-base text-fg-muted">people at once</div>
             </button>
           ))}
         </div>
       </div>
 
-      <p className="text-xs text-neutral-500">No payment is taken.</p>
+      <p className="text-base text-fg-muted">No payment is taken.</p>
 
       <button
         type="submit"
         disabled={pending || !name.trim()}
-        className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium disabled:opacity-50 sm:w-auto"
+        className="min-h-12 w-full rounded bg-accent px-3 py-2 text-base font-medium text-on-accent disabled:opacity-50 sm:w-auto"
       >
         {pending ? "Creating…" : "Create workspace"}
       </button>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-base text-danger">{error}</p>}
     </form>
   );
 }

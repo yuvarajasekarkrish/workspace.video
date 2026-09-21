@@ -1,4 +1,29 @@
 @import "tailwindcss";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* The design tokens. Each colour and typeface is defined once, here; see DESIGN.md at
+   the repository root. Tailwind turns each name into classes (bg-ground, text-fg,
+   text-fg-muted, border-line, bg-accent, text-on-accent, text-link, text-danger). The
+   colour pairs are checked against the contrast rules by lib/__tests__/designTokens.test.ts. */
+@theme {
+  --color-ground: #0b0d12; /* the page */
+  --color-surface: #14171f; /* inputs and panels sitting on the page */
+  --color-line: #343a47; /* borders */
+  --color-fg: #e6e8eb; /* body text */
+  --color-fg-muted: #a9afba; /* secondary text; 4.5:1 or better on ground and surface */
+  --color-accent: #2563eb; /* the one accent: primary buttons */
+  --color-accent-hover: #3b82f6;
+  --color-on-accent: #ffffff; /* text on the accent */
+  --color-link: #60a5fa; /* links and text buttons on ground */
+  --color-danger: #f87171; /* error text */
+  --color-focus: #93c5fd; /* the keyboard focus ring */
+
+  /* A real UI face, and a number face for counts. Swap either here, in one place. */
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
 
 :root {
   color-scheme: dark;
@@ -8,7 +33,44 @@ html,
 body {
   height: 100%;
   margin: 0;
-  background: #0b0d12;
-  color: #e6e8eb;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--color-ground);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  caret-color: var(--color-focus);
+}
+
+/* Browser surfaces belong to the design too: keyboard focus, selection, form accents. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  color: var(--color-on-accent);
+}
+
+input,
+button,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* Numbers that line up, for counts and timers. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -108,17 +108,17 @@ export function SignInForm({
       <div className="w-full max-w-sm space-y-3">
         <div aria-live="polite" className="space-y-3">
           <h1 className="text-lg font-semibold">Check your email</h1>
-          <p className="text-sm text-neutral-300">
+          <p className="text-base text-fg">
             We sent a sign-in link to <span className="font-medium">{status.email}</span>. It works once and expires in
             15 minutes.
           </p>
         </div>
-        <p className="text-sm text-neutral-300">Nothing yet? Check your spam folder, or send it again.</p>
+        <p className="text-base text-fg">Nothing yet? Check your spam folder, or send it again.</p>
         <button
           type="button"
           onClick={() => handleResend(status.email)}
           disabled={waiting || resending}
-          className="min-h-12 w-full rounded bg-blue-600 px-3 py-2 text-base font-medium disabled:opacity-50"
+          className="min-h-12 w-full rounded bg-accent px-3 py-2 text-base font-medium text-on-accent disabled:opacity-50"
         >
           {resending ? "Sending…" : waiting ? `Send it again (${secondsLeft}s)` : "Send it again"}
         </button>
@@ -127,7 +127,7 @@ export function SignInForm({
           {waiting ? `You can ask for another link in ${RESEND_WAIT_SECONDS} seconds.` : "You can send it again now."}
         </p>
         {resendError && (
-          <p role="alert" className="text-sm text-red-400">
+          <p role="alert" className="text-base text-danger">
             {resendError}
           </p>
         )}
@@ -139,7 +139,7 @@ export function SignInForm({
             setSecondsLeft(0);
             setStatus({ kind: "idle" });
           }}
-          className="text-sm text-blue-400 hover:underline"
+          className="text-base text-link hover:underline"
         >
           Use a different email
         </button>
@@ -152,14 +152,14 @@ export function SignInForm({
   return (
     <div className="w-full max-w-sm space-y-6">
       {shownNotice && (
-        <p role="alert" className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200">
+        <p role="alert" className="rounded border border-line bg-surface px-3 py-2 text-base text-fg">
           {shownNotice}
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <h1 className="text-lg font-semibold">Sign in</h1>
-        <p className="text-sm text-neutral-400">We&apos;ll email you a link. No password.</p>
-        <label htmlFor="signin-email" className="block text-sm font-medium text-neutral-300">
+        <p className="text-base text-fg-muted">We&apos;ll email you a link. No password.</p>
+        <label htmlFor="signin-email" className="block text-base font-medium text-fg">
           Email
         </label>
         <input
@@ -169,17 +169,17 @@ export function SignInForm({
           autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
         />
         <button
           type="submit"
           disabled={sending}
-          className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium disabled:opacity-50"
+          className="min-h-12 w-full rounded bg-accent px-3 py-2 text-base font-medium text-on-accent disabled:opacity-50"
         >
           {sending ? "Sending…" : "Email me a link"}
         </button>
         {status.kind === "error" && (
-          <p role="alert" className="text-sm text-red-400">
+          <p role="alert" className="text-base text-danger">
             {status.message}
           </p>
         )}

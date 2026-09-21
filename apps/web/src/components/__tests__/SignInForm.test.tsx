@@ -239,3 +239,19 @@ describe("SignInForm: the email has not arrived", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("SignInForm: phone sizes", () => {
+  it("uses 16px text in the field (so iPhone Safari does not zoom) and controls at least 48px tall", () => {
+    render(<SignInForm />);
+    for (const el of [emailInput(), submitButton()]) {
+      expect(el.className, el.tagName).toMatch(/\btext-base\b/);
+      expect(el.className, el.tagName).toMatch(/\bmin-h-12\b/);
+    }
+    expect(submitButton().className).toMatch(/\bw-full\b/);
+  });
+
+  it("uses no low-contrast grey for its text", () => {
+    const { container } = render(<SignInForm notice="x" />);
+    expect(container.innerHTML).not.toMatch(/neutral-(400|500|600)/);
+  });
+});

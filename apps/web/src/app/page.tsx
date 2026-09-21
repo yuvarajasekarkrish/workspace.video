@@ -42,12 +42,12 @@ export default async function HomePage({
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="mb-1 text-xl font-semibold">workspace.video</h1>
-          <p className="text-sm text-neutral-400">Signed in as {session.email}</p>
+          <p className="text-base text-fg-muted">Signed in as {session.email}</p>
         </div>
         <div className="flex items-start gap-2">
           <Link
             href="/workspaces/new"
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium hover:bg-blue-500"
+            className="inline-flex min-h-12 items-center rounded bg-accent px-3 text-base font-medium text-on-accent hover:bg-accent-hover"
           >
             Create workspace
           </Link>
@@ -58,12 +58,12 @@ export default async function HomePage({
       {memberships.length === 0 && <WelcomeEmptyState />}
 
       {memberships.map((m) => (
-        <div key={m.workspace.id} className="mb-4 rounded-lg border border-neutral-800 p-4">
+        <div key={m.workspace.id} className="mb-4 rounded-lg border border-line p-4">
           <h2 className="mb-2 font-medium">{m.workspace.name}</h2>
           <ul className="space-y-1">
             {m.workspace.rooms.map((room) => (
               <li key={room.id}>
-                <Link href={`/room/${room.id}`} className="text-sm text-blue-400 hover:underline">
+                <Link href={`/room/${room.id}`} className="text-base text-link hover:underline">
                   {room.name} →
                 </Link>
               </li>

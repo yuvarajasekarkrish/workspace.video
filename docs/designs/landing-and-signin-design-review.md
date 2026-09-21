@@ -79,7 +79,7 @@ Score: **3/10 before, 7/10 after these decisions are built** (the lowest of the 
 - [x] **T2 (P1)** Used-link and expired-link message (D1). Files: `SignInForm.tsx`, `app/page.tsx`. Verify: component test with `?error=INVALID_TOKEN` and `EXPIRED_TOKEN`.
 - [x] **T3 (P1)** "Check your email": spam hint and resend after a wait (D7). Verify: test the wait and the limit message.
 - [x] **T4 (P1)** Welcome state for a new person (D8) and the no-access screen (D10).
-- [ ] **T5 (P2)** Design tokens, `DESIGN.md`, real font pair, themed focus ring (5A, D13).
-- [ ] **T6 (P2)** Phone and accessibility rules on the form (D12, D13).
+- [x] **T5 (P2)** Design tokens, `DESIGN.md`, real font pair, themed focus ring (5A, D13).
+- [x] **T6 (P2)** Phone and accessibility rules on the form (D12, D13).
 - [ ] **T7 (P2)** Landing page first screen with the email box and the clip (D4-D6, D14). Needs open items 1 and 4.
 - [ ] **T8 (P3)** The remaining landing sections: pricing, FAQ, use cases (D11). Needs open item 2.
