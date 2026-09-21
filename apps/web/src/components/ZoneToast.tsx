@@ -67,9 +67,9 @@ export function ZoneToast() {
   if (!message) return null;
 
   return (
-    <div className="absolute left-1/2 top-16 z-40 w-80 -translate-x-1/2 rounded-lg bg-black/80 px-4 py-3 text-center text-sm text-white shadow-lg backdrop-blur">
+    <div className="absolute left-1/2 top-16 z-40 w-80 max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-lg border border-line bg-surface px-4 py-3 text-center text-base text-fg shadow-lg">
       <div className="font-semibold">{message.title}</div>
-      <div className="mt-0.5 text-xs text-neutral-300">{message.body}</div>
+      <div className="mt-0.5 text-base text-fg-muted">{message.body}</div>
     </div>
   );
 }

@@ -44,12 +44,12 @@ function DockButton({ label, icon, onClick, soon, disabled, pressed, attention, 
   const text = soon ? `${label} (coming soon)` : label;
   const off = soon || disabled;
   const tone = off
-    ? "text-neutral-600"
+    ? "text-fg-muted opacity-50"
     : attention
       ? "text-accent"
       : danger
-        ? "text-red-300 hover:bg-red-500/20"
-        : "text-neutral-200 hover:bg-white/10 hover:text-white";
+        ? "text-danger hover:bg-ground"
+        : "text-fg hover:bg-ground";
   return (
     <button
       type="button"
@@ -67,7 +67,7 @@ function DockButton({ label, icon, onClick, soon, disabled, pressed, attention, 
 }
 
 function Divider() {
-  return <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-white/10" />;
+  return <span aria-hidden="true" className="mx-1 h-6 w-px shrink-0 bg-line" />;
 }
 
 /**
@@ -111,14 +111,14 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson }: RoomDock
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-2 px-4">
       {status === "error" && error && (
-        <div className="pointer-events-auto rounded-full bg-black/60 px-3 py-1.5 text-xs text-red-300 backdrop-blur">Audio: {error}</div>
+        <div className="pointer-events-auto rounded-full border border-line bg-surface px-4 py-2 text-base text-danger">Audio: {error}</div>
       )}
       <PeopleSearch onGoToPerson={onGoToPerson}>
         {(searchButton) => (
           <div
             role="toolbar"
             aria-label="Room controls"
-            className="pointer-events-auto flex max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-black/60 px-2 py-1.5 shadow-lg shadow-black/40 backdrop-blur-md"
+            className="pointer-events-auto flex max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto rounded-full border border-line bg-surface px-2 py-1.5 shadow-lg"
           >
             <DockButton
               label={micLabel}
@@ -140,7 +140,7 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson }: RoomDock
               href="/"
               title="Leave room"
               aria-label="Leave room"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-danger transition-colors hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <Icon name="leave" />
             </Link>
@@ -201,9 +201,9 @@ function PeopleSearch({
         <div
           role="dialog"
           aria-label="Find people"
-          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-white/10 bg-black/70 p-2 shadow-lg shadow-black/40 backdrop-blur-md"
+          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-line bg-surface p-2 shadow-lg"
         >
-          <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">
+          <div className="flex h-12 items-center gap-2 rounded-full border border-line bg-ground px-4 text-fg-muted">
             <Icon name="search" size={16} />
             <input
               id="people-search"
@@ -213,7 +213,7 @@ function PeopleSearch({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Find a person"
               aria-label="Find a person"
-              className="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
+              className="w-full bg-transparent text-base text-fg placeholder:text-fg-muted focus:outline-none"
             />
           </div>
           <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="People in this room">
@@ -227,18 +227,18 @@ function PeopleSearch({
                     close();
                   }}
                   title={person.isLocal ? "This is you" : `Walk to ${person.name}`}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:text-neutral-500 disabled:hover:bg-transparent"
+                  className="flex w-full items-center gap-3 min-h-12 rounded-xl px-2 py-1.5 text-left text-base text-fg transition-colors hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:text-fg-muted disabled:hover:bg-transparent"
                 >
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${person.isLocal ? "bg-accent/20 text-accent" : "bg-slate-700 text-slate-200"}`}>
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${person.isLocal ? "bg-accent/20 text-accent" : "bg-line text-fg"}`}>
                     <Icon name="user" size={14} />
                   </span>
                   <span className="truncate">{person.name}</span>
-                  {person.isLocal && <span className="ml-auto text-xs text-neutral-500">you</span>}
+                  {person.isLocal && <span className="ml-auto text-base text-fg-muted">you</span>}
                 </button>
               </li>
             ))}
             {shown.length === 0 && (
-              <li className="px-2 py-3 text-center text-sm text-neutral-500">{roster.length <= 1 ? "No one else is here yet." : "No one matches."}</li>
+              <li className="px-2 py-3 text-center text-base text-fg-muted">{roster.length <= 1 ? "No one else is here yet." : "No one matches."}</li>
             )}
           </ul>
         </div>

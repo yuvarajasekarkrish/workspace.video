@@ -12,14 +12,14 @@ export function RoomHud() {
   const roster = useRoster();
 
   return (
-    <div className="absolute right-3 top-16 w-48 rounded-lg bg-black/50 p-3 text-xs backdrop-blur">
-      <div className="mb-2 font-semibold text-neutral-300">In this room ({roster.length})</div>
+    <div className="w-64 max-w-full rounded-lg border border-line bg-surface p-3 text-base text-fg">
+      <div className="mb-2 font-semibold text-fg-muted">In this room ({roster.length})</div>
       <ul className="space-y-1">
         {roster.map((peer) => (
           <li key={peer.userId} className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${peer.isLocal ? "bg-accent" : "bg-slate-500"}`} />
+            <span className={`h-2 w-2 rounded-full ${peer.isLocal ? "bg-accent" : "bg-fg-muted"}`} />
             <span className="truncate">
-              {peer.name} {peer.isLocal && <span className="text-neutral-500">(you)</span>}
+              {peer.name} {peer.isLocal && <span className="text-fg-muted">(you)</span>}
             </span>
           </li>
         ))}

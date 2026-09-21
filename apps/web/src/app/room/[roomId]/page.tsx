@@ -60,8 +60,8 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   );
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-[#0b0d12]">
-      <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 text-sm text-neutral-400">
+    <main className="h-screen w-screen overflow-hidden bg-ground">
+      <div className="absolute left-1/2 top-3 z-10 hidden -translate-x-1/2 text-base text-fg-muted sm:block">
         {room.name}
       </div>
       <RoomCanvas

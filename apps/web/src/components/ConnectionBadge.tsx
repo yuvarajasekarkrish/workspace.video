@@ -14,7 +14,7 @@ const LABEL: Record<string, string> = {
 };
 
 const DOT_COLOR: Record<string, string> = {
-  idle: "bg-neutral-500",
+  idle: "bg-fg-muted",
   "resolving-endpoint": "bg-amber-400",
   connecting: "bg-amber-400",
   joining: "bg-amber-400",
@@ -32,10 +32,10 @@ export function ConnectionBadge() {
   const error = useConnectionStore((s) => s.error);
 
   return (
-    <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-xs backdrop-blur">
-      <span className={`h-2 w-2 rounded-full ${DOT_COLOR[status] ?? "bg-neutral-500"}`} />
+    <div className="flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2 text-base text-fg">
+      <span className={`h-3 w-3 rounded-full ${DOT_COLOR[status] ?? "bg-fg-muted"}`} />
       <span>{LABEL[status] ?? status}</span>
-      {error && status === "error" && <span className="text-red-300">— {error}</span>}
+      {error && status === "error" && <span className="text-danger">— {error}</span>}
     </div>
   );
 }
