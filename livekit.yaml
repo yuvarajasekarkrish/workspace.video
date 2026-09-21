@@ -23,6 +23,13 @@ rtc:
   # still doesn't flow after this, rtc.node_ip pinned to a host-reachable
   # address is the next thing to try.
   use_external_ip: false
+  # Applied: without it LiveKit advertised the container's own address
+  # (172.20.x.x in the startup log), which the host browser cannot reach, and
+  # the browser reported "could not establish pc connection". The UDP range
+  # above is published on the host, so a browser on the same machine reaches
+  # it at 127.0.0.1. This is right for local development on one machine only:
+  # a browser on another machine needs the host's LAN address here instead.
+  node_ip: 127.0.0.1
 
 logging:
   level: info
