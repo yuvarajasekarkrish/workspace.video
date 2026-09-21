@@ -10,6 +10,8 @@ import {
 import { SPATIAL_MAP_DEFAULT_ZONES, spatialMap1, type MapZone } from "../mapLayout";
 import { openOffice1 } from "../openOffice";
 import { validateLayout } from "../validate";
+import { resolveLayout } from "../registry";
+import { parseRoomConfig } from "../queries";
 
 // A company's map arrives from the admin panel, so it is untrusted input: it is checked when saved
 // and again when loaded, and a broken one must never change the office silently (decision D6, D7 in
@@ -160,6 +162,28 @@ describe("resolveRoomLayout: one place decides a room's layout", () => {
       const resolved = resolveRoomLayout({ map });
       expect(resolved.layout.id.length).toBeGreaterThan(0);
       expect(resolved.problem).toBeTruthy();
+    }
+  });
+});
+
+describe("resolveRoomLayout: the same answer as the old lookup for every room that exists today", () => {
+  it("matches parseRoomConfig + resolveLayout for rooms with no map", () => {
+    const configs: unknown[] = [
+      undefined,
+      null,
+      {},
+      [],
+      5,
+      "x",
+      { layoutId: "openOffice@1" },
+      { layoutId: "spatialMap@1" },
+      { layoutId: "nope@1" },
+      { layoutId: 7 },
+      { layoutId: "" },
+      { layoutId: "openOffice@1", somethingElse: true },
+    ];
+    for (const config of configs) {
+      expect(resolveRoomLayout(config).layout, JSON.stringify(config)).toBe(resolveLayout(parseRoomConfig(config).layoutId));
     }
   });
 });

@@ -4,7 +4,16 @@ import type { AddressInfo } from "node:net";
 import { Server as SocketIOServer } from "socket.io";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type { RoomLease } from "@workspace-video/realtime-core";
-import { ClientEvents, ServerEvents, ProximityBatchEventSchema } from "@workspace-video/shared";
+import {
+  ClientEvents,
+  ServerEvents,
+  ProximityBatchEventSchema,
+  SPATIAL_MAP_DEFAULT_ZONES,
+  spatialMap1,
+  openOffice1,
+  zoneAt,
+  type PeersSnapshotEvent,
+} from "@workspace-video/shared";
 import { RoomManager, broadcasterFromSocketServer } from "../roomManager.js";
 import { registerSocketHandlers } from "../socketHandlers.js";
 import type { ObjectRepository } from "../objectPersistence.js";
@@ -17,7 +26,11 @@ const WORKSPACE_ID = "ws1";
  *  RoomManager, real socket.io-client connections. Only the external
  *  dependencies (lease, membership, session tokens, participant limit) are
  *  faked — the join/disconnect wiring under test is the real thing. */
-async function startSeam(objectRepository?: ObjectRepository, emitTail?: EmitTailRecorder) {
+async function startSeam(
+  objectRepository?: ObjectRepository,
+  emitTail?: EmitTailRecorder,
+  options: { roomConfig?: unknown; onLayoutProblem?: (info: { roomId: string; problem: string }) => void } = {},
+) {
   const httpServer: HttpServer = createServer();
   const io = new SocketIOServer(httpServer);
   const lease = {
@@ -37,11 +50,12 @@ async function startSeam(objectRepository?: ObjectRepository, emitTail?: EmitTai
     joinDuration: { record: () => {} },
     disconnectReasonCounts: {},
     emitTail,
+    onLayoutProblem: options.onLayoutProblem,
     loadHarnessLimitOverride: { getWorkspaceParticipantLimit: async () => 100 },
     auth: {
       // The token IS the userId — keeps tests readable.
       verifySessionToken: (token: string) => ({ userId: token, email: `${token}@test` }),
-      assertRoomMembership: async () => ({ workspaceId: WORKSPACE_ID, config: {} }),
+      assertRoomMembership: async () => ({ workspaceId: WORKSPACE_ID, config: options.roomConfig ?? {} }),
       assertWorkspaceMembership: async () => {},
     } as never,
   });
@@ -87,6 +101,44 @@ describe("socket seam", () => {
   function join(client: ClientSocket): Promise<unknown> {
     return new Promise((resolve) => client.emit(ClientEvents.JoinRoom, { roomId: ROOM_ID }, resolve));
   }
+
+  /** Where the server put `userId` when they joined: the position in the roster the room was sent. */
+  async function joinAndReadPosition(userId: string): Promise<{ x: number; y: number }> {
+    const client = await connect(userId);
+    const snapshot = new Promise<PeersSnapshotEvent>((resolve) => client.once(ServerEvents.PeersSnapshot, resolve));
+    expect(await join(client)).toEqual({ ok: true });
+    const me = (await snapshot).peers.find((p) => p.userId === userId);
+    if (!me) throw new Error("the joiner is missing from the roster");
+    return me.position;
+  }
+
+  it("puts a joiner in the arrival area of the company's own map when the room's settings hold one", async () => {
+    seam = await startSeam(undefined, undefined, { roomConfig: { map: { version: 1, zones: SPATIAL_MAP_DEFAULT_ZONES } } });
+    const position = await joinAndReadPosition("u1");
+    expect(zoneAt(spatialMap1, position)?.id).toBe("hub-zone");
+  });
+
+  it("keeps a room on the office it always had when its settings hold no map", async () => {
+    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "openOffice@1" } });
+    const position = await joinAndReadPosition("u1");
+    expect(zoneAt(openOffice1, position)?.id).toBe(openOffice1.spawnZoneId);
+  });
+
+  it("does not let a broken stored map turn the office into something else silently: it falls back, still lets people in, and reports why", async () => {
+    const problems: { roomId: string; problem: string }[] = [];
+    seam = await startSeam(undefined, undefined, {
+      roomConfig: { map: { version: 1, zones: [] } },
+      onLayoutProblem: (info) => problems.push(info),
+    });
+    const position = await joinAndReadPosition("u1");
+    expect(zoneAt(openOffice1, position)?.id).toBe(openOffice1.spawnZoneId);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.roomId).toBe(ROOM_ID);
+    expect(problems[0]!.problem).toMatch(/at least one area/i);
+    // A second joiner uses the room's remembered layout and does not repeat the report.
+    await joinAndReadPosition("u2");
+    expect(problems).toHaveLength(1);
+  });
 
   it("keeps a user in the room when their OLD socket disconnects after they re-joined on a new one", async () => {
     seam = await startSeam();

@@ -310,6 +310,8 @@ registerSocketHandlers({
   auth: { verifySessionToken, assertRoomMembership, assertWorkspaceMembership },
   onConnection: maybeSampleHeartbeat,
   emitTail,
+  onLayoutProblem: ({ roomId, problem }) =>
+    app.log.error({ roomId, problem }, "a room's stored map failed its checks; the room is using its fallback layout"),
 });
 
 startHeartbeat();

@@ -9,9 +9,7 @@ import {
   ObjectDeleteEventSchema,
   SeatClaimEventSchema,
   SeatReleaseEventSchema,
-  parseRoomConfig,
-  resolveLayout,
-  DEFAULT_LAYOUT_ID,
+  resolveRoomLayout,
   zoneById,
   tileRectCenter,
   movementConfigForLayout,
@@ -45,6 +43,9 @@ export interface SocketHandlerDeps {
    *  which never pass through CountingBroadcaster. Read-only; unset in tests
    *  that do not care. */
   emitTail?: EmitTailRecorder;
+  /** Called when a room's stored map failed its checks and the room fell back to another layout,
+   *  with the reason. server.ts logs it; tests leave it unset. */
+  onLayoutProblem?: (info: { roomId: string; problem: string }) => void;
 }
 
 export function registerSocketHandlers(deps: SocketHandlerDeps): void {
@@ -134,12 +135,15 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
           return finish({ error: (err as Error).message });
         }
 
-        // Resolved from Room.config, falling back to the default layout for a
-        // missing/unknown id — the identical rule the room page applies
-        // client-side, so client and server always agree on floor bounds and
-        // the spawn point (see @workspace-video/shared's layouts module).
-        const { layoutId } = parseRoomConfig(roomConfig);
-        layout = resolveLayout(layoutId) ?? resolveLayout(DEFAULT_LAYOUT_ID)!;
+        // Resolved from Room.config by the ONE function the room page also
+        // uses, so client and server always agree on floor bounds and the
+        // spawn point (see resolveRoomLayout in @workspace-video/shared). A
+        // company's own map that fails its checks falls back to the room's
+        // named or default layout instead of bricking the room, and the
+        // reason is reported, never swallowed.
+        const resolved = resolveRoomLayout(roomConfig);
+        layout = resolved.layout;
+        if (resolved.problem) deps.onLayoutProblem?.({ roomId, problem: resolved.problem });
         movementConfig = movementConfigForLayout(layout, DEFAULT_MOVEMENT_CONFIG);
 
         // Claim-or-confirm ownership (Redis) and resolve the participant limit
