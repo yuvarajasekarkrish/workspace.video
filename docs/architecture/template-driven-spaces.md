@@ -172,7 +172,22 @@ A template chooses a **seating mode**. The engine supports all of them.
 - N=100 everything passing, and Phase 18 batching cut the post-tick burst from about 23 ms to 1.6 ms and the event-loop p99 from about 60 ms to about 25 ms.
 - Before batching, N=200 failed its tick and event-loop gates (tick p95 about 65 ms). **N=200 has not been re-measured with batching. N=500 has never been run.**
 
-**Important for the product (to test, not yet measured):** the earlier load tests made every simulated person walk constantly. In a template like the picture, most people are **seated** most of the time, and a seated person sends almost no movement and causes almost no audio changes. The real load may be much lighter than our worst-case tests. We must add a **seated-heavy scenario** that places people at a template's real seats with a small fraction walking and jumping, and measure that before promising 200 or 500.
+**Correction (2026-09-21): the earlier "seated" people were never seated.** The server seats someone only within 120 px of the seat (`out_of_range` otherwise), and the load test sent every seat claim from the arrival spot without reading the replies. With the replies counted, 0 of 90 claims were accepted. So the earlier runs had about half the people standing still at the arrival spot and the rest wandering: not "everyone walking constantly", and not seated. The test now prints how many claims the server accepted, and `LOAD_HARNESS_WALK_TO_SEAT=1` walks each person to their seat first.
+
+**Measured after the correction** (N=100, spread, 60 s, batching on, one Codespace, no tunnel; 90 people seated and accepted by the server, 7 walking, 7 reconnects; the old office `openOffice@1` against the map `spatialMap@1`):
+
+| | old office | map (`spatialMap@1`) | earlier runs, nobody seated |
+|---|---|---|---|
+| seats accepted by the server | 90 of 90 | 90 of 90 | 0 of 90 |
+| tick p95, worst interval | 14.5 ms | 15.9 ms | about 9.4 ms |
+| event-loop p99, worst interval | 14.4 ms | 15.3 ms | about 19 ms |
+| move corrections | 0.012% | 0.024% | 0.036% |
+| proximity updates in the window | 14,130 | 83,518 | 186,290 |
+| memory growth check | passed (+14%) | failed (+24%) | failed (+23% to +32%) |
+
+All other gates passed in every run. The old-office run was made on a server that had already run one test, so it is not a clean like-for-like with the map run (which was on a fresh server). The memory check failed on every fresh-server run and passed once on a warmed-up server; that fits warm-up but does not prove it, and a 10-minute run is needed before calling it either way.
+
+**Not measured yet:** everyone walking on the map floor, N=200 and N=500 with seats, and any real browser.
 
 **Design choices that keep the door open (proposed)**
 - **Regions.** Templates mark their separate areas (islands) and the links between them. Version 1 runs all regions in one server room. If we need more capacity, regions become the unit we can split across servers, with a hand-off at the bridges. Cost of adding the region graph now is small. Cost of adding it later, after many templates exist, is large.
