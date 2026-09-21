@@ -150,8 +150,10 @@ jobs:
       - name: A container with no settings refuses to start in production
         run: |
           for image in workspace-video-web:ci workspace-video-realtime:ci; do
-            if output=$(docker run --rm "$image" 2>&1); then
-              echo "::error::$image started with no settings"
+            output=$(timeout 90 docker run --rm "$image" 2>&1) && status=0 || status=$?
+            if [ "$status" = 0 ] || [ "$status" = 124 ]; then
+              echo "::error::$image did not refuse to start with no settings (exit $status; 124 means it kept running)"
+              echo "$output" | tail -20
               exit 1
             fi
             echo "$output" | grep -q "Refusing to start in production" || {
