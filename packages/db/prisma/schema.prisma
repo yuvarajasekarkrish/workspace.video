@@ -22,6 +22,8 @@ model User {
 
   memberships    WorkspaceMember[]
   createdObjects CanvasObject[]    @relation("CreatedObjects")
+  savedLayoutVersions     RoomLayoutVersion[] @relation("LayoutVersionSaver")
+  publishedLayoutVersions RoomLayoutVersion[] @relation("LayoutVersionPublisher")
   accounts       Account[]
   sessions       Session[]
 
@@ -86,6 +88,8 @@ model Verification {
 enum WorkspaceRole {
   owner
   admin
+  /// May change the room layout and nothing else (docs/architecture/company-map-builder.md, D4).
+  designer
   member
 }
 
@@ -156,6 +160,7 @@ model Room {
 
   workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   objects   CanvasObject[]
+  layoutVersions RoomLayoutVersion[]
 
   @@index([workspaceId])
   @@map("rooms")
@@ -196,4 +201,31 @@ model CanvasObject {
 
   @@index([roomId])
   @@map("canvas_objects")
+}
+
+/// One saved version of a room's map. Rows are never edited or deleted: every save is a NEW row, so the
+/// history is complete and "go back" is just saving an old map again. The room's live map is the copy in
+/// Room.config.map that Publish writes; the realtime server reads only that (see packages/db/src/roomLayouts.ts).
+model RoomLayoutVersion {
+  id            String    @id @default(cuid())
+  roomId        String
+  /// 1, 2, 3 ... per room, with no gaps and no reuse.
+  version       Int
+  map           Json
+  /// Who saved it, and when.
+  createdById   String
+  createdAt     DateTime  @default(now())
+  /// Plain words for the history list, for example "restored from version 3".
+  note          String?
+  /// Set each time this version is published: who, and when.
+  publishedById String?
+  publishedAt   DateTime?
+
+  room        Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  savedBy     User  @relation("LayoutVersionSaver", fields: [createdById], references: [id])
+  publishedBy User? @relation("LayoutVersionPublisher", fields: [publishedById], references: [id])
+
+  @@unique([roomId, version])
+  @@index([roomId])
+  @@map("room_layout_versions")
 }
