@@ -35,9 +35,12 @@ interface DockButtonProps {
   /** Draws attention (amber), for the one thing the person still needs to do, such as turning the microphone on. */
   attention?: boolean;
   danger?: boolean;
+  /** Shown from tablet width up only. On a phone the bar keeps just the controls that work, so every button stays
+   *  at the design notes' 48 px and the bar stays on one line. */
+  tabletUp?: boolean;
 }
 
-function DockButton({ label, icon, onClick, soon, disabled, pressed, attention, danger }: DockButtonProps) {
+function DockButton({ label, icon, onClick, soon, disabled, pressed, attention, danger, tabletUp }: DockButtonProps) {
   const text = soon ? `${label} (coming soon)` : label;
   const off = soon || disabled;
   const tone = off
@@ -56,7 +59,7 @@ function DockButton({ label, icon, onClick, soon, disabled, pressed, attention, 
       aria-disabled={off || undefined}
       disabled={off}
       onClick={onClick}
-      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed ${tone}`}
+      className={`${tabletUp ? "hidden sm:flex" : "flex"} h-12 w-12 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed ${tone}`}
     >
       <Icon name={icon} />
     </button>
@@ -125,19 +128,19 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson }: RoomDock
               attention={needsEnable}
               pressed={audioReady && !needsEnable ? !muted : undefined}
             />
-            <DockButton label="Camera" icon="video" soon />
-            <DockButton label="Share screen" icon="screen" soon />
+            <DockButton label="Camera" icon="video" soon tabletUp />
+            <DockButton label="Share screen" icon="screen" soon tabletUp />
             <Divider />
             {searchButton}
-            <DockButton label="Emoji" icon="smile" soon />
-            <DockButton label="Set status" icon="status" soon />
-            <DockButton label="Invite to talk" icon="talk" soon />
+            <DockButton label="Emoji" icon="smile" soon tabletUp />
+            <DockButton label="Set status" icon="status" soon tabletUp />
+            <DockButton label="Invite to talk" icon="talk" soon tabletUp />
             <Divider />
             <Link
               href="/"
               title="Leave room"
               aria-label="Leave room"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <Icon name="leave" />
             </Link>
