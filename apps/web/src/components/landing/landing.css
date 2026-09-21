@@ -158,7 +158,7 @@
   background: #1e293b;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 1px;
-  box-shadow: 0 0 6px rgba(45, 212, 191, 0.3);
+  box-shadow: 0 0 6px rgba(245, 166, 35, 0.3);
 }
 
 .gl-board-table {
@@ -223,7 +223,7 @@
 }
 .gl-sofa-curved {
   position: absolute;
-  border: 16px solid rgba(45, 212, 191, 0.15);
+  border: 16px solid rgba(245, 166, 35, 0.15);
   border-left-color: transparent;
   border-bottom-color: transparent;
   border-radius: 50%;
@@ -293,13 +293,13 @@
     0 4px 8px rgba(0, 0, 0, 0.6);
 }
 .gl-user-dot.gl-you {
-  background-color: #2dd4bf;
+  background-color: #f5a623;
   border-color: #fff;
   width: 14px;
   height: 14px;
   z-index: 100;
   box-shadow:
-    0 0 16px rgba(45, 212, 191, 0.8),
+    0 0 16px rgba(245, 166, 35, 0.8),
     0 4px 8px rgba(0, 0, 0, 0.6);
 }
 .gl-user-name {
@@ -318,7 +318,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .gl-user-dot.gl-you .gl-user-name {
-  color: #2dd4bf;
+  color: #f5a623;
   font-weight: 600;
-  border-color: rgba(45, 212, 191, 0.3);
+  border-color: rgba(245, 166, 35, 0.3);
 }

@@ -6,7 +6,7 @@
  * Numbers (0xRRGGBB) because that is what Pixi draws with; `cssHex` gives the text form for the few places that need it.
  */
 
-/** 0x2dd4bf -> "#2dd4bf". */
+/** 0xf5a623 -> "#f5a623". */
 export function cssHex(color: number): string {
   return `#${color.toString(16).padStart(6, "0")}`;
 }
@@ -18,8 +18,8 @@ export const WHITE = 0xffffff;
 export const BLACK = 0x000000;
 /** Dark ink: the outline of another person's dot and the text on a note. */
 export const INK = 0x1a1a1a;
-/** The one accent (a soft teal): your own dot, a selected object, an occupied seat and the sofas. */
-export const ACCENT = 0x2dd4bf;
+/** The one accent: your own dot, a selected object, an occupied seat and the sofas. */
+export const ACCENT = 0xf5a623;
 
 // People.
 export const PERSON_SLATE = 0x64748b;

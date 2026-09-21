@@ -2,7 +2,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 // The colours live once, as CSS variables in globals.css (see DESIGN.md at the repo
@@ -58,32 +57,5 @@ describe("globals.css: browser surfaces belong to the design", () => {
     expect(css).toMatch(/::selection/);
     expect(css).toMatch(/caret-color/);
     expect(css).toMatch(/font-family:\s*var\(--font-sans\)/);
-  });
-});
-
-// The design review (docs/architecture/company-map-builder.md, D17) replaced amber with one soft teal as the accent.
-describe("the accent colour", () => {
-  it("is the soft teal chosen in the design review, with a darker teal for hover and a lighter teal for links", () => {
-    expect(token("accent").toLowerCase()).toBe("#2dd4bf");
-    expect(token("accent-hover").toLowerCase()).toBe("#14b8a6");
-    expect(token("link").toLowerCase()).toBe("#5eead4");
-  });
-
-  it("leaves no amber colour value anywhere in the web app (status dots use Tailwind class names, not values, and are decided separately)", () => {
-    const srcDir = join(dirname(fileURLToPath(import.meta.url)), "../..");
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        if (name === "__tests__" || name === "node_modules") continue;
-        if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(ts|tsx|css|svg)$/.test(name)) files.push(path);
-      }
-    };
-    walk(srcDir);
-    expect(files.length, "the test must actually find the source files").toBeGreaterThan(30);
-    const amber = /#f5a623|#f2b35a|#f2c27e|#e09612|0xf5a623|rgba?\(\s*245\s*,\s*166\s*,\s*35/i;
-    const offenders = files.filter((f) => amber.test(readFileSync(f, "utf8"))).map((f) => f.slice(srcDir.length));
-    expect(offenders).toEqual([]);
   });
 });

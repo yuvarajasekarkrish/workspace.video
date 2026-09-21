@@ -32,7 +32,7 @@ interface DockButtonProps {
   disabled?: boolean;
   /** For an on/off button: whether it is currently on. */
   pressed?: boolean;
-  /** Draws attention (the accent colour), for the one thing the person still needs to do, such as turning the microphone on. */
+  /** Draws attention (amber), for the one thing the person still needs to do, such as turning the microphone on. */
   attention?: boolean;
   danger?: boolean;
 }
