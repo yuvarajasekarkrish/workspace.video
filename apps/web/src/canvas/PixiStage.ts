@@ -1,5 +1,5 @@
 import { Application, Container, EventsTicker, Ticker } from "pixi.js";
-import type { Point, RoomLayout } from "@workspace-video/shared";
+import { zoneAt, type Point, type RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
   movementConfigForLayout,
@@ -9,7 +9,8 @@ import { peersStore, type PeersState } from "@/store/peersStore";
 import { objectsStore, type ObjectsState } from "@/store/objectsStore";
 import { seatsStore } from "@/store/seatsStore";
 import { createBackground } from "./Background";
-import { buildFloorView } from "./FloorView";
+import { buildFloorView, type FloorView } from "./FloorView";
+import { LiftState, liftVector, pickZone } from "./lift";
 import { SeatOverlay } from "./SeatOverlay";
 import { Avatar } from "./Avatar";
 import { Viewport } from "./Viewport";
@@ -63,6 +64,10 @@ export class PixiStage {
   private readonly noteEditor = new NoteEditor();
   private layout!: RoomLayout;
   private seatOverlay!: SeatOverlay;
+  private floor!: FloorView;
+  /** Which area the mouse is over and how high each area is raised (see lift.ts). Holds no timers. */
+  private readonly lifts = new LiftState();
+  private detachHover: (() => void) | null = null;
   private unsubscribeSnapshotWatch: (() => void) | null = null;
   private unsubscribeObjectsWatch: (() => void) | null = null;
   private unsubscribeSeatsWatch: (() => void) | null = null;
@@ -133,7 +138,8 @@ export class PixiStage {
     const movementConfig = movementConfigForLayout(this.layout, DEFAULT_MOVEMENT_CONFIG);
 
     this.viewport.world.addChild(createBackground(movementConfig));
-    this.viewport.world.addChild(buildFloorView(this.layout));
+    this.floor = buildFloorView(this.layout);
+    this.viewport.world.addChild(this.floor.container);
     this.seatOverlay = new SeatOverlay(this.layout);
     this.viewport.world.addChild(this.seatOverlay.container);
     this.objectLayer.sortableChildren = true;
@@ -210,6 +216,7 @@ export class PixiStage {
 
     this.detachObjectKeyboard = this.attachObjectKeyboard(window);
     this.detachDblClick = this.attachDoubleClick(this.app.canvas as HTMLCanvasElement);
+    this.detachHover = this.attachHover(this.app.canvas as HTMLCanvasElement);
 
     this.app.ticker.add((ticker) => {
       const dtSeconds = ticker.deltaMS / 1000;
@@ -302,6 +309,46 @@ export class PixiStage {
     }
   }
 
+  /** Puts a person at their floor position, raised along with the area they are standing in. */
+  private placeAvatar(avatar: Avatar, position: Point): void {
+    if (this.lifts.isActive()) {
+      const zone = zoneAt(this.layout, position);
+      const height = zone ? this.lifts.liftOf(zone.id) : 0;
+      if (height > 0) {
+        const step = liftVector(height);
+        avatar.setPosition(position.x + step.x, position.y + step.y);
+        return;
+      }
+    }
+    avatar.setPosition(position.x, position.y);
+  }
+
+  /** Raises the area under the mouse. Moving the mouse inside one area does nothing; only crossing into another area
+   *  (or off the floor) changes anything, and only then is the drawing loop woken, for the short rise. */
+  private attachHover(canvas: HTMLCanvasElement): () => void {
+    const onMove = (e: PointerEvent) => {
+      if (e.buttons) return; // dragging or panning, not hovering
+      const rect = canvas.getBoundingClientRect();
+      const floorPoint = this.viewport.screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      const current = this.lifts.hoveredId();
+      const next = pickZone(this.layout, floorPoint, current ? { zoneId: current, lift: this.lifts.liftOf(current) } : null);
+      if (next === current) return;
+      this.lifts.setHovered(next);
+      this.gate.wake();
+    };
+    const onLeave = () => {
+      if (this.lifts.hoveredId() === null) return;
+      this.lifts.setHovered(null);
+      this.gate.wake();
+    };
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerleave", onLeave);
+    return () => {
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerleave", onLeave);
+    };
+  }
+
   /** Runs every ticker frame. Reads the stores directly via getState() —
    *  never via a React hook — and mutates Pixi display objects in place.
    *  This is the loop the "React must never re-render on movement/drag"
@@ -310,6 +357,17 @@ export class PixiStage {
    *  IdleGate knows when the loop can rest. */
   private renderFrame(dtSeconds: number): boolean {
     let stillChanging = false;
+
+    // Areas rising or settling back under the mouse. Busy only while something is actually moving, so a mouse resting
+    // on a raised area costs no frames at all.
+    const moved = this.lifts.step(dtSeconds);
+    for (const zoneId of moved) {
+      const height = this.lifts.liftOf(zoneId);
+      this.floor.setLift(zoneId, height);
+      this.seatOverlay.liftZone(zoneId, liftVector(height));
+      stillChanging = true;
+    }
+
     const peers = peersStore.getState();
 
     for (const [userId, peer] of peers.peers) {
@@ -320,7 +378,7 @@ export class PixiStage {
         // Local avatar renders immediately at its authoritative position —
         // no smoothing, since it already reflects live input, not a
         // network round trip.
-        avatar.setPosition(peer.renderPosition.x, peer.renderPosition.y);
+        this.placeAvatar(avatar, peer.renderPosition);
         continue;
       }
 
@@ -333,7 +391,7 @@ export class PixiStage {
         peer.renderPosition.y = next.y;
         stillChanging = true;
       }
-      avatar.setPosition(peer.renderPosition.x, peer.renderPosition.y);
+      this.placeAvatar(avatar, peer.renderPosition);
     }
 
     const objects = objectsStore.getState();
@@ -496,6 +554,7 @@ export class PixiStage {
     this.detachKeyboard?.();
     this.detachObjectKeyboard?.();
     this.detachDblClick?.();
+    this.detachHover?.();
     this.detachWake?.();
     this.noteEditor.dispose();
     this.unsubscribeSnapshotWatch?.();
