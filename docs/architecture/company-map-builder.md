@@ -576,3 +576,24 @@ None. Item 1 in "Open for the owner" above (the five questions and the rule tabl
 VERDICT: PLAN READY for step 1 (colour option only). OUTSIDE COVERAGE: not run. CROSS-MODEL: not applicable.
 
 NO UNRESOLVED DECISIONS
+
+## D20. Flat or tilted view, an admin setting (2026-09-22, the owner's request)
+
+The owner asked whether the workspace can be kept flat (looking straight down) instead of tilted like the Gemini map. **Decided: it's an admin setting for the whole workspace**, saved like the colour (D18), not a per-person toggle. Everyone in that workspace sees the same look, so nobody is confused when someone points at a desk.
+
+### Why this is simpler than the colour option
+
+The tilt is already isolated to one function, `isoMatrix(scale)` (`apps/web/src/canvas/isoMath.ts:30`), and every other function that draws or clicks the map (`project`, `unproject`, `zoomAtCursor`, `uprightMatrix`, `fitFloor`) calls it rather than doing its own rotation. **Flat mode is that same function returning a plain scale (no rotate X 55, no rotate Z -45), not a second drawing system.** Seat positions, walking limits and the server's own coordinates never change; only how the same map is drawn on screen changes. This is why the owner's rule "don't touch the algorithm or architecture" is easy to keep here: the engine's numbers stay exactly the same in both views.
+
+### Decisions
+
+- **Saved like the colour**, on the workspace, checked on the server with the same owner/admin rule (D19) and the same locked-in style (a two-value database choice, `flat` or `tilted`, not free text).
+- **The people layer.** Today people are drawn upright regardless of tilt (`Avatar.ts`, D-existing). In flat mode they stay exactly the same upright circles, just without the floor rotating under them — no separate avatar drawing is needed for flat mode.
+- **The builder (D17, 11A) is unaffected.** The builder already edits flat and previews tilted; this setting decides what the *live room* (not the builder) shows once published. The builder's Preview should show the workspace's own choice (flat or tilted) instead of always tilting, so admins see what their team will actually see.
+- **Objects that "lie flat" today** (notes and shapes, an accepted limitation in the tilted view) look normal, not flattened-twice, in flat mode — this needs one check once built, not a redesign.
+- **Not in scope:** a per-person toggle (the owner chose admin-only, above); any change to seats, walking, or the server's coordinates (none needed).
+
+### Still needed before building
+
+1. A real-browser check exactly like every other `PixiStage`/`isoMath` change (standing rule, D15): the badge says "Connected", a person moves when clicked, and the map shows correctly in both flat and tilted, since a mistake here can blank the room.
+2. A short engineering review of this one item (like D19), because it touches the canvas.
