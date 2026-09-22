@@ -137,11 +137,44 @@ model Workspace {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  members WorkspaceMember[]
-  rooms   Room[]
-  invites Invite[]
+  members    WorkspaceMember[]
+  rooms      Room[]
+  invites    Invite[]
+  auditLog   AuditLogEntry[]
 
   @@map("workspaces")
+}
+
+/// Task 12's record table (decision 3A): one row per role change, map publish or map restore that
+/// actually happened — never for a refused attempt, since every write here sits inside the same
+/// database transaction as the change itself (packages/db/src/roomLayouts.ts). A plain history, not
+/// itself a permission check: who did what, to what, and when.
+enum AuditAction {
+  roleChanged
+  layoutPublished
+  layoutRestored
+}
+
+model AuditLogEntry {
+  id          String      @id @default(cuid())
+  workspaceId String
+  actorUserId String
+  action      AuditAction
+  createdAt   DateTime    @default(now())
+
+  /// Only for a role change.
+  targetUserId String?
+  fromRole     WorkspaceRole?
+  toRole       WorkspaceRole?
+
+  /// Only for a publish or a restore.
+  roomId  String?
+  version Int?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@map("audit_log_entries")
 }
 
 model WorkspaceMember {

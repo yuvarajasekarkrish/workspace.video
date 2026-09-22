@@ -164,6 +164,8 @@ export async function publishLayoutVersion(input: {
       const config = { ...plainObject(room.config), map: checked.map, mapVersion: version };
       await tx.room.update({ where: { id: roomId }, data: { config: config as unknown as Prisma.InputJsonValue } });
       await tx.roomLayoutVersion.update({ where: { id: row.id }, data: { publishedById: actorUserId, publishedAt: new Date() } });
+      // Task 12's record table (decision 3A): see the matching note in changeMemberRole above.
+      await tx.auditLogEntry.create({ data: { workspaceId: auth.room.workspaceId, actorUserId, action: "layoutPublished", roomId, version } });
       return { ok: true, version };
     });
   });
@@ -188,6 +190,10 @@ export async function restoreLayoutVersion(input: { roomId: string; actorUserId:
           const row = await tx.roomLayoutVersion.create({
             data: { roomId, version: latest + 1, map: checked.map as unknown as Prisma.InputJsonValue, createdById: actorUserId, note: `Restored from version ${version}` },
           });
+          // Task 12's record table (decision 3A): records the NEW version this restore created
+          // (row.version), since that is the version now on top of the history, not the old one it
+          // was copied from (which stays in `note` above, unchanged, for a human reading the list).
+          await tx.auditLogEntry.create({ data: { workspaceId: auth.room.workspaceId, actorUserId, action: "layoutRestored", roomId, version: row.version } });
           return { ok: true, version: row.version };
         });
       } catch (err) {
@@ -270,7 +276,48 @@ export async function changeMemberRole(input: {
         return { ok: false, reason, message: verdict.reason };
       }
       await tx.workspaceMember.update({ where: { workspaceId_userId: { workspaceId, userId: targetUserId } }, data: { role: newRole } });
+      // Task 12's record table (decision 3A): one row per change that actually happened, in the
+      // same transaction as the change itself, so a refused attempt (returned above) never writes
+      // one and a crash between the two can never leave the change made but unrecorded.
+      await tx.auditLogEntry.create({
+        data: { workspaceId, actorUserId, action: "roleChanged", targetUserId, fromRole: targetRole, toRole: newRole },
+      });
       return { ok: true, role: newRole };
     }),
   );
+}
+
+export interface AuditLogRecord {
+  id: string;
+  actorUserId: string;
+  action: "roleChanged" | "layoutPublished" | "layoutRestored";
+  createdAt: Date;
+  targetUserId: string | null;
+  fromRole: WorkspaceRoleName | null;
+  toRole: WorkspaceRoleName | null;
+  roomId: string | null;
+  version: number | null;
+}
+
+/** A workspace's audit history, newest first (task 12, decision 3A). Read-only: nothing here can
+ *  write a row — every write happens inside the change it is recording (see changeMemberRole,
+ *  publishLayoutVersion, restoreLayoutVersion above), never as a separate call a caller could
+ *  forget. `limit` defaults to 100 so a very old workspace never returns an unbounded list. */
+export async function listAuditLog(workspaceId: string, limit = 100): Promise<AuditLogRecord[]> {
+  const rows = await prisma.auditLogEntry.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Math.max(1, limit), 500),
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    actorUserId: r.actorUserId,
+    action: r.action,
+    createdAt: r.createdAt,
+    targetUserId: r.targetUserId,
+    fromRole: r.fromRole,
+    toRole: r.toRole,
+    roomId: r.roomId,
+    version: r.version,
+  }));
 }
