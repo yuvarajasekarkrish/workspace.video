@@ -98,6 +98,100 @@ function usePopoverAutoClose(open: boolean, onOpenChange: (open: boolean) => voi
 }
 
 /**
+ * The shared chrome behind "Find people" and "Areas": a button, a dialog that opens above the bar
+ * with a search box, escape/outside-click/auto-close handling, and a "pick something, then close"
+ * flow — everything the two lists have in common (eng review finding, 2026-09-22). Each caller
+ * supplies its own `filter` and its own `renderList` (the two lists differ enough in their rows —
+ * a disabled/"you" state for the local person, a capacity badge for an area — that rendering itself
+ * stays per-caller; only the wiring around it is shared).
+ */
+function SearchPopover<T>({
+  open,
+  onOpenChange,
+  buttonLabel,
+  buttonIcon,
+  dialogLabel,
+  searchId,
+  searchLabel,
+  searchPlaceholder,
+  items,
+  filter,
+  renderList,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  buttonLabel: string;
+  buttonIcon: IconName;
+  dialogLabel: string;
+  searchId: string;
+  searchLabel: string;
+  searchPlaceholder: string;
+  items: T[];
+  filter: (items: T[], query: string) => T[];
+  /** `close` is passed through so a row's own click handler can call it after acting on the pick. */
+  renderList: (shown: T[], close: () => void) => React.ReactNode;
+  children: (button: React.ReactNode) => React.ReactNode;
+}) {
+  const [query, setQuery] = useState("");
+  const wrapper = useRef<HTMLDivElement | null>(null);
+  const shown = useMemo(() => filter(items, query), [items, query, filter]);
+
+  usePopoverAutoClose(open, onOpenChange, query);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (wrapper.current && !wrapper.current.contains(e.target as Node)) onOpenChange(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open, onOpenChange]);
+
+  function close() {
+    onOpenChange(false);
+    setQuery("");
+  }
+
+  const button = <DockButton label={buttonLabel} icon={buttonIcon} pressed={open} onClick={() => (open ? close() : onOpenChange(true))} />;
+
+  return (
+    <div ref={wrapper} className="flex flex-col items-center gap-2">
+      {open && (
+        <div
+          role="dialog"
+          aria-label={dialogLabel}
+          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-white/10 bg-black/70 p-2 shadow-lg shadow-black/40 backdrop-blur-md"
+        >
+          <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">
+            <Icon name="search" size={16} />
+            <input
+              id={searchId}
+              type="search"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchLabel}
+              className="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
+            />
+          </div>
+          {renderList(shown, close)}
+        </div>
+      )}
+      {children(button)}
+    </div>
+  );
+}
+
+/**
  * The bar under the map. One line of icon-only buttons, so it never covers the floor: microphone, camera and screen
  * share on the left, then finding people, emoji, status and "invite to talk", then leave. It subscribes only to
  * low-frequency stores (mediaStore for the microphone, the roster for the people list), never to positions, so it
@@ -201,9 +295,9 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
   );
 }
 
-/** The find-people button and the list that opens above the bar. Escape or a click elsewhere closes it.
- *  `open`/`onOpenChange` are owned by RoomDock, not this component, so it and AreasList can never
- *  both be open at once (the bug the owner caught, 2026-09-22). */
+/** The find-people button and the list that opens above the bar (the shared chrome lives in
+ *  SearchPopover). `open`/`onOpenChange` are owned by RoomDock, not this component, so it and
+ *  AreasList can never both be open at once (the bug the owner caught, 2026-09-22). */
 function PeopleSearch({
   onGoToPerson,
   open,
@@ -216,97 +310,54 @@ function PeopleSearch({
   children: (searchButton: React.ReactNode) => React.ReactNode;
 }) {
   const roster = useRoster();
-  const [query, setQuery] = useState("");
-  const wrapper = useRef<HTMLDivElement | null>(null);
-  const shown = useMemo(() => filterRoster(roster, query), [roster, query]);
-
-  usePopoverAutoClose(open, onOpenChange, query);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      if (wrapper.current && !wrapper.current.contains(e.target as Node)) onOpenChange(false);
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [open, onOpenChange]);
-
-  function close() {
-    onOpenChange(false);
-    setQuery("");
-  }
-
-  const searchButton = (
-    <DockButton
-      label="Find people"
-      icon="search"
-      pressed={open}
-      onClick={() => (open ? close() : onOpenChange(true))}
-    />
-  );
 
   return (
-    <div ref={wrapper} className="flex flex-col items-center gap-2">
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Find people"
-          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-white/10 bg-black/70 p-2 shadow-lg shadow-black/40 backdrop-blur-md"
-        >
-          <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">
-            <Icon name="search" size={16} />
-            <input
-              id="people-search"
-              type="search"
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Find a person"
-              aria-label="Find a person"
-              className="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
-            />
-          </div>
-          <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="People in this room">
-            {shown.map((person) => (
-              <li key={person.userId}>
-                <button
-                  type="button"
-                  disabled={person.isLocal}
-                  onClick={() => {
-                    onGoToPerson(person.userId);
-                    close();
-                  }}
-                  title={person.isLocal ? "This is you" : `Walk to ${person.name}`}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:text-neutral-500 disabled:hover:bg-transparent"
-                >
-                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${person.isLocal ? "bg-accent/20 text-accent" : "bg-slate-700 text-slate-200"}`}>
-                    <Icon name="user" size={14} />
-                  </span>
-                  <span className="truncate">{person.name}</span>
-                  {person.isLocal && <span className="ml-auto text-xs text-neutral-500">you</span>}
-                </button>
-              </li>
-            ))}
-            {shown.length === 0 && (
-              <li className="px-2 py-3 text-center text-sm text-neutral-500">{roster.length <= 1 ? "No one else is here yet." : "No one matches."}</li>
-            )}
-          </ul>
-        </div>
+    <SearchPopover
+      open={open}
+      onOpenChange={onOpenChange}
+      buttonLabel="Find people"
+      buttonIcon="search"
+      dialogLabel="Find people"
+      searchId="people-search"
+      searchLabel="Find a person"
+      searchPlaceholder="Find a person"
+      items={roster}
+      filter={filterRoster}
+      renderList={(shown, close) => (
+        <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="People in this room">
+          {shown.map((person) => (
+            <li key={person.userId}>
+              <button
+                type="button"
+                disabled={person.isLocal}
+                onClick={() => {
+                  onGoToPerson(person.userId);
+                  close();
+                }}
+                title={person.isLocal ? "This is you" : `Walk to ${person.name}`}
+                className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:text-neutral-500 disabled:hover:bg-transparent"
+              >
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${person.isLocal ? "bg-accent/20 text-accent" : "bg-slate-700 text-slate-200"}`}>
+                  <Icon name="user" size={14} />
+                </span>
+                <span className="truncate">{person.name}</span>
+                {person.isLocal && <span className="ml-auto text-xs text-neutral-500">you</span>}
+              </button>
+            </li>
+          ))}
+          {shown.length === 0 && (
+            <li className="px-2 py-3 text-center text-sm text-neutral-500">{roster.length <= 1 ? "No one else is here yet." : "No one matches."}</li>
+          )}
+        </ul>
       )}
-      {children(searchButton)}
-    </div>
+    >
+      {children}
+    </SearchPopover>
   );
 }
 
 /** The areas button and the list that opens above the bar (2026-09-22: replaces drawing area names
- *  on the map itself). Escape or a click elsewhere closes it. `open`/`onOpenChange` are owned by
+ *  on the map itself; the shared chrome lives in SearchPopover). `open`/`onOpenChange` are owned by
  *  RoomDock, not this component, so it and PeopleSearch can never both be open at once. */
 function AreasList({
   zones,
@@ -321,90 +372,46 @@ function AreasList({
   onOpenChange: (open: boolean) => void;
   children: (areasButton: React.ReactNode) => React.ReactNode;
 }) {
-  const [query, setQuery] = useState("");
-  const wrapper = useRef<HTMLDivElement | null>(null);
-  const shown = useMemo(() => filterZones(zones, query), [zones, query]);
-
-  usePopoverAutoClose(open, onOpenChange, query);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      if (wrapper.current && !wrapper.current.contains(e.target as Node)) onOpenChange(false);
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onPointerDown);
-    };
-  }, [open, onOpenChange]);
-
-  function close() {
-    onOpenChange(false);
-    setQuery("");
-  }
-
-  const areasButton = (
-    <DockButton
-      label="Areas"
-      icon="map"
-      pressed={open}
-      onClick={() => (open ? close() : onOpenChange(true))}
-    />
-  );
-
   return (
-    <div ref={wrapper} className="flex flex-col items-center gap-2">
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Areas"
-          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-white/10 bg-black/70 p-2 shadow-lg shadow-black/40 backdrop-blur-md"
-        >
-          <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">
-            <Icon name="search" size={16} />
-            <input
-              id="areas-search"
-              type="search"
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Find an area"
-              aria-label="Find an area"
-              className="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
-            />
-          </div>
-          <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="Areas in this room">
-            {shown.map((zone) => (
-              <li key={zone.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onGoToArea(zone.id);
-                    close();
-                  }}
-                  title={`Walk to ${zone.label}`}
-                  className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-slate-200">
-                    <Icon name="map" size={14} />
-                  </span>
-                  <span className="truncate">{zone.label}</span>
-                  {typeof zone.capacity === "number" && (
-                    <span className="ml-auto shrink-0 font-mono text-xs text-neutral-500">/{zone.capacity}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-            {shown.length === 0 && <li className="px-2 py-3 text-center text-sm text-neutral-500">No area matches.</li>}
-          </ul>
-        </div>
+    <SearchPopover
+      open={open}
+      onOpenChange={onOpenChange}
+      buttonLabel="Areas"
+      buttonIcon="map"
+      dialogLabel="Areas"
+      searchId="areas-search"
+      searchLabel="Find an area"
+      searchPlaceholder="Find an area"
+      items={zones}
+      filter={filterZones}
+      renderList={(shown, close) => (
+        <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="Areas in this room">
+          {shown.map((zone) => (
+            <li key={zone.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onGoToArea(zone.id);
+                  close();
+                }}
+                title={`Walk to ${zone.label}`}
+                className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-slate-200">
+                  <Icon name="map" size={14} />
+                </span>
+                <span className="truncate">{zone.label}</span>
+                {typeof zone.capacity === "number" && (
+                  <span className="ml-auto shrink-0 font-mono text-xs text-neutral-500">/{zone.capacity}</span>
+                )}
+              </button>
+            </li>
+          ))}
+          {shown.length === 0 && <li className="px-2 py-3 text-center text-sm text-neutral-500">No area matches.</li>}
+        </ul>
       )}
-      {children(areasButton)}
-    </div>
+    >
+      {children}
+    </SearchPopover>
   );
 }
