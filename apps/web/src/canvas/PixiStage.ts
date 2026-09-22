@@ -160,6 +160,9 @@ export class PixiStage {
         onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
         onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
         onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
+        // D17, 5B: area names hold a minimum size on screen. This fires only when the zoom value
+        // itself changes (fit, zoom buttons, wheel), never on a plain pan.
+        onZoomChanged: (scale) => this.floor.setZoom(scale),
       },
       this.tilted,
     );
@@ -182,6 +185,11 @@ export class PixiStage {
     this.floorSize = { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx };
     // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
     this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
+    // onZoomChanged only fires when the zoom VALUE changes, so this covers the (rare but real) case
+    // where the fitted zoom happens to equal Viewport's internal starting value of 1 — without this,
+    // area labels would stay at their un-scaled default (identity) counter-transform, which happens
+    // to be correct only when zoom is exactly 1, so any other starting zoom would render them wrong.
+    this.floor.setZoom(this.viewport.getScale());
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 

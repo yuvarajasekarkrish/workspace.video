@@ -1,7 +1,8 @@
-import { Container, Graphics, Text } from "pixi.js";
+import { Container, Graphics, Matrix, Text } from "pixi.js";
 import type { RoomLayout, FurniturePiece, LayoutZone } from "@workspace-video/shared";
 import { tileRectToWorld } from "@workspace-video/shared";
 import { liftVector, screenStep } from "./lift";
+import { zoomFloorMatrix } from "./isoMath";
 import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
 import { ACCENT, BLACK, CHAIR_FILL, LINE, PANEL_FILL, PLANT_GREEN, SLAB_EDGE, WHITE } from "./palette";
 
@@ -21,6 +22,19 @@ const REST_SHADOW_OFFSET = 6;
 const AREA_THICKNESS = 14;
 const GROUP_THICKNESS = 9;
 
+// An area name's own authored font size (Text style, below) — the size it renders at when the map's
+// zoom is 1 or above, and the reference `MIN_ZONE_LABEL_PX` is measured against. Smaller than
+// DESIGN.md's general 16 px floor: the owner's own correction (2026-09-22) — a full 16 px looked
+// oversized and sudden next to the map's natural fit zoom.
+const ZONE_LABEL_FONT_SIZE = 12;
+// The smallest an area name may ever render at on screen, however far the map is zoomed out (a
+// floor, not a fixed pin — see zoomFloorMatrix).
+const MIN_ZONE_LABEL_PX = 10;
+// The zoom at which a ZONE_LABEL_FONT_SIZE-authored label already renders at MIN_ZONE_LABEL_PX — the
+// `floorAt` zoomFloorMatrix needs, derived from the two pixel sizes above rather than a made-up zoom
+// number, so the two constants above are the only place this policy has to be tuned again.
+const ZONE_LABEL_FLOOR_AT = MIN_ZONE_LABEL_PX / ZONE_LABEL_FONT_SIZE;
+
 function drawPanel(layer: Container, box: Box, radius: number): void {
   layer.addChild(
     new Graphics()
@@ -30,16 +44,25 @@ function drawPanel(layer: Container, box: Box, radius: number): void {
   );
 }
 
-/** The area's name lies quietly in its bottom-right corner, as on the Gemini map, and scales and
- *  tilts with the floor exactly like everything else on it (the owner's own call, 2026-09-22: a
- *  fixed-size or floored label looked out of proportion once the map itself was zoomed small — a
- *  DESIGN.md text-size rule is not worth breaking the room's own visual consistency for). */
-function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): void {
+/** The area's name lies quietly in its bottom-right corner, as on the Gemini map, tilted with the
+ *  floor exactly as before and scaling with the map's own zoom exactly like everything else — down
+ *  to MIN_ZONE_LABEL_PX, below which it stops shrinking further (see zoomFloorMatrix). Two nested
+ *  containers, each doing exactly one job, so `setZoom` can never disturb where the label sits:
+ *   - `anchor` — carries ONLY the position (in floor coordinates), so it lands in the right area's
+ *     corner exactly as before, at any pan or zoom.
+ *   - `billboard` (its child) — carries ONLY the counter-scale `setZoom` writes with
+ *     `setFromMatrix` (which resets a container's full local transform, position included — the
+ *     reason this needs to be its own container and not the same one `anchor` uses). */
+function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Container {
+  const anchor = new Container();
+  anchor.position.set(corner.x + corner.width - 22, corner.y + corner.height - 16);
+  const billboard = new Container();
+  anchor.addChild(billboard);
   const label = new Text({
     text: zone.label,
     style: {
       fill: WHITE,
-      fontSize: 16,
+      fontSize: ZONE_LABEL_FONT_SIZE,
       letterSpacing: 2,
       fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
       fontWeight: "300",
@@ -47,8 +70,9 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): void {
   });
   label.alpha = 0.6;
   label.anchor.set(1, 1);
-  label.position.set(corner.x + corner.width - 22, corner.y + corner.height - 16);
-  layer.addChild(label);
+  billboard.addChild(label);
+  layer.addChild(anchor);
+  return billboard;
 }
 
 function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
@@ -116,6 +140,9 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
 class FloorSlab {
   readonly container = new Container();
   readonly shadow: Graphics;
+  /** The area's name, when this plate has one (a group plate does not) — kept so buildFloorView can
+   *  collect it for `setZoom`'s billboard scaling. */
+  readonly label: Container | null;
 
   /** `depth` orders plates back to front, so a plate's side wall never covers one standing in front of it. */
   constructor(
@@ -135,7 +162,7 @@ class FloorSlab {
         .stroke({ width: 1.5, color: LINE, alpha: 0.08 }),
     );
     drawPanel(this.container, box, radius);
-    if (!plan.isGroup) drawZoneLabel(this.container, zone, box);
+    this.label = plan.isGroup ? null : drawZoneLabel(this.container, zone, box);
 
     this.shadow = new Graphics();
     // Three stacked, slightly larger copies with faint fills make a soft edge without a blur filter (which is costly).
@@ -164,6 +191,13 @@ export interface FloorView {
   plan: FloorPlan;
   /** Raises one plate by that much (0 puts it back on the floor). Plates that do not exist are ignored. */
   setLift(slabId: string, height: number): void;
+  /** Keeps every area name at least MIN_ZONE_LABEL_PX on screen at the given zoom — it still shrinks
+   *  and grows with the map above that floor, and stays tilted with the floor exactly as before
+   *  (zoomFloorMatrix touches only the size, never the tilt). Call this once whenever the view's zoom
+   *  changes (PixiStage does, from Viewport's onZoomChanged) — it does no drawing of its own, just
+   *  resets each label's own counter-scale, so it is cheap even with many areas and never runs on a
+   *  frame where the zoom did not change. */
+  setZoom(zoom: number): void;
 }
 
 export function buildFloorView(layout: RoomLayout): FloorView {
@@ -179,16 +213,19 @@ export function buildFloorView(layout: RoomLayout): FloorView {
   const centreDepth = (r: Box) => r.y + r.height / 2 - (r.x + r.width / 2);
   const backToFront = [...plan.slabs].sort((a, b) => centreDepth(a.rect) - centreDepth(b.rect));
   const slabs = new Map<string, FloorSlab>();
+  // Every area-name wrapper (both a whole area's own plate and a split area's loose label), for setZoom.
+  const labels: Container[] = [];
   for (const slabPlan of plan.slabs) {
     const zone = layout.zones.find((z) => z.id === slabPlan.zoneId)!;
     const slab = new FloorSlab(slabPlan, backToFront.indexOf(slabPlan), zone);
     slabs.set(slabPlan.id, slab);
     shadows.addChild(slab.shadow);
     slabLayer.addChild(slab.container);
+    if (slab.label) labels.push(slab.label);
     for (const i of slabPlan.pieces) drawFurniturePiece(slab.container, layout.furniture[i]);
   }
   for (const zone of layout.zones) {
-    if (plan.splitZoneIds.has(zone.id)) drawZoneLabel(loose, zone, tileRectToWorld(zone.rect));
+    if (plan.splitZoneIds.has(zone.id)) labels.push(drawZoneLabel(loose, zone, tileRectToWorld(zone.rect)));
   }
   for (const i of plan.loosePieces) drawFurniturePiece(loose, layout.furniture[i]);
 
@@ -197,6 +234,11 @@ export function buildFloorView(layout: RoomLayout): FloorView {
     plan,
     setLift(slabId, height) {
       slabs.get(slabId)?.setLift(height);
+    },
+    setZoom(zoom) {
+      const m = zoomFloorMatrix(zoom, ZONE_LABEL_FLOOR_AT);
+      const matrix = new Matrix(m.a, m.b, m.c, m.d, 0, 0);
+      for (const label of labels) label.setFromMatrix(matrix);
     },
   };
 }

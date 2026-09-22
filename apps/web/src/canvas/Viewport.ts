@@ -28,6 +28,11 @@ export interface ViewportCallbacks {
    *  and click-to-walk — the caller does the actual "attempt to sit" work
    *  synchronously inside the callback itself. */
   onFurnitureGestureStart?: (worldPoint: Point) => boolean;
+  /** Fired only when the zoom value itself actually changes (fit, the zoom buttons, the wheel) —
+   *  never on a plain pan, which does not touch zoom. Lets things that must hold a minimum size on
+   *  screen (FloorView's area labels, D17 5B) recompute their counter-scale without doing that work
+   *  on every frame or every pixel of panning. */
+  onZoomChanged?: (scale: number) => void;
 }
 
 /**
@@ -87,10 +92,17 @@ export class Viewport {
     this.world.setFromMatrix(new Matrix(m.a, m.b, m.c, m.d, this.origin.x, this.origin.y));
   }
 
+  /** Sets the zoom and, only when it actually changed, tells onZoomChanged — never on a plain pan. */
+  private setZoom(value: number): void {
+    if (value === this.zoom) return;
+    this.zoom = value;
+    this.callbacks.onZoomChanged?.(value);
+  }
+
   /** Shows the whole floor, centred, inside a window of this size. Used when the room opens and for a "fit" button. */
   fitToFloor(floor: { width: number; height: number }, view: { width: number; height: number }): void {
     const fit = fitFloor(floor, view, 0.92, this.tilted);
-    this.zoom = fit.scale;
+    this.setZoom(fit.scale);
     this.origin = fit.position;
     this.fitted = true;
     this.applyTransform();
@@ -247,7 +259,7 @@ export class Viewport {
   /** Zooms by `factor`, keeping the floor position under `anchor` (a screen position) exactly where it is. */
   zoomAt(anchor: Point, factor: number): void {
     const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor, undefined, undefined, this.tilted);
-    this.zoom = scale;
+    this.setZoom(scale);
     this.origin = position;
     this.fitted = false;
     this.applyTransform();
