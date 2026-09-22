@@ -629,3 +629,45 @@ Task 11's other half — area names drawn on the tilted floor itself — went th
 - **D20's "still needed before building" item 2** (a short engineering review of the flat/tilted view, since it touches the canvas) has not been run as a dedicated review; today's work touched the same code but was reviewed informally through the browser-feedback loop above, not a structured `/plan-eng-review` pass.
 - **A real-browser check of the finished Areas list and the flat/tilted view together** has not been done this session in one pass — worth a final look before calling D17/D20's canvas work closed.
 - **Six older open questions from the 2026-09-22 tomorrow-plan doc remain unanswered** (ground/surface colour mismatch, whether "no amber" covers the status dots, the landing page's unbuilt-builder claim, the hidden phone toolbar, ~5 s join time in dev, and the still-unsaved tool folders `.agents`/`.claude`/`skills-lock.json`).
+
+## D22. Engineering review of today's whole session's diff (2026-09-22)
+
+### What already exists and is reused
+
+Everything in this diff reuses an existing pattern rather than inventing a new one: `authorizeRoom`'s role-check shape (workspace appearance), `isoMatrix`'s single tilt seam (flat/tilted, area labels' now-removed attempts), and the people-search UI pattern (the new Areas list).
+
+### NOT in scope
+
+- The draggable/editable area-name idea the owner raised mid-troubleshooting — a map-builder feature (D10/D12), not this session's work.
+- A generic "searchable popover" beyond what RoomDock needs — `SearchPopover` stays private to this file; not worth exporting until a third caller needs it.
+
+### Findings
+
+1. **Code quality (DRY), resolved.** `PeopleSearch` and `AreasList` were near-duplicates. Extracted `SearchPopover` for the shared wiring; each caller keeps only its own row rendering. All 29 existing tests passed unchanged after the extraction, proving it behaviour-preserving.
+2. **Architecture:** no issues found.
+3. **Tests:** no gaps — the refactor added no new branches; the underlying bug (two popovers open at once) and the new auto-close timer already had dedicated tests before this review.
+4. **Performance:** no issues found.
+
+### Failure modes already covered by tests this session
+
+| Codepath | Failure | Test? |
+|---|---|---|
+| Two popovers | Both open at once (the owner's screenshot) | Yes — 2 regression tests |
+| Auto-close timer | Left running after close/unmount, could call setState on an unmounted component | Yes — advances fake timers 90s past close/unmount and confirms no throw |
+| Search popover chrome | Refactor silently changes behaviour | Yes — all 29 tests re-run unchanged after extraction |
+
+## GSTACK REVIEW REPORT
+
+| Runs | Status | Findings |
+|---|---|---|
+| Scope gate | user named the target ("today's whole branch diff") | — |
+| Step 0 scope challenge | ~15 files, no new service, existing patterns reused throughout | Complexity trigger not hit |
+| Architecture | resolved | No issues found |
+| Code quality | 1 finding, resolved (SearchPopover extraction) | DRY duplication between PeopleSearch/AreasList |
+| Tests | resolved | No gaps; 29 tests re-verified after the refactor |
+| Performance | resolved | No issues found |
+| Outside voice | not run | missing coverage, disclosed |
+
+VERDICT: PLAN READY. OUTSIDE COVERAGE: not run (no second reviewer available this session). CROSS-MODEL: not applicable.
+
+NO UNRESOLVED DECISIONS
