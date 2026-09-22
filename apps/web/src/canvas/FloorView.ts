@@ -68,7 +68,9 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Contain
       fontWeight: "300",
     },
   });
-  label.alpha = 0.6;
+  // Full brightness, matching a person's name tag (Avatar.ts, which sets no alpha at all) — the
+  // owner's own correction (2026-09-22): the label had been drawn quiet on purpose, but at this
+  // size it just looked dim rather than deliberately understated.
   label.anchor.set(1, 1);
   billboard.addChild(label);
   layer.addChild(anchor);
