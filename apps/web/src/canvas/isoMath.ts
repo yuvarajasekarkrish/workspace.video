@@ -84,25 +84,6 @@ export function uprightMatrix(tilted = true): Affine {
   return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det };
 }
 
-/**
- * A plain scale, no rotation, that lets text shrink and grow naturally with the map's own zoom
- * ABOVE `floorAt`, but never below the size it would have AT `floorAt` — a floor, not a fixed pin
- * (DESIGN.md's rule is text at LEAST 16 px, not exactly 16 px; a fixed pin made every label a
- * constant screen size regardless of the map's own scale, which looked oversized and crowded once
- * the map itself was zoomed out small — the owner's own correction, 2026-09-22). `floorAt` defaults
- * to 1 (the zoom at which a 16 px-authored label already renders as a true 16 px).
- *
- * Composed with the floor's own transform (isoMatrix(zoom, tilted)), the result is exactly
- * isoMatrix(max(zoom, floorAt), tilted) — because isoMatrix(scale, tilted) is that scale times a
- * FIXED shape (each of a/b/c/d is `scale` times a constant, so scaling by any factor lands on that
- * same shape at a different zoom). A label using this always stays angled with the floor, exactly
- * as at whichever zoom it lands on — unlike uprightMatrix, it does NOT remove the tilt.
- */
-export function zoomFloorMatrix(zoom: number, floorAt = 1): Affine {
-  const s = Math.max(zoom, floorAt) / zoom;
-  return { a: s, b: 0, c: 0, d: s };
-}
-
 /** The zoom and position that put the whole tilted floor inside the window, centred, with a margin around it. */
 export function fitFloor(
   floor: { width: number; height: number },

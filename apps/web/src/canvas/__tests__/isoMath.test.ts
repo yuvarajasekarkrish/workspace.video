@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, zoomFloorMatrix, fitFloor } from "../isoMath";
+import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, fitFloor } from "../isoMath";
 import { MIN_ZOOM, MAX_ZOOM } from "../viewportMath";
 
 // The 2.5D view of the room: the flat floor is turned a quarter of the way round (45 degrees) and leaned back (55
@@ -108,70 +108,6 @@ describe("uprightMatrix: keeps a person standing straight on the tilted floor", 
     expect(product.c).toBeCloseTo(0, 10);
   });
 
-});
-
-// D17, 5B, corrected 2026-09-22: DESIGN.md's rule is text AT LEAST 16 px, not a fixed pin. A fixed
-// pin looked oversized and cluttered once the map itself was zoomed out small (the owner's own
-// visual correction). zoomFloorMatrix is a floor: labels shrink and grow with the map's own zoom
-// exactly like everything else ABOVE `floorAt`, and only refuse to go smaller than that below it —
-// and, unlike uprightMatrix, without ever losing the tilt.
-describe("zoomFloorMatrix: never smaller than floorAt's size, otherwise scales naturally with zoom", () => {
-  const multiply = (p: { a: number; b: number; c: number; d: number }, q: { a: number; b: number; c: number; d: number }) => ({
-    a: p.a * q.a + p.c * q.b,
-    b: p.b * q.a + p.d * q.b,
-    c: p.a * q.c + p.c * q.d,
-    d: p.b * q.c + p.d * q.d,
-  });
-
-  it("below floorAt, the result is exactly the tilt AT floorAt (clamped up) — not the identity", () => {
-    for (const zoom of [0.05, 0.2, 0.6]) {
-      const product = multiply(isoMatrix(zoom), zoomFloorMatrix(zoom));
-      const atFloor = isoMatrix(1); // the default floorAt
-      expect(product.a).toBeCloseTo(atFloor.a, 10);
-      expect(product.b).toBeCloseTo(atFloor.b, 10);
-      expect(product.c).toBeCloseTo(atFloor.c, 10);
-      expect(product.d).toBeCloseTo(atFloor.d, 10);
-      // Confirms this is genuinely still tilted, not accidentally the identity (which uprightMatrix
-      // would produce): the off-diagonal terms of a real tilt are never both zero.
-      expect(product.b !== 0 || product.c !== 0).toBe(true);
-    }
-  });
-
-  it("at or above floorAt, it does nothing — the label scales naturally with the map's own zoom, exactly as before", () => {
-    for (const zoom of [1, 1.5, 3]) {
-      const product = multiply(isoMatrix(zoom), zoomFloorMatrix(zoom));
-      const natural = isoMatrix(zoom);
-      expect(product.a).toBeCloseTo(natural.a, 10);
-      expect(product.b).toBeCloseTo(natural.b, 10);
-      expect(product.c).toBeCloseTo(natural.c, 10);
-      expect(product.d).toBeCloseTo(natural.d, 10);
-    }
-  });
-
-  it("a custom floorAt clamps at that zoom instead of the default 1", () => {
-    const product = multiply(isoMatrix(0.3), zoomFloorMatrix(0.3, 0.5));
-    const atCustomFloor = isoMatrix(0.5);
-    expect(product.a).toBeCloseTo(atCustomFloor.a, 10);
-    expect(product.d).toBeCloseTo(atCustomFloor.d, 10);
-  });
-
-  it("does the same in flat mode: the flat shape at floorAt when zoomed below it, unchanged at or above it", () => {
-    expect(multiply(isoMatrix(0.3, false), zoomFloorMatrix(0.3))).toEqual(isoMatrix(1, false));
-    expect(multiply(isoMatrix(2.5, false), zoomFloorMatrix(2.5))).toEqual(isoMatrix(2.5, false));
-  });
-
-  it("is a plain scale with no rotation of its own", () => {
-    const m = zoomFloorMatrix(0.4);
-    expect(m.b).toBe(0);
-    expect(m.c).toBe(0);
-    expect(m.a).toBe(m.d);
-  });
-
-  it("is continuous at the floor: no visible jump right at zoom === floorAt", () => {
-    const just_below = zoomFloorMatrix(0.999);
-    const at = zoomFloorMatrix(1);
-    expect(just_below.a).toBeCloseTo(at.a, 2);
-  });
 });
 
 // D20: a workspace may choose "flat" instead of the tilted Gemini look. Every function above takes
