@@ -35,6 +35,11 @@ export interface PixiStageOptions {
    *  Passed as the layout itself, not a name, because a company's own map has no name in the
    *  built-in list. */
   layout: RoomLayout;
+  /** The workspace's own choice of flat or tilted (D20), resolved on the room page from
+   *  getWorkspaceAppearance with the file's own default ("tilted") already applied — this class
+   *  never reads the database itself. Fixed for the life of the stage; changing it takes a fresh
+   *  page load, the same as a colour change (D18). */
+  tilted: boolean;
 }
 
 /**
@@ -89,6 +94,8 @@ export class PixiStage {
   private roomId!: string;
   private localUserId!: string;
   private disposed = false;
+  /** The workspace's flat/tilted choice (D20), fixed for this stage's whole life. */
+  private tilted = true;
 
   static async create(options: PixiStageOptions): Promise<PixiStage> {
     const stage = new PixiStage();
@@ -131,13 +138,18 @@ export class PixiStage {
     // objects -> avatars, per the plan's layer ordering — the floor is
     // static furniture built once from the layout (see FloorView.ts),
     // never touched by the per-frame render loop like avatars/objects are.
-    this.viewport = new Viewport(this.app.canvas as HTMLCanvasElement, {
-      onClickToWalk: (worldPoint) => this.movementController.setWalkTarget(worldPoint),
-      onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
-      onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
-      onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
-      onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
-    });
+    this.tilted = options.tilted;
+    this.viewport = new Viewport(
+      this.app.canvas as HTMLCanvasElement,
+      {
+        onClickToWalk: (worldPoint) => this.movementController.setWalkTarget(worldPoint),
+        onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
+        onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
+        onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
+        onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
+      },
+      this.tilted,
+    );
     this.world.addChild(this.viewport.world);
 
     // Already resolved (with the server's own fallback rule) by the room page.
@@ -251,7 +263,7 @@ export class PixiStage {
     for (const [userId, peer] of state.peers) {
       let avatar = this.avatars.get(userId);
       if (!avatar) {
-        avatar = new Avatar(peer.name, peer.isLocal);
+        avatar = new Avatar(peer.name, peer.isLocal, this.tilted);
         this.avatars.set(userId, avatar);
         this.avatarLayer.addChild(avatar.container);
       } else {

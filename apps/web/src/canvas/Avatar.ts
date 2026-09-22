@@ -26,10 +26,12 @@ export class Avatar {
   private readonly seatedRing: Graphics;
   private readonly isLocal: boolean;
 
-  constructor(name: string, isLocal: boolean) {
+  constructor(name: string, isLocal: boolean, tilted = true) {
     this.isLocal = isLocal;
     this.container = new Container();
-    const u = uprightMatrix();
+    // In flat mode (D20) there is no tilt to cancel; uprightMatrix(false) correctly returns the
+    // identity matrix, so this stays a single call regardless of the workspace's view mode.
+    const u = uprightMatrix(tilted);
     this.body.setFromMatrix(new Matrix(u.a, u.b, u.c, u.d, 0, 0));
     this.container.addChild(this.body);
 

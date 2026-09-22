@@ -2,15 +2,18 @@ import type { Point } from "@workspace-video/shared";
 import { clampZoom, MIN_ZOOM, MAX_ZOOM } from "./viewportMath";
 
 /**
- * The 2.5D view of the room: the flat floor is turned 45 degrees and leaned back 55 degrees, the same look as the
- * owner's Gemini map (CSS rotateX(55deg) rotateZ(-45deg)). The server and the engine stay flat; only the drawing
- * is tilted. Every click, walk, zoom and "fit the whole floor" goes through these few functions, so a click on the
- * tilted picture and a position on the server always agree.
+ * The 2.5D view of the room: by default the flat floor is turned 45 degrees and leaned back 55
+ * degrees, the same look as the owner's Gemini map (CSS rotateX(55deg) rotateZ(-45deg)). A workspace
+ * may instead choose "flat" (looking straight down, no rotation at all) — an admin setting, not a
+ * per-person one (docs/architecture/company-map-builder.md, D20). The server and the engine stay
+ * flat either way; only the drawing changes. Every click, walk, zoom and "fit the whole floor" goes
+ * through these few functions, each taking the same `tilted` flag, so a click on the picture and a
+ * position on the server always agree in BOTH views.
  *
- *      flat floor (what the server knows)            on the screen
- *      (0,0) ---------> x                                 /\   <- (W,0) top
- *        |                                          (0,0) <    > (W,H)   the far corner, level with (0,0)
- *        v y                                                \/   <- (0,H) bottom
+ *      flat floor (what the server knows)         on the screen, tilted            on the screen, flat
+ *      (0,0) ---------> x                              /\   <- (W,0) top          (0,0) ---------> x
+ *        |                                       (0,0) <    > (W,H)                 |
+ *        v y                                             \/   <- (0,H) bottom       v y   (drawn straight down)
  *
  * A screen position is  position + M * floor,  with M = [a c; b d]. Nothing here draws anything.
  */
@@ -27,19 +30,23 @@ export interface Affine {
   d: number;
 }
 
-export function isoMatrix(scale: number): Affine {
+/** `tilted = false` (D20) is a plain uniform scale — no rotation, no lean — so the floor is drawn
+ *  exactly as the server sees it, only bigger or smaller. `tilted = true` (the default, today's
+ *  look) is unchanged. */
+export function isoMatrix(scale: number, tilted = true): Affine {
+  if (!tilted) return { a: scale, b: 0, c: 0, d: scale };
   return { a: scale * TURN, b: -scale * SQUASH * TURN, c: scale * TURN, d: scale * SQUASH * TURN };
 }
 
 /** Where a floor position appears on the screen. */
-export function project(floor: Point, position: Point, scale: number): Point {
-  const m = isoMatrix(scale);
+export function project(floor: Point, position: Point, scale: number, tilted = true): Point {
+  const m = isoMatrix(scale, tilted);
   return { x: position.x + m.a * floor.x + m.c * floor.y, y: position.y + m.b * floor.x + m.d * floor.y };
 }
 
 /** Which floor position a point on the screen means (the exact reverse of `project`). */
-export function unproject(screen: Point, position: Point, scale: number): Point {
-  const m = isoMatrix(scale);
+export function unproject(screen: Point, position: Point, scale: number, tilted = true): Point {
+  const m = isoMatrix(scale, tilted);
   const dx = screen.x - position.x;
   const dy = screen.y - position.y;
   const det = m.a * m.d - m.b * m.c;
@@ -54,10 +61,11 @@ export function zoomAtCursor(
   zoomFactor: number,
   min = MIN_ZOOM,
   max = MAX_ZOOM,
+  tilted = true,
 ): { scale: number; position: Point } {
-  const underCursor = unproject(cursor, position, scale);
+  const underCursor = unproject(cursor, position, scale, tilted);
   const nextScale = clampZoom(scale * zoomFactor, min, max);
-  const m = isoMatrix(nextScale);
+  const m = isoMatrix(nextScale, tilted);
   return {
     scale: nextScale,
     position: { x: cursor.x - (m.a * underCursor.x + m.c * underCursor.y), y: cursor.y - (m.b * underCursor.x + m.d * underCursor.y) },
@@ -67,9 +75,11 @@ export function zoomAtCursor(
 /**
  * The transform that cancels the tilt (but not the zoom), for things that must stand up straight on the tilted
  * floor: a person's dot stays round and their name stays level, and both still grow and shrink with the map.
+ * In flat mode there is no tilt to cancel, so this correctly returns the identity matrix (isoMatrix(1, false)
+ * is already a plain scale with no rotation, and its own inverse is itself).
  */
-export function uprightMatrix(): Affine {
-  const m = isoMatrix(1);
+export function uprightMatrix(tilted = true): Affine {
+  const m = isoMatrix(1, tilted);
   const det = m.a * m.d - m.b * m.c;
   return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det };
 }
@@ -79,6 +89,7 @@ export function fitFloor(
   floor: { width: number; height: number },
   view: { width: number; height: number },
   margin = 0.92,
+  tilted = true,
 ): { scale: number; position: Point } {
   if (!(floor.width > 0 && floor.height > 0 && view.width > 0 && view.height > 0)) return { scale: 1, position: { x: 0, y: 0 } };
 
@@ -87,7 +98,7 @@ export function fitFloor(
     { x: floor.width, y: 0 },
     { x: 0, y: floor.height },
     { x: floor.width, y: floor.height },
-  ].map((c) => project(c, { x: 0, y: 0 }, 1));
+  ].map((c) => project(c, { x: 0, y: 0 }, 1, tilted));
   const xs = corners.map((c) => c.x);
   const ys = corners.map((c) => c.y);
   const minX = Math.min(...xs);

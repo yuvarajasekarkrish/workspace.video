@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma, assertRoomMembership } from "@workspace-video/db";
+import type { CSSProperties } from "react";
+import { prisma, assertRoomMembership, getWorkspaceAppearance } from "@workspace-video/db";
 import { spawnPositionForUser } from "@workspace-video/proximity";
 import {
   resolveRoomLayout,
@@ -7,6 +8,7 @@ import {
   tileRectCenter,
   movementConfigForLayout,
   DEFAULT_MOVEMENT_CONFIG,
+  paletteById,
 } from "@workspace-video/shared";
 import { getSessionUser } from "@/lib/session";
 import { RoomCanvas } from "@/components/RoomCanvas";
@@ -40,6 +42,14 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
 
   const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
 
+  // The workspace's own look (D18-D20): a chosen accent palette and/or a flat instead of tilted
+  // view. `null` in either field means "the file's own default", so a workspace that never picked
+  // one renders exactly as it always has — this call adds one row read, already reading the room's
+  // own record above, no loop and no extra round trip per person.
+  const appearance = await getWorkspaceAppearance(room.workspaceId);
+  const tilted = appearance?.viewMode !== "flat";
+  const palette = appearance?.accentPalette ? paletteById(appearance.accentPalette) : null;
+
   // Decided by the ONE function the realtime server also uses at join_room, so client and server
   // always agree on where the floor's bounds and spawn point are (see resolveRoomLayout in
   // @workspace-video/shared). A stored company map that fails its checks falls back, and the
@@ -59,8 +69,18 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
     movementConfig,
   );
 
+  // Writes the workspace's chosen palette as CSS custom properties on this page only (D19, decision
+  // 1A) — every button and link keeps reading --color-accent etc. exactly as today; a workspace with
+  // no palette chosen (palette === null) renders globals.css's own values, untouched.
+  const paletteStyle = palette
+    ? ({
+        "--color-accent": palette.accent,
+        "--color-accent-hover": palette.accentHover,
+      } as CSSProperties)
+    : undefined;
+
   return (
-    <main className="h-screen w-screen overflow-hidden bg-[#0b0d12]">
+    <main className="h-screen w-screen overflow-hidden bg-[#0b0d12]" style={paletteStyle}>
       <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 text-sm text-neutral-400">
         {room.name}
       </div>
@@ -69,6 +89,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
         localUserId={session.userId}
         initialLocalPosition={initialLocalPosition}
         layout={layout}
+        tilted={tilted}
       />
     </main>
   );

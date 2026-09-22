@@ -109,6 +109,73 @@ describe("uprightMatrix: keeps a person standing straight on the tilted floor", 
   });
 });
 
+// D20: a workspace may choose "flat" instead of the tilted Gemini look. Every function above takes
+// the same `tilted` flag; these tests prove flat mode is a plain scale (no rotation at all) and that
+// the round-trip and upright-cancelling guarantees still hold in that mode too.
+describe("flat mode (tilted = false, D20)", () => {
+  it("isoMatrix(scale, false) is a plain uniform scale, no rotation", () => {
+    expect(isoMatrix(1, false)).toEqual({ a: 1, b: 0, c: 0, d: 1 });
+    expect(isoMatrix(0.5, false)).toEqual({ a: 0.5, b: 0, c: 0, d: 0.5 });
+  });
+
+  it("project draws the floor straight down: x stays x, y stays y, only scaled and offset", () => {
+    const origin = { x: 300, y: 200 };
+    expect(project({ x: 0, y: 0 }, origin, 1, false)).toEqual(origin);
+    expect(project({ x: 100, y: 40 }, origin, 2, false)).toEqual({ x: origin.x + 200, y: origin.y + 80 });
+  });
+
+  it("unproject still undoes project exactly in flat mode", () => {
+    const position = { x: 640, y: 360 };
+    const p = { x: 123, y: 456 };
+    const back = unproject(project(p, position, 0.7, false), position, 0.7, false);
+    expect(back.x).toBeCloseTo(p.x, 8);
+    expect(back.y).toBeCloseTo(p.y, 8);
+  });
+
+  it("zoomAtCursor keeps the spot under the mouse under the mouse in flat mode too", () => {
+    const cursor = { x: 500, y: 300 };
+    const position = { x: 0, y: 0 };
+    const before = unproject(cursor, position, 0.5, false);
+    const next = zoomAtCursor(cursor, position, 0.5, 1.5, undefined, undefined, false);
+    const under = project(before, next.position, next.scale, false);
+    expect(under.x).toBeCloseTo(cursor.x, 6);
+    expect(under.y).toBeCloseTo(cursor.y, 6);
+  });
+
+  it("uprightMatrix(false) is the identity — there is no tilt to cancel", () => {
+    // toBeCloseTo, not toEqual: the division in uprightMatrix can produce -0 for b/c, which is
+    // numerically identical to 0 (and draws identically) but fails a strict object-equality check.
+    const m = uprightMatrix(false);
+    expect(m.a).toBeCloseTo(1, 10);
+    expect(m.b).toBeCloseTo(0, 10);
+    expect(m.c).toBeCloseTo(0, 10);
+    expect(m.d).toBeCloseTo(1, 10);
+  });
+
+  it("fitFloor(..., tilted=false) fits a floor that is not rotated on screen", () => {
+    const floor = { width: 2880, height: 1920 };
+    const view = { width: 1440, height: 900 };
+    const fit = fitFloor(floor, view, 0.92, false);
+    const corners = [
+      { x: 0, y: 0 },
+      { x: floor.width, y: 0 },
+      { x: 0, y: floor.height },
+      { x: floor.width, y: floor.height },
+    ].map((c) => project(c, fit.position, fit.scale, false));
+    const xs = corners.map((c) => c.x);
+    const ys = corners.map((c) => c.y);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(-0.001);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(view.width + 0.001);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(-0.001);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(view.height + 0.001);
+  });
+
+  it("defaults to tilted (today's look) when the flag is omitted, so existing callers are unaffected", () => {
+    expect(isoMatrix(1)).not.toEqual(isoMatrix(1, false));
+    expect(uprightMatrix()).not.toEqual(uprightMatrix(false));
+  });
+});
+
 describe("fitFloor: the whole floor on the screen, centred", () => {
   const corners = (floor: { width: number; height: number }) => [
     { x: 0, y: 0 },

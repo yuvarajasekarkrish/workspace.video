@@ -20,6 +20,9 @@ export interface RoomCanvasProps {
   initialLocalPosition: Point;
   /** The room's layout itself (decided on the room page), not a name to look up. */
   layout: RoomLayout;
+  /** The workspace's flat-or-tilted choice (D20), already resolved on the room page with the
+   *  file's own default ("tilted") applied. */
+  tilted: boolean;
 }
 
 /** How much one press of a zoom button zooms. */
@@ -53,7 +56,7 @@ async function fetchLiveKitToken(roomId: string) {
  * audio fail and dispose independently, and audio has no dependency on the
  * Pixi Application existing at all.
  */
-export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }: RoomCanvasProps) {
+export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, tilted }: RoomCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioControllerRef = useRef<SpatialAudioController | null>(null);
   const stageRef = useRef<PixiStage | null>(null);
@@ -65,7 +68,7 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }
     let cancelled = false;
     let stage: PixiStage | null = null;
 
-    PixiStage.create({ canvasContainer: container, roomId, localUserId, initialLocalPosition, layout }).then(
+    PixiStage.create({ canvasContainer: container, roomId, localUserId, initialLocalPosition, layout, tilted }).then(
       (created) => {
         if (cancelled) {
           created.dispose();
@@ -81,7 +84,7 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout }
       stageRef.current = null;
       stage?.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition/layout are intentionally one-shot seeds, not reactive dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialLocalPosition/layout/tilted are intentionally one-shot seeds, not reactive dependencies
   }, [roomId, localUserId]);
 
   useEffect(() => {

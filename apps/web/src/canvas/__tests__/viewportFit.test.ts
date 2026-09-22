@@ -10,10 +10,10 @@ const WINDOW = { width: 1280, height: 720 };
 
 let viewport: Viewport | null = null;
 
-function make(): Viewport {
+function make(tilted = true): Viewport {
   const canvas = document.createElement("canvas");
   document.body.appendChild(canvas);
-  viewport = new Viewport(canvas, { onClickToWalk: () => {} });
+  viewport = new Viewport(canvas, { onClickToWalk: () => {} }, tilted);
   return viewport;
 }
 
@@ -65,5 +65,38 @@ describe("Viewport.isFitted", () => {
     pointer(document.querySelector("canvas")!, "pointerdown", 100, 100);
     pointer(window, "pointerup", 100, 100);
     expect(v.isFitted()).toBe(true);
+  });
+});
+
+// D20: a workspace's flat/tilted choice is fixed for the Viewport's whole life. This proves the
+// third constructor argument actually reaches every isoMath call the Viewport makes, not just
+// applyTransform — worldToScreen/screenToWorld must round-trip correctly in flat mode too, which a
+// stray tilted=true left somewhere inside Viewport.ts would break.
+describe("Viewport in flat mode (tilted = false)", () => {
+  it("still fits the whole floor and stays fitted the same way as tilted mode", () => {
+    const v = make(false);
+    v.fitToFloor(FLOOR, WINDOW);
+    expect(v.isFitted()).toBe(true);
+    v.zoomAt({ x: 640, y: 360 }, 1.25);
+    expect(v.isFitted()).toBe(false);
+  });
+
+  it("worldToScreen and screenToWorld round-trip exactly in flat mode", () => {
+    const v = make(false);
+    v.fitToFloor(FLOOR, WINDOW);
+    const world = { x: 1200, y: 800 };
+    const screen = v.worldToScreen(world);
+    const back = v.screenToWorld(screen);
+    expect(back.x).toBeCloseTo(world.x, 6);
+    expect(back.y).toBeCloseTo(world.y, 6);
+  });
+
+  it("draws the floor with no rotation: moving right on the floor moves straight right on screen, not diagonally", () => {
+    const v = make(false);
+    v.fitToFloor(FLOOR, WINDOW);
+    const a = v.worldToScreen({ x: 0, y: 0 });
+    const b = v.worldToScreen({ x: 200, y: 0 });
+    expect(b.y).toBeCloseTo(a.y, 6); // tilted mode would move up-right, not straight right
+    expect(b.x).toBeGreaterThan(a.x);
   });
 });

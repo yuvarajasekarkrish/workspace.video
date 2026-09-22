@@ -52,11 +52,14 @@ export interface ViewportCallbacks {
  */
 export class Viewport {
   readonly world = new Container();
-  /** Where the floor's top-left corner is on the screen, and the zoom. Together with the fixed tilt they are the whole view. */
+  /** Where the floor's top-left corner is on the screen, and the zoom. Together with the view mode they are the whole view. */
   private origin: Point = { x: 0, y: 0 };
   private zoom = 1;
   /** True from a fit until the person zooms or moves the view themselves. A window resize re-fits only while true. */
   private fitted = false;
+  /** Whether the floor is drawn tilted (default, the Gemini look) or flat (looking straight down) —
+   *  a workspace-wide admin setting (D20), fixed for the life of this Viewport. */
+  private readonly tilted: boolean;
 
   private spaceHeld = false;
   private activePointerId: number | null = null;
@@ -71,20 +74,22 @@ export class Viewport {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly callbacks: ViewportCallbacks,
+    tilted = true,
   ) {
+    this.tilted = tilted;
     this.applyTransform();
     this.attach();
   }
 
-  /** Puts the tilt, zoom and position onto the world container. */
+  /** Puts the tilt (or not), zoom and position onto the world container. */
   private applyTransform(): void {
-    const m = isoMatrix(this.zoom);
+    const m = isoMatrix(this.zoom, this.tilted);
     this.world.setFromMatrix(new Matrix(m.a, m.b, m.c, m.d, this.origin.x, this.origin.y));
   }
 
   /** Shows the whole floor, centred, inside a window of this size. Used when the room opens and for a "fit" button. */
   fitToFloor(floor: { width: number; height: number }, view: { width: number; height: number }): void {
-    const fit = fitFloor(floor, view);
+    const fit = fitFloor(floor, view, 0.92, this.tilted);
     this.zoom = fit.scale;
     this.origin = fit.position;
     this.fitted = true;
@@ -98,7 +103,7 @@ export class Viewport {
 
   /** Where a flat floor position appears on the screen (used to place the note editor over a note). */
   worldToScreen(world: Point): Point {
-    return project(world, this.origin, this.zoom);
+    return project(world, this.origin, this.zoom, this.tilted);
   }
 
   private attach(): void {
@@ -120,7 +125,7 @@ export class Viewport {
   }
 
   screenToWorld(screen: Point): Point {
-    return unproject(screen, this.origin, this.zoom);
+    return unproject(screen, this.origin, this.zoom, this.tilted);
   }
 
   /** Current zoom scale — needed by object interaction's resize-handle
@@ -241,7 +246,7 @@ export class Viewport {
 
   /** Zooms by `factor`, keeping the floor position under `anchor` (a screen position) exactly where it is. */
   zoomAt(anchor: Point, factor: number): void {
-    const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor);
+    const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor, undefined, undefined, this.tilted);
     this.zoom = scale;
     this.origin = position;
     this.fitted = false;
