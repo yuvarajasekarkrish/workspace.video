@@ -34,6 +34,12 @@ const MIN_ZONE_LABEL_PX = 10;
 // `floorAt` zoomFloorMatrix needs, derived from the two pixel sizes above rather than a made-up zoom
 // number, so the two constants above are the only place this policy has to be tuned again.
 const ZONE_LABEL_FLOOR_AT = MIN_ZONE_LABEL_PX / ZONE_LABEL_FONT_SIZE;
+// A person's name (Avatar.ts) is drawn upright (the tilt is cancelled for it) and reads crisp at the
+// renderer's own resolution. This label stays tilted with the floor on purpose, and a flat text
+// texture skewed by a real transform genuinely softens on the GPU — oversampling well past the
+// screen's resolution is what actually compensates for that; 4 is a deliberately generous value
+// since there are only ever a handful of these on screen, not hundreds.
+const ZONE_LABEL_TEXT_RESOLUTION = 4;
 
 function drawPanel(layer: Container, box: Box, radius: number): void {
   layer.addChild(
@@ -63,14 +69,18 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Contain
     style: {
       fill: WHITE,
       fontSize: ZONE_LABEL_FONT_SIZE,
-      // A thin weight (used to be 300) with wide spacing (used to be 2) reads fine flat and
-      // horizontal, but goes faint and blurry once Pixi tilts it — the actual cause the owner
-      // spotted comparing it to a crisp, un-tilted DOM chip (2026-09-26). Matching a person's own
-      // name tag (Avatar.ts uses 500/600) fixes it at the source instead of fighting it with alpha.
       letterSpacing: 0.5,
       fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
       fontWeight: "500",
     },
+    // The real remaining cause of the softness the owner kept pointing at (2026-09-26): a person's
+    // own name tag looks crisp because Avatar.ts cancels the tilt for it (uprightMatrix) — it is
+    // drawn flat. This label is deliberately NOT flat; it stays tilted with the floor (D17, 5B was
+    // corrected specifically to keep that). A flat text texture that is then skewed by a real
+    // transform genuinely softens on the GPU (the same reason a photo looks softer viewed at a
+    // steep angle) — raising the texture's own resolution well past the screen's (oversampling)
+    // is what actually compensates for that, not any style property.
+    resolution: ZONE_LABEL_TEXT_RESOLUTION,
   });
   // Full brightness, matching a person's name tag (Avatar.ts, which sets no alpha at all) — the
   // owner's own correction (2026-09-22): the label had been drawn quiet on purpose, but at this
