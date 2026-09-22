@@ -56,11 +56,24 @@ not just skimming the part that seems relevant.
 13. **Orientation must make physical sense.** A laptop's keyboard sits closest to the person using it;
     the screen stands between the keyboard and the desk's open space, tilted to face that person — not
     floating in the middle, not backwards.
-14. **Every chair must face its table/desk, and every laptop must face its chair.** A chair's front
-    (seat opening, armrests) points toward the desk or table it belongs to, with its back/headrest on
-    the outer side, away from the surface — never sideways or backwards to it. A laptop's screen faces
-    back toward whichever chair it belongs to, not toward the table centre, another chair, or nowhere
-    in particular. Check this on every new seat before showing the picture, not just for the first one.
+14. **Every chair must face its table/desk, and every laptop must face its chair — proven per rotation,
+    never assumed.** Armrests are on both sides of every chair, so they never tell front from back;
+    don't use them as the check. The only real definition:
+    - **Chair front** = the direction from the seat's position toward the centre of the table/desk it
+      belongs to.
+    - **Laptop near edge (keyboard)** = the direction from the table/desk centre outward toward the
+      chair that uses it — the opposite of the chair's front direction.
+    - Before placing a rotated copy of an approved chair or laptop image at a new seat, first work out
+      which real-world direction that image's *unrotated* (0°) version already points (using the
+      original approved reference photo it was cut from — never guessed), then measure, with actual
+      pixel data (e.g. tracking the keyboard's or screen's centroid through each 90° step), exactly how
+      that direction moves under rotation. Only then compute the rotation each seat needs. Two
+      different source images almost never share the same 0° direction or the same rotation math — redo
+      this check for every new asset, don't reuse a rotation table from a previous one.
+    - **Seats directly across a table from each other sit on one straight line through its centre** —
+      e.g. north and south seats share the same x, east and west share the same y — and face each other.
+    - Check this on every seat of a new picture before showing it, not just the first one. A picture
+      where two of four seats face the wrong way is exactly the kind of mistake this rule exists to catch.
 15. **Match the reference the owner gives, as closely as the tools allow — and say so honestly when
     they don't.** Hand-typed SVG coordinates cannot reproduce a photo pixel-for-pixel; if the owner
     wants that level of match, the correct answer is to use their actual reference image directly (see
