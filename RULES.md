@@ -1,0 +1,84 @@
+# Rules for building map assets (desk, chair, laptop, and anything after)
+
+Written down because these keep getting missed. Every rule below came from a real correction the owner
+gave during this work — nothing here is invented. Read this whole file before touching any new asset,
+not just skimming the part that seems relevant.
+
+## 1. Workflow order — never skip a step
+
+1. **Picture first.** Never write any implementation code (anything in `apps/web/src/canvas/*.ts` or
+   elsewhere) until the owner has explicitly approved a picture of it.
+2. **One item at a time.** Don't move on to the next item in a list (desk, then chair, then laptop,
+   then plant, then the next seating block) until the current one is approved.
+3. **No repeated "do you approve?" prompt.** Show the picture and stop. Don't ask after every picture —
+   the owner brings feedback on their own timing.
+4. **Nothing is locked in until the owner explicitly says so.** A related comment, a new question, or
+   silence is never approval. Only a clear "yes / approved / go ahead" unlocks writing code.
+
+## 2. Always check the real layout before making or describing anything
+
+5. **Compare against the real, already-built layout every time — not just sometimes.** Before drawing
+   or describing a seat, desk, or block, check what the actual code already builds for that exact
+   thing (`packages/shared/src/layouts/modules.ts`, `openOffice.ts`, and how `FloorView.ts` draws it
+   today). Show a side-by-side: what the real code draws today, next to the new version.
+6. **Check every real variant before assuming one.** A desk, table, or block might have more than one
+   real shape (2-seat desk vs 4-seat bench table vs 20-seat meeting table are genuinely different
+   things in the code). Search the actual layout code for every variant that exists and confirm with
+   the owner which one is meant — never invent a shape that "seems reasonable."
+7. **A chair image is a visual swap, not a new placeable object.** Chairs are already positioned by a
+   fixed formula in `modules.ts` (e.g. `deskGrid`'s `chair-a`/`chair-b`, exactly two seats per desk,
+   always). Replacing the plain circle with a picture never changes how many seats exist or where —
+   it only changes what's drawn at the same fixed spots. Do not treat the chair as something the admin
+   places independently.
+8. **New seating types reuse existing real shapes only.** A "4-seat" block is the real `benchTable`
+   (a square table, one chair on each side) — not an invented shape. Any new block must be built from
+   a shape that already exists in `modules.ts`, or the owner must explicitly say a genuinely new shape
+   is wanted.
+
+## 3. Stay inside the workspace's own look
+
+9. **Never replace the existing workspace canvas.** `FloorView.ts` already draws every piece of
+   furniture as simple flat shapes. New work only adds detail on top of what's there — never a rewrite
+   or a different rendering approach.
+10. **Only the workspace's own existing colours.** Charcoal panel, white outline, slate chair
+    (`CHAIR_FILL` / `PERSON_SLATE` — the same Tailwind "slate" family already in `palette.ts`), green
+    plant. **No amber, no glow, no new hue.** Amber belongs to the landing page (the Gemini design)
+    and, inside the room, only to the local user's own dot, a selected object, an occupied seat, and
+    sofas — never a general "futuristic" accent for desks/chairs/etc.
+11. **Lightweight, not photorealistic, unless the owner explicitly overrides this.** No heavy 3D
+    rendering, gradients, or glow by default. A 2.5D flat-shaded look (a top face + one tilted face,
+    same tilt language as the rest of the map) is the default target.
+
+## 4. Correctness of what's actually drawn
+
+12. **Every seated person needs their own version of whatever sits on a shared surface.** A 2-seat desk
+    needs 2 laptops (one per person), not one decoration for a single side.
+13. **Orientation must make physical sense.** A laptop's keyboard sits closest to the person using it;
+    the screen stands between the keyboard and the desk's open space, tilted to face that person — not
+    floating in the middle, not backwards.
+14. **Match the reference the owner gives, as closely as the tools allow — and say so honestly when
+    they don't.** Hand-typed SVG coordinates cannot reproduce a photo pixel-for-pixel; if the owner
+    wants that level of match, the correct answer is to use their actual reference image directly (see
+    rule 16), not to keep re-guessing coordinates.
+
+## 5. Scale and future-proofing
+
+15. **Design for every real plan size, not a convenient example.** Real plan sizes today are 10, 25,
+    50, 100, and 200 people (`packages/shared/src/plans.ts` — capped at 200 on purpose; there is no 500
+    yet). A seating/capacity idea must work at both the smallest and largest real size.
+
+## 6. Once an image is approved, treat it as the source of truth
+
+16. **An approved image is the exact asset — not a starting point to redraw from memory.** Once the
+    owner approves a specific picture (or supplies their own reference photo and says to use it), reuse
+    that exact file (or an exact crop/composite built only from that same file) for every related piece.
+    Do not quietly substitute a hand-drawn approximation of it later.
+17. **Reuse approved pieces instead of re-inventing them.** When building a new seating block (e.g. a
+    4-seat table), reuse the already-approved chair and laptop images directly (resized/rotated as
+    needed) rather than drawing new ones.
+
+## What "add detail" is scoped to, and what it is not
+
+This whole effort is about how existing, already-tested furniture (desk, chair, table, etc. — the 9
+real seating blocks in `modules.ts`) *looks*. It is not the admin builder, it does not let anyone choose
+seat counts, and it does not change how many people a room holds. Keep those separate.
