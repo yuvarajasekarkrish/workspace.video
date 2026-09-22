@@ -14,6 +14,11 @@ not just skimming the part that seems relevant.
    the owner brings feedback on their own timing.
 4. **Nothing is locked in until the owner explicitly says so.** A related comment, a new question, or
    silence is never approval. Only a clear "yes / approved / go ahead" unlocks writing code.
+4a. **Every decision the owner approves gets written down here, the same turn.** Whenever the owner
+    raises an idea and then says it's good/approved/right, that becomes a new rule in this file before
+    moving on — not just acted on once and forgotten. From then on, check new work against it like any
+    other rule in this list, and if a future picture violates it, that's a bug the same as breaking any
+    rule above.
 
 ## 2. Always check the real layout before making or describing anything
 
