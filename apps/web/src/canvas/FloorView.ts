@@ -63,9 +63,13 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Contain
     style: {
       fill: WHITE,
       fontSize: ZONE_LABEL_FONT_SIZE,
-      letterSpacing: 2,
+      // A thin weight (used to be 300) with wide spacing (used to be 2) reads fine flat and
+      // horizontal, but goes faint and blurry once Pixi tilts it — the actual cause the owner
+      // spotted comparing it to a crisp, un-tilted DOM chip (2026-09-26). Matching a person's own
+      // name tag (Avatar.ts uses 500/600) fixes it at the source instead of fighting it with alpha.
+      letterSpacing: 0.5,
       fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
-      fontWeight: "300",
+      fontWeight: "500",
     },
   });
   // Full brightness, matching a person's name tag (Avatar.ts, which sets no alpha at all) — the
