@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { LayoutZone } from "@workspace-video/shared";
 import { useMediaStore } from "@/store/mediaStore";
@@ -81,6 +81,22 @@ function Divider() {
   return <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-white/10" />;
 }
 
+/** How long Areas or Find people stays open with nobody typing before it closes itself (the owner's
+ *  number, 2026-09-22) — a search box left open all day with nobody reading it is exactly the kind
+ *  of un-bounded state this project's standing rule on timers means to avoid. */
+const POPOVER_AUTO_CLOSE_MS = 60_000;
+
+/** One timeout, restarted every time `resetKey` changes (typing counts as activity) and cleared the
+ *  moment the popover closes or this component unmounts — a self-stopping timer, never a running
+ *  interval, and never left dangling. Shared by PeopleSearch and AreasList below. */
+function usePopoverAutoClose(open: boolean, onOpenChange: (open: boolean) => void, resetKey: unknown): void {
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => onOpenChange(false), POPOVER_AUTO_CLOSE_MS);
+    return () => clearTimeout(timer);
+  }, [open, onOpenChange, resetKey]);
+}
+
 /**
  * The bar under the map. One line of icon-only buttons, so it never covers the floor: microphone, camera and screen
  * share on the left, then finding people, emoji, status and "invite to talk", then leave. It subscribes only to
@@ -97,6 +113,11 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
   // caught (2026-09-22): each used to own its own "am I open" state, so opening one never closed
   // the other and they ended up stacked on screen at once.
   const [openPopover, setOpenPopover] = useState<"people" | "areas" | null>(null);
+  // Stable identities: passed as an effect dependency inside usePopoverAutoClose, so a re-render for
+  // any unrelated reason (the roster changing, the mic status ticking) must not look like a "the
+  // callback changed" signal and tear down/reschedule the auto-close timer for no reason.
+  const openAreas = useCallback((next: boolean) => setOpenPopover(next ? "areas" : null), []);
+  const openPeople = useCallback((next: boolean) => setOpenPopover(next ? "people" : null), []);
 
   const audioReady = status === "connected";
   const needsEnable = audioReady && (!micEnabled || !canPlaybackAudio);
@@ -132,13 +153,13 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
         zones={zones}
         onGoToArea={onGoToArea}
         open={openPopover === "areas"}
-        onOpenChange={(next) => setOpenPopover(next ? "areas" : null)}
+        onOpenChange={openAreas}
       >
         {(areasButton) => (
           <PeopleSearch
             onGoToPerson={onGoToPerson}
             open={openPopover === "people"}
-            onOpenChange={(next) => setOpenPopover(next ? "people" : null)}
+            onOpenChange={openPeople}
           >
             {(searchButton) => (
               <div
@@ -198,6 +219,8 @@ function PeopleSearch({
   const [query, setQuery] = useState("");
   const wrapper = useRef<HTMLDivElement | null>(null);
   const shown = useMemo(() => filterRoster(roster, query), [roster, query]);
+
+  usePopoverAutoClose(open, onOpenChange, query);
 
   useEffect(() => {
     if (!open) return;
@@ -301,6 +324,8 @@ function AreasList({
   const [query, setQuery] = useState("");
   const wrapper = useRef<HTMLDivElement | null>(null);
   const shown = useMemo(() => filterZones(zones, query), [zones, query]);
+
+  usePopoverAutoClose(open, onOpenChange, query);
 
   useEffect(() => {
     if (!open) return;

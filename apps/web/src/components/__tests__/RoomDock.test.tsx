@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 import { RoomDock, filterRoster, filterZones } from "../RoomDock";
 import { ZoomControls } from "../ZoomControls";
@@ -256,6 +256,70 @@ describe("only one of Areas and Find people can be open at a time", () => {
     expect(screen.queryByRole("dialog", { name: "Areas" })).toBeNull();
     expect(screen.getByRole("dialog", { name: "Find people" })).toBeTruthy();
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+});
+
+// A search box left open with nobody typing closes itself after a while, instead of sitting open
+// all day (the owner's request, 2026-09-22) — a bounded, self-stopping timer per this project's
+// standing rule, never a permanently running one.
+describe("Areas and Find people close themselves after a minute of no typing", () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  async function waitSeconds(n: number) {
+    for (let i = 0; i < n; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  }
+
+  it("closes Find people after 60 seconds of no typing", async () => {
+    seedPeople();
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find people" }));
+    expect(screen.getByRole("dialog", { name: "Find people" })).toBeTruthy();
+    await waitSeconds(60);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes Areas after 60 seconds of no typing", async () => {
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    expect(screen.getByRole("dialog", { name: "Areas" })).toBeTruthy();
+    await waitSeconds(60);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("typing resets the timer, so it stays open past 60 seconds since the last keystroke", async () => {
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    await waitSeconds(45);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Find an area" }), { target: { value: "f" } });
+    await waitSeconds(45); // 90s since open, but only 45s since the last keystroke
+    expect(screen.getByRole("dialog", { name: "Areas" })).toBeTruthy();
+    await waitSeconds(15); // now 60s since that keystroke
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("picking a result closes it immediately, and the auto-close timer never fires afterwards", async () => {
+    // React's own internal scheduler also uses setTimeout, which fake timers see too, so a raw
+    // vi.getTimerCount() is not a clean signal here — this checks the actual behaviour a leaked
+    // timer would cause instead: onGoToArea firing a second time, or the dialog reappearing.
+    const p = props();
+    render(<RoomDock {...p} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Boardroom" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(p.onGoToArea).toHaveBeenCalledTimes(1);
+    await waitSeconds(90); // well past the 60s auto-close window
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(p.onGoToArea).toHaveBeenCalledTimes(1); // still just the one click, nothing fired again
+  });
+
+  it("unmounting while open does not throw or leave a timer that fires against an unmounted component", async () => {
+    const { unmount } = render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    unmount();
+    // If the timeout were not cleared, this would call setState on an unmounted component and
+    // React would log/throw — advancing past it here is the actual proof the cleanup ran.
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
   });
 });
 
