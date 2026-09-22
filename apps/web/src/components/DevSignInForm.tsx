@@ -31,7 +31,11 @@ export function DevSignInForm() {
         setError(body?.error ?? "Sign-in failed.");
         return;
       }
-      router.push("/");
+      // A convenience for the one seeded email every local dev session uses (packages/db/prisma/
+      // seed.ts always gives test@example.com the room "seed-room-1"): skip the landing page and
+      // land straight in that room. Any other email still goes to "/", since only this one email's
+      // room id is known ahead of time.
+      router.push(email.trim().toLowerCase() === "test@example.com" ? "/room/seed-room-1" : "/");
       router.refresh();
     } catch {
       setError("Couldn't reach the server.");

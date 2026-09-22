@@ -127,7 +127,9 @@ describe("SignInForm: the dev sign-in", () => {
     expect(screen.queryByText(/dev sign-in/i)).toBeNull();
   });
 
-  it("when devAuth is on, signs a seeded user in without email and reloads", async () => {
+  it("when devAuth is on, signs a seeded user in without email and lands straight in that seeded user's room", async () => {
+    // test@example.com always seeds to "seed-room-1" (packages/db/prisma/seed.ts), so this
+    // convenience skips the landing page for the one email every local dev session uses.
     fetchMock.mockReturnValue(reply(200, { ok: true }));
     render(<SignInForm devAuth />);
     expect(screen.getByText(/dev sign-in/i)).toBeTruthy();
@@ -136,6 +138,15 @@ describe("SignInForm: the dev sign-in", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("/api/auth/dev-signin");
     expect(JSON.parse(init.body)).toEqual({ email: "test@example.com" });
+    expect(push).toHaveBeenCalledWith("/room/seed-room-1");
+  });
+
+  it("still goes to the landing page for any other seeded email, since only test@example.com's room id is known ahead of time", async () => {
+    fetchMock.mockReturnValue(reply(200, { ok: true }));
+    render(<SignInForm devAuth />);
+    fireEvent.change(screen.getByLabelText(/seeded email/i), { target: { value: "ana@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /^sign in as$/i }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(push).toHaveBeenCalledWith("/");
   });
 
