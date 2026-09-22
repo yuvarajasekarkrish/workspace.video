@@ -26,7 +26,7 @@ const GROUP_THICKNESS = 9;
 // zoom is 1 or above, and the reference `MIN_ZONE_LABEL_PX` is measured against. Smaller than
 // DESIGN.md's general 16 px floor: the owner's own correction (2026-09-22) — a full 16 px looked
 // oversized and sudden next to the map's natural fit zoom.
-const ZONE_LABEL_FONT_SIZE = 12;
+const ZONE_LABEL_FONT_SIZE = 14;
 // The smallest an area name may ever render at on screen, however far the map is zoomed out (a
 // floor, not a fixed pin — see zoomFloorMatrix).
 const MIN_ZONE_LABEL_PX = 10;
