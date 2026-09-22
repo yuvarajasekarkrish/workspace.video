@@ -2,7 +2,7 @@ import { Container, Graphics, Matrix, Text } from "pixi.js";
 import type { RoomLayout, FurniturePiece, LayoutZone } from "@workspace-video/shared";
 import { tileRectToWorld } from "@workspace-video/shared";
 import { liftVector, screenStep } from "./lift";
-import { zoomCancelMatrix } from "./isoMath";
+import { zoomFloorMatrix } from "./isoMath";
 import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
 import { ACCENT, BLACK, CHAIR_FILL, LINE, PANEL_FILL, PLANT_GREEN, SLAB_EDGE, WHITE } from "./palette";
 
@@ -32,14 +32,15 @@ function drawPanel(layer: Container, box: Box, radius: number): void {
 }
 
 /** The area's name lies quietly in its bottom-right corner, as on the Gemini map, tilted with the
- *  floor exactly as before — only its SIZE is held fixed, not its angle (see zoomCancelMatrix). Two
- *  nested containers, each doing exactly one job, so `setZoom` can never disturb where the label sits:
+ *  floor exactly as before and scaling with the map's own zoom exactly as before, ABOVE zoom 1 — the
+ *  only change is a floor under it (see zoomFloorMatrix) so it never renders smaller than a true
+ *  16 px, however far the map is zoomed out (DESIGN.md's text-size floor, D17's 5B). Two nested
+ *  containers, each doing exactly one job, so `setZoom` can never disturb where the label sits:
  *   - `anchor` — carries ONLY the position (in floor coordinates), so it lands in the right area's
  *     corner exactly as before, at any pan or zoom.
  *   - `billboard` (its child) — carries ONLY the counter-scale `setZoom` writes with
  *     `setFromMatrix` (which resets a container's full local transform, position included — the
- *     reason this needs to be its own container and not the same one `anchor` uses).
- *  Keeping text a fixed 16 px on screen at any zoom: DESIGN.md's text-size floor and D17's 5B. */
+ *     reason this needs to be its own container and not the same one `anchor` uses). */
 function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Container {
   const anchor = new Container();
   anchor.position.set(corner.x + corner.width - 22, corner.y + corner.height - 16);
@@ -178,11 +179,12 @@ export interface FloorView {
   plan: FloorPlan;
   /** Raises one plate by that much (0 puts it back on the floor). Plates that do not exist are ignored. */
   setLift(slabId: string, height: number): void;
-  /** Keeps every area name a fixed 16 px on screen (D17, 5B) at the given zoom, still tilted with
-   *  the floor exactly as before (zoomCancelMatrix cancels only the zoom, not the tilt). Call this
-   *  once whenever the view's zoom changes (PixiStage does, from Viewport's onZoomChanged) — it does
-   *  no drawing of its own, just resets each label's own counter-scale, so it is cheap even with
-   *  many areas and never runs on a frame where the zoom did not change. */
+  /** Keeps every area name at least a true 16 px on screen (D17, 5B) at the given zoom — it still
+   *  shrinks and grows with the map above that floor, and stays tilted with the floor exactly as
+   *  before (zoomFloorMatrix touches only the size, never the tilt). Call this once whenever the
+   *  view's zoom changes (PixiStage does, from Viewport's onZoomChanged) — it does no drawing of its
+   *  own, just resets each label's own counter-scale, so it is cheap even with many areas and never
+   *  runs on a frame where the zoom did not change. */
   setZoom(zoom: number): void;
 }
 
@@ -222,7 +224,7 @@ export function buildFloorView(layout: RoomLayout): FloorView {
       slabs.get(slabId)?.setLift(height);
     },
     setZoom(zoom) {
-      const m = zoomCancelMatrix(zoom);
+      const m = zoomFloorMatrix(zoom);
       const matrix = new Matrix(m.a, m.b, m.c, m.d, 0, 0);
       for (const label of labels) label.setFromMatrix(matrix);
     },
