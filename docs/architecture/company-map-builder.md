@@ -597,3 +597,35 @@ The tilt is already isolated to one function, `isoMatrix(scale)` (`apps/web/src/
 
 1. A real-browser check exactly like every other `PixiStage`/`isoMath` change (standing rule, D15): the badge says "Connected", a person moves when clicked, and the map shows correctly in both flat and tilted, since a mistake here can blank the room.
 2. A short engineering review of this one item (like D19), because it touches the canvas.
+
+## D21. Progress written 2026-09-22: workspace colour/tilt backend, name visibility, and the map-text saga
+
+### What is done and pushed
+
+1. **D18/D19 backend (no screen yet).** A workspace can save one of six accent palettes and a flat-or-tilted choice. Both are checked on the server against the caller's real role (owner/admin only, matching `changeMemberRole`'s pattern), and locked in as database enums so a bad value can never be saved. `packages/shared/src/workspaceAppearance.ts`, `packages/db/src/workspaceAppearance.ts`, migration `20260922030631_workspace_appearance_palette_and_view_mode`.
+2. **D20 canvas support.** `isoMath.ts`'s `isoMatrix`/`uprightMatrix`/`fitFloor`/etc. all take a `tilted` flag; `Viewport`, `PixiStage` and `RoomCanvas` thread it through from the room page, which reads the workspace's saved choice (defaulting to tilted) via `getWorkspaceAppearance`. The room page also writes the workspace's saved palette as CSS variables on that page only (D19, decision 1A).
+3. **Task 12's audit table (decision 3A).** `AuditLogEntry`: one row per role change, map publish or map restore that actually happened, written inside the same transaction as the change. `listAuditLog` reads a workspace's history newest first.
+4. **Task 11's name-visibility rule (D17, 5B), the surviving half.** A person's name now shows only for you, people nearby (reusing `DEFAULT_PROXIMITY_CONFIG.videoRadiusPx`), whoever is under the mouse, or anyone found through search — everyone else is a plain dot. `apps/web/src/canvas/nameVisibility.ts` is a pure, fully unit-tested module; `PixiStage` wires hover detection and the search highlight into it once a frame.
+5. **A real bug fix, kept:** Pixi's renderer never matched the screen's actual pixel density (defaulted to resolution 1, while the browser always draws DOM text at full sharpness). `PixiStage.ts`'s `app.init` now sets `resolution: window.devicePixelRatio || 1` and `autoDensity: true` — a real, general quality improvement to the whole canvas, independent of the area-name saga below.
+6. **Dev convenience:** signing in as `test@example.com` now goes straight to its seeded room instead of the landing page.
+
+### The area-name saga, and why it ended where it did
+
+Task 11's other half — area names drawn on the tilted floor itself — went through many iterations in one session, each corrected by the owner after seeing it in the browser:
+
+1. Fixed size (16 px always) → looked oversized once the map was zoomed out.
+2. No minimum at all → unreadable at the normal starting view.
+3. A gentler floor (12 px / 10 px, then 14 px / 10 px) → readable, but still visibly softer than a person's own name or the DOM chip beside it.
+4. Chased the softness itself: full brightness, a heavier font weight and tighter letter-spacing, then the screen's real device-pixel-ratio (see item 5 above, which was worth keeping on its own), then oversampling the label's own texture 4x. None of it was enough.
+5. **Final diagnosis:** a person's own name reads crisp because `Avatar.ts` cancels the floor's tilt for it (drawn upright). The area label was deliberately kept tilted with the floor throughout all of this — and a flat text texture that is genuinely skewed by a real transform softens on the GPU, a limit no style property or oversampling factor fully overcomes at this size.
+6. **The owner's decision:** stop fighting canvas text rendering. Area names are removed from the map's canvas entirely. They now live only in a new **"Areas" button** in the room's bottom bar, next to "Find people" — a plain HTML list (search, click to walk there), reusing the exact pattern already proven for people search. `AreasList` in `RoomDock.tsx`, `PixiStage.walkToZone`.
+
+**Standing lesson (saved to memory):** do not put text on the room's tilted canvas map again without asking first. A plain list in the bar is the settled answer for anything that needs to be read as text.
+
+### Still open
+
+- **Task 13 (end of day):** stop the web/realtime servers and reset the test room. Only when the owner says "done".
+- **A "draggable/editable area name" idea** the owner raised mid-troubleshooting (moving/renaming an area from the map itself) is a map-builder feature (D10/D12), not part of this text-crispness fix — not started, needs its own decision on scope before building.
+- **D20's "still needed before building" item 2** (a short engineering review of the flat/tilted view, since it touches the canvas) has not been run as a dedicated review; today's work touched the same code but was reviewed informally through the browser-feedback loop above, not a structured `/plan-eng-review` pass.
+- **A real-browser check of the finished Areas list and the flat/tilted view together** has not been done this session in one pass — worth a final look before calling D17/D20's canvas work closed.
+- **Six older open questions from the 2026-09-22 tomorrow-plan doc remain unanswered** (ground/surface colour mismatch, whether "no amber" covers the status dots, the landing page's unbuilt-builder claim, the hidden phone toolbar, ~5 s join time in dev, and the still-unsaved tool folders `.agents`/`.claude`/`skills-lock.json`).
