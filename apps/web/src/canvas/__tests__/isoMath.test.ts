@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, zoomFloorMatrix, fitFloor } from "../isoMath";
+import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, fitFloor } from "../isoMath";
 import { MIN_ZOOM, MAX_ZOOM } from "../viewportMath";
 
 // The 2.5D view of the room: the flat floor is turned a quarter of the way round (45 degrees) and leaned back (55
@@ -110,59 +110,6 @@ describe("uprightMatrix: keeps a person standing straight on the tilted floor", 
 
 });
 
-// D17, 5B: area names hold a minimum size on screen, but otherwise scale naturally with zoom, and —
-// unlike uprightMatrix above — WITHOUT losing the tilt.
-describe("zoomFloorMatrix: never smaller than floorAt's size, otherwise scales naturally with zoom", () => {
-  const multiply = (p: { a: number; b: number; c: number; d: number }, q: { a: number; b: number; c: number; d: number }) => ({
-    a: p.a * q.a + p.c * q.b,
-    b: p.b * q.a + p.d * q.b,
-    c: p.a * q.c + p.c * q.d,
-    d: p.b * q.c + p.d * q.d,
-  });
-
-  it("below floorAt, the result is exactly the tilt AT floorAt (clamped up) — not the identity", () => {
-    for (const zoom of [0.05, 0.2, 0.4]) {
-      const product = multiply(isoMatrix(zoom), zoomFloorMatrix(zoom, 0.6875));
-      const atFloor = isoMatrix(0.6875);
-      expect(product.a).toBeCloseTo(atFloor.a, 10);
-      expect(product.b).toBeCloseTo(atFloor.b, 10);
-      expect(product.c).toBeCloseTo(atFloor.c, 10);
-      expect(product.d).toBeCloseTo(atFloor.d, 10);
-      // Confirms this is genuinely still tilted, not accidentally the identity (which uprightMatrix
-      // would produce): the off-diagonal terms of a real tilt are never both zero.
-      expect(product.b !== 0 || product.c !== 0).toBe(true);
-    }
-  });
-
-  it("at or above floorAt, it does nothing — the label scales naturally with the map's own zoom, exactly as before", () => {
-    for (const zoom of [0.6875, 1, 3]) {
-      const product = multiply(isoMatrix(zoom), zoomFloorMatrix(zoom, 0.6875));
-      const natural = isoMatrix(zoom);
-      expect(product.a).toBeCloseTo(natural.a, 10);
-      expect(product.b).toBeCloseTo(natural.b, 10);
-      expect(product.c).toBeCloseTo(natural.c, 10);
-      expect(product.d).toBeCloseTo(natural.d, 10);
-    }
-  });
-
-  it("does the same in flat mode: the flat shape at floorAt when zoomed below it, unchanged at or above it", () => {
-    expect(multiply(isoMatrix(0.3, false), zoomFloorMatrix(0.3, 0.5))).toEqual(isoMatrix(0.5, false));
-    expect(multiply(isoMatrix(2.5, false), zoomFloorMatrix(2.5, 0.5))).toEqual(isoMatrix(2.5, false));
-  });
-
-  it("is a plain scale with no rotation of its own", () => {
-    const m = zoomFloorMatrix(0.4, 0.6875);
-    expect(m.b).toBe(0);
-    expect(m.c).toBe(0);
-    expect(m.a).toBe(m.d);
-  });
-
-  it("is continuous at the floor: no visible jump right at zoom === floorAt", () => {
-    const just_below = zoomFloorMatrix(0.6874, 0.6875);
-    const at = zoomFloorMatrix(0.6875, 0.6875);
-    expect(just_below.a).toBeCloseTo(at.a, 2);
-  });
-});
 
 // D20: a workspace may choose "flat" instead of the tilted Gemini look. Every function above takes
 // the same `tilted` flag; these tests prove flat mode is a plain scale (no rotation at all) and that

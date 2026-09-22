@@ -20,7 +20,8 @@ export type IconName =
   | "plus"
   | "minus"
   | "fit"
-  | "user";
+  | "user"
+  | "map";
 
 const PATHS: Record<IconName, ReactNode> = {
   mic: (
@@ -89,6 +90,16 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="8" r="4" />
       <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
+  // A simple four-tile grid, for the areas list — deliberately plain, not a literal map, so it
+  // reads clearly at 20px next to the other one-colour outline icons.
+  map: (
+    <>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="3" width="8" height="8" rx="1.5" />
+      <rect x="3" y="13" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
     </>
   ),
 };

@@ -110,6 +110,10 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, 
     stageRef.current?.walkToPerson(userId);
   }, []);
 
+  const handleGoToArea = useCallback((zoneId: string) => {
+    stageRef.current?.walkToZone(zoneId);
+  }, []);
+
   const handleZoomIn = useCallback(() => stageRef.current?.zoomBy(ZOOM_STEP), []);
   const handleZoomOut = useCallback(() => stageRef.current?.zoomBy(1 / ZOOM_STEP), []);
   const handleFit = useCallback(() => stageRef.current?.fitView(), []);
@@ -134,7 +138,13 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, 
       <ZoneHudChip layout={layout} />
       <ZoneToast />
       <RoomHud />
-      <RoomDock onEnableAudio={handleEnableAudio} onToggleMute={handleToggleMute} onGoToPerson={handleGoToPerson} />
+      <RoomDock
+        onEnableAudio={handleEnableAudio}
+        onToggleMute={handleToggleMute}
+        onGoToPerson={handleGoToPerson}
+        onGoToArea={handleGoToArea}
+        zones={layout.zones}
+      />
       <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onFit={handleFit} />
       <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
       <CapacityScreen onRetry={handleRetryJoin} />

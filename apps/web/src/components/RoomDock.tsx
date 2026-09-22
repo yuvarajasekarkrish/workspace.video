@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import type { LayoutZone } from "@workspace-video/shared";
 import { useMediaStore } from "@/store/mediaStore";
 import { useRoster, type RosterEntry } from "@/store/peersStore";
 import { Icon, type IconName } from "./icons";
@@ -14,6 +15,19 @@ export interface RoomDockProps {
   onToggleMute: (muted: boolean) => void;
   /** Walk the local person to where this person is standing. */
   onGoToPerson: (userId: string) => void;
+  /** Walk the local person to the middle of this area. */
+  onGoToArea: (zoneId: string) => void;
+  /** The room's own areas, for the areas list — the map itself no longer draws their names
+   *  (2026-09-26: tilted text at this size never read as crisp as flat text, however it was
+   *  styled), so this list is now the one place a person reads and picks an area by name. */
+  zones: LayoutZone[];
+}
+
+/** Areas whose name contains what was typed (ignoring capital letters); everyone when nothing is typed. */
+export function filterZones(zones: LayoutZone[], query: string): LayoutZone[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return zones;
+  return zones.filter((zone) => zone.label.toLowerCase().includes(needle));
 }
 
 /** People whose name contains what was typed (ignoring capital letters); everyone when nothing is typed. */
@@ -73,7 +87,7 @@ function Divider() {
  * low-frequency stores (mediaStore for the microphone, the roster for the people list), never to positions, so it
  * does not re-render while people walk (see the no-rerender tests).
  */
-export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson }: RoomDockProps) {
+export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea, zones }: RoomDockProps) {
   const status = useMediaStore((s) => s.status);
   const micEnabled = useMediaStore((s) => s.micEnabled);
   const canPlaybackAudio = useMediaStore((s) => s.canPlaybackAudio);
@@ -110,40 +124,45 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson }: RoomDock
       {status === "error" && error && (
         <div className="pointer-events-auto rounded-full bg-black/60 px-3 py-1.5 text-xs text-red-300 backdrop-blur">Audio: {error}</div>
       )}
-      <PeopleSearch onGoToPerson={onGoToPerson}>
-        {(searchButton) => (
-          <div
-            role="toolbar"
-            aria-label="Room controls"
-            className="pointer-events-auto flex max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-black/60 px-2 py-1.5 shadow-lg shadow-black/40 backdrop-blur-md"
-          >
-            <DockButton
-              label={micLabel}
-              icon={!needsEnable && audioReady && muted ? "micOff" : "mic"}
-              onClick={handleMic}
-              disabled={!audioReady}
-              attention={needsEnable}
-              pressed={audioReady && !needsEnable ? !muted : undefined}
-            />
-            <DockButton label="Camera" icon="video" soon />
-            <DockButton label="Share screen" icon="screen" soon />
-            <Divider />
-            {searchButton}
-            <DockButton label="Emoji" icon="smile" soon />
-            <DockButton label="Set status" icon="status" soon />
-            <DockButton label="Invite to talk" icon="talk" soon />
-            <Divider />
-            <Link
-              href="/"
-              title="Leave room"
-              aria-label="Leave room"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              <Icon name="leave" />
-            </Link>
-          </div>
+      <AreasList zones={zones} onGoToArea={onGoToArea}>
+        {(areasButton) => (
+          <PeopleSearch onGoToPerson={onGoToPerson}>
+            {(searchButton) => (
+              <div
+                role="toolbar"
+                aria-label="Room controls"
+                className="pointer-events-auto flex max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-black/60 px-2 py-1.5 shadow-lg shadow-black/40 backdrop-blur-md"
+              >
+                <DockButton
+                  label={micLabel}
+                  icon={!needsEnable && audioReady && muted ? "micOff" : "mic"}
+                  onClick={handleMic}
+                  disabled={!audioReady}
+                  attention={needsEnable}
+                  pressed={audioReady && !needsEnable ? !muted : undefined}
+                />
+                <DockButton label="Camera" icon="video" soon />
+                <DockButton label="Share screen" icon="screen" soon />
+                <Divider />
+                {searchButton}
+                {areasButton}
+                <DockButton label="Emoji" icon="smile" soon />
+                <DockButton label="Set status" icon="status" soon />
+                <DockButton label="Invite to talk" icon="talk" soon />
+                <Divider />
+                <Link
+                  href="/"
+                  title="Leave room"
+                  aria-label="Leave room"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-red-300 transition-colors hover:bg-red-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <Icon name="leave" />
+                </Link>
+              </div>
+            )}
+          </PeopleSearch>
         )}
-      </PeopleSearch>
+      </AreasList>
     </div>
   );
 }
@@ -241,6 +260,104 @@ function PeopleSearch({
         </div>
       )}
       {children(searchButton)}
+    </div>
+  );
+}
+
+/** The areas button and the list that opens above the bar (2026-09-26: replaces drawing area names
+ *  on the map itself). Escape or a click elsewhere closes it — same shape as PeopleSearch above. */
+function AreasList({
+  zones,
+  onGoToArea,
+  children,
+}: {
+  zones: LayoutZone[];
+  onGoToArea: (zoneId: string) => void;
+  children: (areasButton: React.ReactNode) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapper = useRef<HTMLDivElement | null>(null);
+  const shown = useMemo(() => filterZones(zones, query), [zones, query]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (wrapper.current && !wrapper.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open]);
+
+  function close() {
+    setOpen(false);
+    setQuery("");
+  }
+
+  const areasButton = (
+    <DockButton
+      label="Areas"
+      icon="map"
+      pressed={open}
+      onClick={() => (open ? close() : setOpen(true))}
+    />
+  );
+
+  return (
+    <div ref={wrapper} className="flex flex-col items-center gap-2">
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Areas"
+          className="pointer-events-auto w-72 max-w-[calc(100vw-32px)] rounded-2xl border border-white/10 bg-black/70 p-2 shadow-lg shadow-black/40 backdrop-blur-md"
+        >
+          <div className="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">
+            <Icon name="search" size={16} />
+            <input
+              id="areas-search"
+              type="search"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find an area"
+              aria-label="Find an area"
+              className="w-full bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
+            />
+          </div>
+          <ul className="mt-2 max-h-64 overflow-y-auto" aria-label="Areas in this room">
+            {shown.map((zone) => (
+              <li key={zone.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onGoToArea(zone.id);
+                    close();
+                  }}
+                  title={`Walk to ${zone.label}`}
+                  className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left text-sm text-neutral-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-slate-200">
+                    <Icon name="map" size={14} />
+                  </span>
+                  <span className="truncate">{zone.label}</span>
+                  {typeof zone.capacity === "number" && (
+                    <span className="ml-auto shrink-0 font-mono text-xs text-neutral-500">/{zone.capacity}</span>
+                  )}
+                </button>
+              </li>
+            ))}
+            {shown.length === 0 && <li className="px-2 py-3 text-center text-sm text-neutral-500">No area matches.</li>}
+          </ul>
+        </div>
+      )}
+      {children(areasButton)}
     </div>
   );
 }

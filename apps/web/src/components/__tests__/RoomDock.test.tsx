@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
-import { RoomDock, filterRoster } from "../RoomDock";
+import { RoomDock, filterRoster, filterZones } from "../RoomDock";
 import { ZoomControls } from "../ZoomControls";
 import { mediaStore } from "@/store/mediaStore";
 import { peersStore } from "@/store/peersStore";
@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function props() {
-  return { onEnableAudio: vi.fn(), onToggleMute: vi.fn(), onGoToPerson: vi.fn() };
+  return { onEnableAudio: vi.fn(), onToggleMute: vi.fn(), onGoToPerson: vi.fn(), onGoToArea: vi.fn(), zones: [] };
 }
 
 function seedPeople() {
@@ -40,6 +40,7 @@ describe("the bar", () => {
       "Camera (coming soon)",
       "Share screen (coming soon)",
       "Find people",
+      "Areas",
       "Emoji (coming soon)",
       "Set status (coming soon)",
       "Invite to talk (coming soon)",
@@ -173,6 +174,72 @@ describe("finding people", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find people" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Find a person" }), { target: { value: "x" } });
     expect(screen.getByText("No one else is here yet.")).toBeTruthy();
+  });
+});
+
+const AREAS = [
+  { id: "z1", label: "Focus Pods", kind: "focus", rect: { col: 0, row: 0, cols: 4, rows: 4 }, capacity: 14 },
+  { id: "z2", label: "Boardroom", kind: "meeting", rect: { col: 4, row: 0, cols: 6, rows: 6 } },
+] as const;
+
+// The areas list (2026-09-26): replaces drawing area names on the map itself, since tilted text at
+// that size never read as crisp as flat text — same shape and behaviour as "finding people" above.
+describe("the areas list", () => {
+  it("opens a list of the room's areas, with capacity shown when the area has one", () => {
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    const list = screen.getByRole("list", { name: "Areas in this room" });
+    expect(list.textContent).toContain("Focus Pods");
+    expect(list.textContent).toContain("/14");
+    expect(list.textContent).toContain("Boardroom");
+  });
+
+  it("narrows the list as the person types, and says so when nothing matches", () => {
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    const box = screen.getByRole("searchbox", { name: "Find an area" });
+    fireEvent.change(box, { target: { value: "board" } });
+    const list = screen.getByRole("list", { name: "Areas in this room" });
+    expect(list.textContent).toContain("Boardroom");
+    expect(list.textContent).not.toContain("Focus Pods");
+    fireEvent.change(box, { target: { value: "zzz" } });
+    expect(screen.getByText("No area matches.")).toBeTruthy();
+  });
+
+  it("walks to the chosen area and closes the list", () => {
+    const p = props();
+    render(<RoomDock {...p} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Boardroom" }));
+    expect(p.onGoToArea).toHaveBeenCalledWith("z2");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes with Escape without walking anywhere", () => {
+    const p = props();
+    render(<RoomDock {...p} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(p.onGoToArea).not.toHaveBeenCalled();
+  });
+
+  it("closes when the person clicks somewhere else", () => {
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("filterZones", () => {
+  it("matches by name, ignoring case, and returns every area for an empty query", () => {
+    const zones = [...AREAS];
+    expect(filterZones(zones, "board").map((z) => z.id)).toEqual(["z2"]);
+    expect(filterZones(zones, "FOCUS").map((z) => z.id)).toEqual(["z1"]);
+    expect(filterZones(zones, "")).toEqual(zones);
+    expect(filterZones(zones, "zzz")).toEqual([]);
   });
 });
 

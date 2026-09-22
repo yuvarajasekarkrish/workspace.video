@@ -5,6 +5,8 @@ import {
   DEFAULT_PROXIMITY_CONFIG,
   movementConfigForLayout,
   hitTestSeats,
+  zoneById,
+  tileRectCenter,
 } from "@workspace-video/shared";
 import { peersStore, type PeersState } from "@/store/peersStore";
 import { objectsStore, type ObjectsState } from "@/store/objectsStore";
@@ -170,9 +172,6 @@ export class PixiStage {
         onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
         onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
         onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
-        // D17, 5B: area names hold a minimum size on screen. This fires only when the zoom value
-        // itself changes (fit, zoom buttons, wheel), never on a plain pan.
-        onZoomChanged: (scale) => this.floor.setZoom(scale),
       },
       this.tilted,
     );
@@ -195,11 +194,6 @@ export class PixiStage {
     this.floorSize = { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx };
     // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
     this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
-    // onZoomChanged only fires when the zoom VALUE changes, so this covers the (rare but real) case
-    // where the fitted zoom happens to equal Viewport's internal starting value of 1 — without this,
-    // area labels would stay at their un-scaled default (identity) counter-transform, which happens
-    // to be correct only when zoom is exactly 1, so any other starting zoom would render them wrong.
-    this.floor.setZoom(this.viewport.getScale());
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
@@ -656,6 +650,17 @@ export class PixiStage {
     // chosen, they leave, or the person clicks the map themselves (see onClickToWalk).
     this.highlightedUserId = userId;
     this.movementController.setWalkTarget({ x: peer.position.x, y: peer.position.y });
+    this.gate.wake();
+  }
+
+  /** Walks the local person to the middle of a named area. For the areas list in the room bar (which
+   *  replaces drawing area names on the map itself — 2026-09-26: text tilted with the floor could
+   *  never read as crisp as flat text at this size, so the names moved into a plain list instead).
+   *  Does nothing for an unknown zone id. */
+  walkToZone(zoneId: string): void {
+    const zone = zoneById(this.layout, zoneId);
+    if (!zone) return;
+    this.movementController.setWalkTarget(tileRectCenter(zone.rect));
     this.gate.wake();
   }
 
