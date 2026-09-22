@@ -73,13 +73,18 @@ export function zoomAtCursor(
 }
 
 /**
- * The transform that cancels the tilt (but not the zoom), for things that must stand up straight on the tilted
- * floor: a person's dot stays round and their name stays level, and both still grow and shrink with the map.
- * In flat mode there is no tilt to cancel, so this correctly returns the identity matrix (isoMatrix(1, false)
- * is already a plain scale with no rotation, and its own inverse is itself).
+ * The transform that cancels the tilt, for things that must stand up straight on the tilted floor: a person's dot
+ * stays round and their name stays level. `atZoom` controls whether it also cancels the current zoom:
+ *  - `uprightMatrix(tilted)` (atZoom defaults to 1, not the real zoom): cancels ONLY the tilt, so a person's
+ *    dot still grows and shrinks with the map (Avatar.ts).
+ *  - `uprightMatrix(tilted, currentZoom)`: cancels the tilt AND the zoom, so text stays a fixed size on screen no
+ *    matter how far the map is zoomed — the "always 16 px on screen" rule for area names and shown name tags
+ *    (D17, decision 5B). FloorView's zone labels use this; PixiStage recomputes it whenever the zoom changes.
+ * In flat mode there is no tilt to cancel, so this correctly returns a plain 1/atZoom scale (isoMatrix(atZoom, false)
+ * is already a plain scale with no rotation, and inverting a plain scale is still a plain scale).
  */
-export function uprightMatrix(tilted = true): Affine {
-  const m = isoMatrix(1, tilted);
+export function uprightMatrix(tilted = true, atZoom = 1): Affine {
+  const m = isoMatrix(atZoom, tilted);
   const det = m.a * m.d - m.b * m.c;
   return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det };
 }

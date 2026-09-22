@@ -107,6 +107,24 @@ describe("uprightMatrix: keeps a person standing straight on the tilted floor", 
     expect(product.b).toBeCloseTo(0, 10);
     expect(product.c).toBeCloseTo(0, 10);
   });
+
+  // D17, 5B: area names and shown name tags stay a fixed size on screen at any zoom. Passing the
+  // current zoom as `atZoom` cancels it too, unlike the Avatar usage above.
+  it("uprightMatrix(tilted, zoom) cancels the zoom as well, so text stays a fixed size on screen at any zoom", () => {
+    for (const zoom of [0.2, 1, 3]) {
+      const product = multiply(isoMatrix(zoom), uprightMatrix(true, zoom));
+      expect(product.a).toBeCloseTo(1, 10);
+      expect(product.d).toBeCloseTo(1, 10);
+      expect(product.b).toBeCloseTo(0, 10);
+      expect(product.c).toBeCloseTo(0, 10);
+    }
+  });
+
+  it("does the same in flat mode: no tilt existed to begin with, but the zoom is still cancelled", () => {
+    const product = multiply(isoMatrix(0.6, false), uprightMatrix(false, 0.6));
+    expect(product.a).toBeCloseTo(1, 10);
+    expect(product.d).toBeCloseTo(1, 10);
+  });
 });
 
 // D20: a workspace may choose "flat" instead of the tilted Gemini look. Every function above takes

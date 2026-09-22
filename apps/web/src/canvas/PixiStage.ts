@@ -2,6 +2,7 @@ import { Application, Container, EventsTicker, Ticker } from "pixi.js";
 import type { Point, RoomLayout } from "@workspace-video/shared";
 import {
   DEFAULT_MOVEMENT_CONFIG,
+  DEFAULT_PROXIMITY_CONFIG,
   movementConfigForLayout,
   hitTestSeats,
 } from "@workspace-video/shared";
@@ -14,8 +15,9 @@ import { LiftState, liftVector, pickSlab } from "./lift";
 import { slabAt } from "./slabPlan";
 import { GROUND_CSS } from "./palette";
 import { SeatOverlay } from "./SeatOverlay";
-import { Avatar } from "./Avatar";
+import { Avatar, AVATAR_HOVER_RADIUS } from "./Avatar";
 import { Viewport } from "./Viewport";
+import { computeNameVisibility } from "./nameVisibility";
 import { stepToward, hasConverged, stepScalarToward } from "./interpolation";
 import { IdleGate, tickerGroup, wakeOnActivity } from "./idleGate";
 import { MovementController } from "@/input/MovementController";
@@ -96,6 +98,12 @@ export class PixiStage {
   private disposed = false;
   /** The workspace's flat/tilted choice (D20), fixed for this stage's whole life. */
   private tilted = true;
+  /** Whoever the mouse is currently over, for the name-visibility rule (D17, 5B). Set by
+   *  attachHover, cleared on pointerleave and when the hovered avatar itself leaves. */
+  private hoveredUserId: string | null = null;
+  /** Whoever was last found through the people search (walkToPerson) — kept visible by name until
+   *  another search result is chosen, they leave, or the person clicks the map themselves (D17, 5B). */
+  private highlightedUserId: string | null = null;
 
   static async create(options: PixiStageOptions): Promise<PixiStage> {
     const stage = new PixiStage();
@@ -142,11 +150,19 @@ export class PixiStage {
     this.viewport = new Viewport(
       this.app.canvas as HTMLCanvasElement,
       {
-        onClickToWalk: (worldPoint) => this.movementController.setWalkTarget(worldPoint),
+        onClickToWalk: (worldPoint) => {
+          // A plain click means the person is choosing where to walk themselves, not following a
+          // search result any more — the highlight (D17, 5B) belongs to search until they move on.
+          this.highlightedUserId = null;
+          this.movementController.setWalkTarget(worldPoint);
+        },
         onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
         onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
         onObjectGestureEnd: () => this.objectInteraction.handleGestureEnd(),
         onFurnitureGestureStart: (worldPoint) => this.handleFurnitureGestureStart(worldPoint),
+        // D17, 5B: area names stay a fixed 16 px on screen. This fires only when the zoom value
+        // itself changes (fit, zoom buttons, wheel), never on a plain pan.
+        onZoomChanged: (scale) => this.floor.setZoom(scale, this.tilted),
       },
       this.tilted,
     );
@@ -169,6 +185,11 @@ export class PixiStage {
     this.floorSize = { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx };
     // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
     this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
+    // onZoomChanged only fires when the zoom VALUE changes, so this covers the (rare but real) case
+    // where the fitted zoom happens to equal Viewport's internal starting value of 1 — without this,
+    // area labels would stay at their un-billboarded default (identity) transform, which is wrong in
+    // tilted mode even at zoom 1.
+    this.floor.setZoom(this.viewport.getScale(), this.tilted);
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
@@ -275,6 +296,10 @@ export class PixiStage {
       if (!state.peers.has(userId)) {
         avatar.destroy();
         this.avatars.delete(userId);
+        // Their name-visibility state (D17, 5B) leaves with them, so a later join reusing no id
+        // never inherits a stale hover/highlight that meant someone else.
+        if (this.hoveredUserId === userId) this.hoveredUserId = null;
+        if (this.highlightedUserId === userId) this.highlightedUserId = null;
       }
     }
 
@@ -344,23 +369,64 @@ export class PixiStage {
     avatar.setPosition(position.x, position.y);
   }
 
-  /** Raises the plate under the mouse. Moving the mouse inside one plate does nothing; only crossing onto another plate
-   *  (or off the floor) changes anything, and only then is the drawing loop woken, for the short rise. */
+  /** Which peer (if any) is under this screen point, within AVATAR_HOVER_RADIUS scaled by the
+   *  current zoom (dots grow and shrink with zoom, so the hit area does too) — D17, decision 5B: the
+   *  person under the mouse gets their name shown. Picks the nearest one within range, screen-space,
+   *  not floor-space, since that is what "under the mouse" actually means to the person looking. */
+  private avatarUnderScreenPoint(screenPoint: Point): string | null {
+    const hitRadius = AVATAR_HOVER_RADIUS * this.viewport.getScale();
+    let nearestUserId: string | null = null;
+    let nearestDistSq = hitRadius * hitRadius;
+    for (const [userId, peer] of peersStore.getState().peers) {
+      const onScreen = this.viewport.worldToScreen(peer.renderPosition);
+      const dx = onScreen.x - screenPoint.x;
+      const dy = onScreen.y - screenPoint.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= nearestDistSq) {
+        nearestDistSq = distSq;
+        nearestUserId = userId;
+      }
+    }
+    return nearestUserId;
+  }
+
+  /** Raises the plate under the mouse, and (D17, 5B) tracks which avatar is under the mouse for the
+   *  name-visibility rule. Moving the mouse without crossing onto another plate or a different
+   *  avatar changes nothing, and only a real change wakes the drawing loop. */
   private attachHover(canvas: HTMLCanvasElement): () => void {
     const onMove = (e: PointerEvent) => {
       if (e.buttons) return; // dragging or panning, not hovering
       const rect = canvas.getBoundingClientRect();
-      const floorPoint = this.viewport.screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-      const current = this.lifts.hoveredId();
-      const next = pickSlab(this.floor.plan, floorPoint, current ? { slabId: current, lift: this.lifts.liftOf(current) } : null);
-      if (next === current) return;
-      this.lifts.setHovered(next);
-      this.gate.wake();
+      const screenPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      let woke = false;
+
+      const floorPoint = this.viewport.screenToWorld(screenPoint);
+      const currentSlab = this.lifts.hoveredId();
+      const nextSlab = pickSlab(this.floor.plan, floorPoint, currentSlab ? { slabId: currentSlab, lift: this.lifts.liftOf(currentSlab) } : null);
+      if (nextSlab !== currentSlab) {
+        this.lifts.setHovered(nextSlab);
+        woke = true;
+      }
+
+      const nextHovered = this.avatarUnderScreenPoint(screenPoint);
+      if (nextHovered !== this.hoveredUserId) {
+        this.hoveredUserId = nextHovered;
+        woke = true;
+      }
+
+      if (woke) this.gate.wake();
     };
     const onLeave = () => {
-      if (this.lifts.hoveredId() === null) return;
-      this.lifts.setHovered(null);
-      this.gate.wake();
+      let woke = false;
+      if (this.lifts.hoveredId() !== null) {
+        this.lifts.setHovered(null);
+        woke = true;
+      }
+      if (this.hoveredUserId !== null) {
+        this.hoveredUserId = null;
+        woke = true;
+      }
+      if (woke) this.gate.wake();
     };
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerleave", onLeave);
@@ -413,6 +479,22 @@ export class PixiStage {
         stillChanging = true;
       }
       this.placeAvatar(avatar, peer.renderPosition);
+    }
+
+    // D17, 5B: recompute who gets a shown name this frame. Cheap (one pass over peers.peers, which
+    // the loop above already walks) and correct even while nothing moves, since "nearby" changes as
+    // soon as any renderPosition above did.
+    if (peers.localUserId) {
+      const positions = new Map<string, Point>();
+      for (const [userId, peer] of peers.peers) positions.set(userId, peer.renderPosition);
+      const shown = computeNameVisibility({
+        positions,
+        localUserId: peers.localUserId,
+        nearbyRadiusPx: DEFAULT_PROXIMITY_CONFIG.videoRadiusPx,
+        hoveredUserId: this.hoveredUserId,
+        highlightedUserId: this.highlightedUserId,
+      });
+      for (const [userId, avatar] of this.avatars) avatar.setNameVisible(shown.has(userId));
     }
 
     const objects = objectsStore.getState();
@@ -560,6 +642,9 @@ export class PixiStage {
   walkToPerson(userId: string): void {
     const peer = peersStore.getState().peers.get(userId);
     if (!peer || peer.isLocal) return;
+    // D17, 5B: found through search, so their name stays shown until another search result is
+    // chosen, they leave, or the person clicks the map themselves (see onClickToWalk).
+    this.highlightedUserId = userId;
     this.movementController.setWalkTarget({ x: peer.position.x, y: peer.position.y });
     this.gate.wake();
   }

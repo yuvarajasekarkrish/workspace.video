@@ -2,11 +2,18 @@ import { Container, Graphics, Matrix, Text } from "pixi.js";
 import { uprightMatrix } from "./isoMath";
 import { ACCENT, BLACK, INK, NAME_TAG_TEXT, PERSON_SLATE, WHITE } from "./palette";
 
-// The Gemini design's people: a slate dot for everyone else, an amber dot with a soft glow for you, and a small dark
-// name tag above (docs/designs/gemini-landing.html.html).
+// The Gemini design's people: a slate dot for everyone else, an accent dot with a soft glow for you, and a small
+// dark name tag above (docs/designs/gemini-landing.html.html), shown only where it's useful (see setNameVisible;
+// D17, decision 5B) so 200 people stay readable.
 const RADIUS = 15;
 const YOU_RADIUS = 17;
 const SEATED_RING_RADIUS = RADIUS + 7;
+
+/** How far, in floor pixels before zoom, the mouse counts as "hovering" this avatar (D17, 5B: the
+ *  person under the mouse gets their name shown). A little larger than the dot itself, the same way
+ *  a click target is usually a bit more forgiving than the thing it hits. PixiStage scales this by
+ *  the current zoom, the same way the dot itself grows and shrinks with zoom. */
+export const AVATAR_HOVER_RADIUS = 22;
 
 /**
  * One display object per peer. Deliberately dumb: it exposes only
@@ -55,7 +62,9 @@ export class Avatar {
       text: name,
       style: {
         fill: isLocal ? ACCENT : NAME_TAG_TEXT,
-        fontSize: 13,
+        // 16 px on screen, per DESIGN.md's text-size floor and D17's decision 5B for the map's own
+        // text (area labels and, where shown, a person's name).
+        fontSize: 16,
         fontWeight: isLocal ? "600" : "500",
         fontFamily: "Inter Variable, ui-sans-serif, system-ui, sans-serif",
       },
@@ -63,6 +72,9 @@ export class Avatar {
     this.label.anchor.set(0.5, 0.5);
     this.body.addChild(this.label);
     this.layoutTag(isLocal);
+    // Shown/hidden every frame by PixiStage.setNameVisible per D17 5B; starts visible so a peer who
+    // joins mid-frame (before the next renderFrame runs) is never drawn with no name tag logic
+    // applied at all — the very next frame corrects it either way.
   }
 
   /** Sizes the dark name tag to the name and places it above the dot. */
@@ -94,6 +106,15 @@ export class Avatar {
    *  transmitted flag of its own. */
   setSeated(seated: boolean): void {
     this.seatedRing.visible = seated;
+  }
+
+  /** Whether the name tag draws at all (D17, 5B): shown for you, people nearby, whoever is under
+   *  the mouse, and anyone found through search; a plain dot otherwise. Recomputed by PixiStage
+   *  every frame something is moving — this call is just "set the two shapes' visibility", nothing
+   *  here reads any store or does its own distance math. */
+  setNameVisible(visible: boolean): void {
+    this.tag.visible = visible;
+    this.label.visible = visible;
   }
 
   destroy(): void {
