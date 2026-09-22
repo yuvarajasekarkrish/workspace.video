@@ -233,6 +233,32 @@ describe("the areas list", () => {
   });
 });
 
+// Regression: Areas and Find people used to each own their own "am I open" state, so opening one
+// never closed the other and both stayed open at once, stacked on screen (the owner's report, 2026-09-22).
+describe("only one of Areas and Find people can be open at a time", () => {
+  it("opening Areas while Find people is open closes Find people", () => {
+    seedPeople();
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Find people" }));
+    expect(screen.getByRole("dialog", { name: "Find people" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    expect(screen.queryByRole("dialog", { name: "Find people" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Areas" })).toBeTruthy();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("opening Find people while Areas is open closes Areas", () => {
+    seedPeople();
+    render(<RoomDock {...props()} zones={[...AREAS]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Areas" }));
+    expect(screen.getByRole("dialog", { name: "Areas" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Find people" }));
+    expect(screen.queryByRole("dialog", { name: "Areas" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Find people" })).toBeTruthy();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+});
+
 describe("filterZones", () => {
   it("matches by name, ignoring case, and returns every area for an empty query", () => {
     const zones = [...AREAS];

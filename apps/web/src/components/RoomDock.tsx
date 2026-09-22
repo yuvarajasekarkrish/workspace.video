@@ -93,6 +93,10 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
   const canPlaybackAudio = useMediaStore((s) => s.canPlaybackAudio);
   const error = useMediaStore((s) => s.error);
   const [muted, setMuted] = useState(false);
+  // Only one of the bar's two popovers (people, areas) may be open at a time — a bug the owner
+  // caught (2026-09-22): each used to own its own "am I open" state, so opening one never closed
+  // the other and they ended up stacked on screen at once.
+  const [openPopover, setOpenPopover] = useState<"people" | "areas" | null>(null);
 
   const audioReady = status === "connected";
   const needsEnable = audioReady && (!micEnabled || !canPlaybackAudio);
@@ -124,9 +128,18 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
       {status === "error" && error && (
         <div className="pointer-events-auto rounded-full bg-black/60 px-3 py-1.5 text-xs text-red-300 backdrop-blur">Audio: {error}</div>
       )}
-      <AreasList zones={zones} onGoToArea={onGoToArea}>
+      <AreasList
+        zones={zones}
+        onGoToArea={onGoToArea}
+        open={openPopover === "areas"}
+        onOpenChange={(next) => setOpenPopover(next ? "areas" : null)}
+      >
         {(areasButton) => (
-          <PeopleSearch onGoToPerson={onGoToPerson}>
+          <PeopleSearch
+            onGoToPerson={onGoToPerson}
+            open={openPopover === "people"}
+            onOpenChange={(next) => setOpenPopover(next ? "people" : null)}
+          >
             {(searchButton) => (
               <div
                 role="toolbar"
@@ -167,16 +180,21 @@ export function RoomDock({ onEnableAudio, onToggleMute, onGoToPerson, onGoToArea
   );
 }
 
-/** The find-people button and the list that opens above the bar. Escape or a click elsewhere closes it. */
+/** The find-people button and the list that opens above the bar. Escape or a click elsewhere closes it.
+ *  `open`/`onOpenChange` are owned by RoomDock, not this component, so it and AreasList can never
+ *  both be open at once (the bug the owner caught, 2026-09-22). */
 function PeopleSearch({
   onGoToPerson,
+  open,
+  onOpenChange,
   children,
 }: {
   onGoToPerson: (userId: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   children: (searchButton: React.ReactNode) => React.ReactNode;
 }) {
   const roster = useRoster();
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapper = useRef<HTMLDivElement | null>(null);
   const shown = useMemo(() => filterRoster(roster, query), [roster, query]);
@@ -184,10 +202,10 @@ function PeopleSearch({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") onOpenChange(false);
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (wrapper.current && !wrapper.current.contains(e.target as Node)) setOpen(false);
+      if (wrapper.current && !wrapper.current.contains(e.target as Node)) onOpenChange(false);
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointerDown);
@@ -195,10 +213,10 @@ function PeopleSearch({
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [open]);
+  }, [open, onOpenChange]);
 
   function close() {
-    setOpen(false);
+    onOpenChange(false);
     setQuery("");
   }
 
@@ -207,7 +225,7 @@ function PeopleSearch({
       label="Find people"
       icon="search"
       pressed={open}
-      onClick={() => (open ? close() : setOpen(true))}
+      onClick={() => (open ? close() : onOpenChange(true))}
     />
   );
 
@@ -264,18 +282,22 @@ function PeopleSearch({
   );
 }
 
-/** The areas button and the list that opens above the bar (2026-09-26: replaces drawing area names
- *  on the map itself). Escape or a click elsewhere closes it — same shape as PeopleSearch above. */
+/** The areas button and the list that opens above the bar (2026-09-22: replaces drawing area names
+ *  on the map itself). Escape or a click elsewhere closes it. `open`/`onOpenChange` are owned by
+ *  RoomDock, not this component, so it and PeopleSearch can never both be open at once. */
 function AreasList({
   zones,
   onGoToArea,
+  open,
+  onOpenChange,
   children,
 }: {
   zones: LayoutZone[];
   onGoToArea: (zoneId: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   children: (areasButton: React.ReactNode) => React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapper = useRef<HTMLDivElement | null>(null);
   const shown = useMemo(() => filterZones(zones, query), [zones, query]);
@@ -283,10 +305,10 @@ function AreasList({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") onOpenChange(false);
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (wrapper.current && !wrapper.current.contains(e.target as Node)) setOpen(false);
+      if (wrapper.current && !wrapper.current.contains(e.target as Node)) onOpenChange(false);
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointerDown);
@@ -294,10 +316,10 @@ function AreasList({
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [open]);
+  }, [open, onOpenChange]);
 
   function close() {
-    setOpen(false);
+    onOpenChange(false);
     setQuery("");
   }
 
@@ -306,7 +328,7 @@ function AreasList({
       label="Areas"
       icon="map"
       pressed={open}
-      onClick={() => (open ? close() : setOpen(true))}
+      onClick={() => (open ? close() : onOpenChange(true))}
     />
   );
 
