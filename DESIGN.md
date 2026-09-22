@@ -12,8 +12,8 @@ Dark, calm, one accent. A tool people sit in all day, so the interface stays qui
 
 | Token | Value | Use |
 |-------|-------|-----|
-| `ground` | #0b0d12 | The page |
-| `surface` | #14171f | Inputs and panels on the page |
+| `ground` | #0a0a0a | The page |
+| `surface` | #171717 | Inputs and panels on the page |
 | `line` | #343a47 | Borders |
 | `fg` | #e6e8eb | Body text |
 | `fg-muted` | #a9afba | Secondary text |

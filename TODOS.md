@@ -51,3 +51,13 @@ Deferred work, with enough context to pick it up later. Each item came from a re
 - **Trigger:** a second mismatch bug, or before rooms are spread over several servers.
 - **Depends on:** the owner's approval of the message change.
 - **Priority:** P3.
+
+## Phone support for notes, shapes, zones, images and the people list
+- **What:** on a phone, the "+ Note / Shape / Zone / Image" buttons and the people list are currently hidden (they used to cover the area name chip, D17/11B: phones are view-only). Give phones some way to use these too, likely a smaller button that opens a drawer rather than the full toolbar.
+- **Why:** a phone user can currently see and walk the room but cannot add a note, shape or image, or see who else is in the room.
+- **Pros:** brings phones to feature parity with laptop/tablet.
+- **Cons:** needs its own design pass (a drawer or a different layout for a small screen), not just un-hiding the existing buttons, which would cover the map again.
+- **Context:** raised again by the owner on 2026-09-22 while reviewing the six open questions from the tomorrow-plan doc; decided to keep the current hidden state for now and revisit as a real feature later, not urgent.
+- **Trigger:** a phone user asks for this, or the room screen's other phone-width work is revisited.
+- **Depends on:** nothing blocking; a self-contained design task.
+- **Priority:** P3.
