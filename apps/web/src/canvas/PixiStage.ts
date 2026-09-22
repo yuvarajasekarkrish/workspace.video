@@ -119,6 +119,16 @@ export class PixiStage {
       resizeTo: options.canvasContainer,
       background: GROUND_CSS,
       antialias: true,
+      // Pixi does not read the screen's real pixel density on its own (it defaults to a flat 1),
+      // while the browser always draws DOM text at full sharpness regardless. On any screen above
+      // 100% scaling (very common — a laptop's built-in display, most external monitors, any Mac),
+      // that mismatch alone makes everything drawn on the canvas softer than a DOM element sitting
+      // right next to it, worst on fine detail like small or tilted text (the owner's own catch,
+      // comparing the map's "Focus Pods" label against the DOM chip of the same name, 2026-09-26).
+      // autoDensity keeps the canvas the same on-screen SIZE while its internal pixel buffer grows
+      // to match, so nothing else about layout or hit-testing changes.
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true,
       // Not started by Pixi: the IdleGate starts the loop when there is something to draw and stops it when
       // there is not, so a room with nobody moving asks the browser for no frames at all.
       autoStart: false,
