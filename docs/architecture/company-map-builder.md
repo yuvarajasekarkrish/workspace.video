@@ -671,3 +671,44 @@ Everything in this diff reuses an existing pattern rather than inventing a new o
 VERDICT: PLAN READY. OUTSIDE COVERAGE: not run (no second reviewer available this session). CROSS-MODEL: not applicable.
 
 NO UNRESOLVED DECISIONS
+
+## D23. Every pending task, checked and listed together (2026-09-22)
+
+Written for: the product owner. Everything not yet done, gathered from this document, `TODOS.md`, and today's session, in one place.
+
+### Waiting only on you (nothing else blocks these)
+
+| # | Task | What's needed from you |
+|---|---|---|
+| 1 | End of day: stop the web/realtime servers, reset the test room `seed-room-1` | Say "done" |
+| 2 | A final real-browser look at everything built today together (the Areas list, the auto-close timer, flat/tilted) in one pass | Nothing — I'll do this myself once my browser tool reconnects, or you can look and tell me what you see |
+
+### The map builder itself — planned (D10/D12/D16/D17), not yet built
+
+None of this is started. Each stops for its own review before the next begins, per the standing build-order rule.
+
+| # | Piece | Priority | Rough size |
+|---|---|---|---|
+| 1 | Publish into an occupied room: confirm box, reset, undo on failure, reload, version check on reconnect | P1 | Human ~5 days, Claude ~4 hours |
+| 2 | The template picker (Startup's only option) | P1 | Human ~3 days, Claude ~2 hours |
+| 3 | Set-up-from-needs (the five-question flow, D18 section 2-4) with the map check | P1 | Human ~1 week, Claude ~half a day |
+| 4 | The flat drag builder itself: add/move/resize/rename/delete an area, undo/redo, version history, the workspace colour and flat/tilted pickers (D18/D20's backend is already built, waiting for this screen) | P2 | Human ~2 weeks, Claude ~1 day |
+| 5 | The Startup plan's browser-only try-out draft | P2 | Human ~2 days, Claude ~1 hour |
+| 6 | New workspaces start from the starter map | P2 | Likely already true from workspace creation; needs a check, not new work |
+
+**Already built and waiting for that screen:** the workspace colour and flat/tilted settings (D18-D20) can be saved and are already checked on the server — there's just no screen yet to click them from. Building item 4 above (or a smaller admin settings page first) turns those on.
+
+### Smaller, self-contained items (`TODOS.md`)
+
+| Item | Priority | Depends on |
+|---|---|---|
+| Phone support for notes/shapes/zones/images and the people list | P3 | Nothing — self-contained |
+| Save my office as my own template | P3 | The builder (above) shipping |
+| Server sends its own map to each browser | P3 | Owner approval of a new server message |
+| Cut live connections when a session is revoked or a member is removed | — | No member-removal/sign-out-everywhere feature exists yet |
+| Zero-downtime realtime deploys | — | — |
+| Product analytics and a feature-flag system | — | — |
+
+### Resolved today, nothing further needed
+
+Ground/surface colour (DESIGN.md updated), amber status dots (kept), the landing page's builder claim (kept), the hidden phone toolbar (kept, logged above as a future feature), the ~5s dev join time (measured — a one-time dev compile cost, not a bug), the unsaved tool folders (left alone).
