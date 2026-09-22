@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, fitFloor } from "../isoMath";
+import { isoMatrix, project, unproject, zoomAtCursor, uprightMatrix, zoomCancelMatrix, fitFloor } from "../isoMath";
 import { MIN_ZOOM, MAX_ZOOM } from "../viewportMath";
 
 // The 2.5D view of the room: the flat floor is turned a quarter of the way round (45 degrees) and leaned back (55
@@ -108,22 +108,45 @@ describe("uprightMatrix: keeps a person standing straight on the tilted floor", 
     expect(product.c).toBeCloseTo(0, 10);
   });
 
-  // D17, 5B: area names and shown name tags stay a fixed size on screen at any zoom. Passing the
-  // current zoom as `atZoom` cancels it too, unlike the Avatar usage above.
-  it("uprightMatrix(tilted, zoom) cancels the zoom as well, so text stays a fixed size on screen at any zoom", () => {
+});
+
+// D17, 5B: area names stay a fixed 16 px on screen at any zoom, but — unlike uprightMatrix above —
+// WITHOUT losing the tilt: they should still sit angled with the floor, exactly as they do at zoom
+// 1, just never bigger or smaller than that as the map is zoomed.
+describe("zoomCancelMatrix: a fixed size on screen, without losing the tilt", () => {
+  const multiply = (p: { a: number; b: number; c: number; d: number }, q: { a: number; b: number; c: number; d: number }) => ({
+    a: p.a * q.a + p.c * q.b,
+    b: p.b * q.a + p.d * q.b,
+    c: p.a * q.c + p.c * q.d,
+    d: p.b * q.c + p.d * q.d,
+  });
+
+  it("composed with the floor's own transform, the result is exactly the tilt at zoom 1 — not the identity", () => {
     for (const zoom of [0.2, 1, 3]) {
-      const product = multiply(isoMatrix(zoom), uprightMatrix(true, zoom));
-      expect(product.a).toBeCloseTo(1, 10);
-      expect(product.d).toBeCloseTo(1, 10);
-      expect(product.b).toBeCloseTo(0, 10);
-      expect(product.c).toBeCloseTo(0, 10);
+      const product = multiply(isoMatrix(zoom), zoomCancelMatrix(zoom));
+      const atZoomOne = isoMatrix(1);
+      expect(product.a).toBeCloseTo(atZoomOne.a, 10);
+      expect(product.b).toBeCloseTo(atZoomOne.b, 10);
+      expect(product.c).toBeCloseTo(atZoomOne.c, 10);
+      expect(product.d).toBeCloseTo(atZoomOne.d, 10);
+      // Confirms this is genuinely still tilted, not accidentally the identity (which uprightMatrix
+      // would produce): the off-diagonal terms of a real tilt are never both zero.
+      expect(product.b !== 0 || product.c !== 0).toBe(true);
     }
   });
 
-  it("does the same in flat mode: no tilt existed to begin with, but the zoom is still cancelled", () => {
-    const product = multiply(isoMatrix(0.6, false), uprightMatrix(false, 0.6));
-    expect(product.a).toBeCloseTo(1, 10);
-    expect(product.d).toBeCloseTo(1, 10);
+  it("does the same in flat mode: still the flat shape at zoom 1 (a plain scale), zoom cancelled", () => {
+    for (const zoom of [0.3, 1, 2.5]) {
+      const product = multiply(isoMatrix(zoom, false), zoomCancelMatrix(zoom));
+      expect(product).toEqual(isoMatrix(1, false));
+    }
+  });
+
+  it("is a plain scale with no rotation of its own", () => {
+    const m = zoomCancelMatrix(0.4);
+    expect(m.b).toBe(0);
+    expect(m.c).toBe(0);
+    expect(m.a).toBe(m.d);
   });
 });
 
