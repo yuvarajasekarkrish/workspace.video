@@ -101,6 +101,25 @@ enum WorkspacePlan {
   enterprise
 }
 
+// The workspace's own look (docs/architecture/company-map-builder.md, D18-D20). Locked in as
+// database enums, the same technique as WorkspacePlan above, so a bad value can never be saved even
+// by a future script that writes to the database directly (D19, decision 2B). `null` means "use the
+// file's own default", so an existing workspace's look never changes until an owner or admin picks
+// one (D18/D20's "the default stays exactly as it is").
+enum WorkspaceAccentPalette {
+  coral
+  cyan
+  emerald
+  indigo
+  amethyst
+  lime
+}
+
+enum WorkspaceViewMode {
+  flat
+  tilted
+}
+
 model Workspace {
   id        String        @id @default(cuid())
   name      String
@@ -111,6 +130,10 @@ model Workspace {
   // a future subscription system replaces the limit LOOKUP, not this column's
   // shape. Defaulted so existing rows are valid without a data migration.
   plan      WorkspacePlan @default(startup)
+  // Both null by default: an existing or new workspace keeps the file's own accent and tilted view
+  // until an owner or admin explicitly saves a choice (D18, D20).
+  accentPalette WorkspaceAccentPalette?
+  viewMode      WorkspaceViewMode?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 

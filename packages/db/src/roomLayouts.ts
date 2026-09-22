@@ -55,7 +55,9 @@ const PLAN_REQUIRED_MESSAGE = "Your plan does not include the map builder. Choos
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
-async function roleOf(db: Db, workspaceId: string, userId: string): Promise<WorkspaceRoleName | null> {
+/** Exported so other files that need a member's real role (e.g. workspaceAppearance.ts) reuse this
+ *  one lookup instead of writing their own copy. */
+export async function roleOf(db: Db, workspaceId: string, userId: string): Promise<WorkspaceRoleName | null> {
   const member = await db.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId, userId } }, select: { role: true } });
   return member?.role ?? null;
 }
