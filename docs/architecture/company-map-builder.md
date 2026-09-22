@@ -495,3 +495,84 @@ A map that would break a limit is never shown; the map check (E6) runs first and
 2. A palette name on the workspace (small database addition) and a server-checked save.
 3. The room, the admin screen and the landing page read the palette; the default is unchanged.
 4. The five-question flow, the rule that turns answers into a map (with tests that it stays inside the limits), the transition and the two hints.
+
+## D19. Engineering review of D18's step 1 (colour picker only), 2026-09-22
+
+Step 1, as decided in an earlier review, is only the accent colour, its hover, its glow, and the buttons/links/monitor-glow that use it. It excludes colouring the map drawing itself (people's dots, seat markers, selection outline), which stays a separate later step because it touches `apps/web/src/canvas`, the code that needs a real-browser check after every change (see the standing note on `PixiStage.ts`).
+
+### Decisions
+
+- **How the colour reaches the screen.** The server looks up the workspace's palette when a page loads and writes its six values as CSS custom properties on that page (`--color-accent`, `--color-accent-hover`, and so on), instead of the fixed values in `globals.css`. Every button and link keeps reading `--color-accent` exactly as it does today, so no component needs to change. A default workspace with no palette chosen renders the file's own values unchanged.
+- **The save is checked on the server, every time**, the same way `changeMemberRole` and the layout routes are (`packages/db/src/roomLayouts.ts:63`, `authorizeRoom`). Only `owner` and `admin` may save a palette; the check happens in the database call itself, not only by hiding the picker from other roles.
+- **The six names are locked in at the database**, as a Prisma enum on `Workspace` (the same pattern as `WorkspacePlan`), not a plain text field. An invalid name can never be saved, even by a future script or admin tool that calls the database directly.
+
+### What already exists and is reused
+
+- `authorizeRoom` and `changeMemberRole` (`packages/db/src/roomLayouts.ts`): the role-check pattern this reuses exactly.
+- `WorkspacePlan` enum on `Workspace` (`packages/db/prisma/schema.prisma:112`): the exact precedent for locking the six palette names in as a database enum.
+- `globals.css`'s `--color-*` custom properties: the six palette values slot into the same names; no new CSS variable scheme.
+- `designTokens.test.ts`'s existing contrast checks: extended with a loop over the six palettes instead of a new test file.
+
+### NOT in scope
+
+- Colouring the map drawing itself (a person's dot, seat markers, the selection outline) — deferred to a later, separately reviewed step because it touches the canvas code that needs a real-browser check every time (standing note, D15).
+- A colour picker or custom hex entry — only the six named palettes, per the owner's plan.
+- Per-room colour (only per-workspace, matching how the accent works today).
+
+### Test coverage diagram
+
+```
+CODE PATHS                                                    COVERAGE PLANNED
+[+] packages/db/src/workspacePalette.ts (new)
+  ├── setWorkspacePalette()
+  │   ├── [TEST] owner/admin saves a valid palette name          unit
+  │   ├── [TEST] non-admin member is refused, palette unchanged   unit (approved 2A/2B)
+  │   └── [TEST] an invalid name is rejected before it reaches
+  │             the database (enum, so this can't be bypassed)    unit
+  └── getWorkspacePalette() / default when none chosen            unit
+[+] app pages reading the palette (room, admin, landing)
+  └── [TEST] each of the six palettes' readability (dark text
+            on the accent, 4.5:1) — extends designTokens.test.ts  unit
+```
+
+### Failure modes
+
+| Codepath | Realistic failure | Test? | Handled? | User-visible? |
+|---|---|---|---|---|
+| Saving a palette | A non-admin calls the save route directly (bypassing the hidden picker) | yes | refused on the server (2A) | a plain refusal message, not a silent no-op |
+| Reading a palette | A workspace has no palette chosen yet | yes | falls back to the file's default values | none — looks exactly as it does today |
+| Database write | An invalid palette name reaches the save call | yes | the database enum rejects it | a save error, not a corrupted workspace |
+
+No critical gap left unguarded.
+
+### Performance review
+
+No issues found. A palette lookup is one row read per page load (already fetching the workspace record for other purposes); no loop, no N+1 query, and no measurable cost.
+
+### Worktree parallelization
+
+Sequential implementation, no parallelization opportunity: the database enum, the server check, and the CSS write are three small, dependent steps in the same small area.
+
+### Outside voice
+
+Not run this review (no second reviewer available). Missing coverage, not a clean result.
+
+### Unresolved decisions
+
+None. Item 1 in "Open for the owner" above (the five questions and the rule table) was answered yes in the prior chat turn.
+
+## GSTACK REVIEW REPORT
+
+| Runs | Status | Findings |
+|---|---|---|
+| Scope gate | plan mode not active; user named the target (D18's colour option) | Reviewed only step 1 (colour), split from the map-drawing colour per the user's own choice |
+| Step 0 scope challenge | reused `changeMemberRole`/`authorizeRoom`/`WorkspacePlan` patterns; no new service, ~4-5 files | Complexity trigger not hit |
+| Architecture | resolved 1A | CSS custom properties on page load, not a new React context; smallest working change |
+| Code quality | resolved 2A, 2B | server-side role check reused; six names locked in as a database enum |
+| Tests | 1 test added (role refusal); 1 proposed test (per-palette contrast) dropped as not required by the owner | 3 code paths, all covered |
+| Performance | no issues found | one row read, no loop |
+| Outside voice | not run | missing coverage, disclosed |
+
+VERDICT: PLAN READY for step 1 (colour option only). OUTSIDE COVERAGE: not run. CROSS-MODEL: not applicable.
+
+NO UNRESOLVED DECISIONS
