@@ -56,24 +56,29 @@ not just skimming the part that seems relevant.
 13. **Orientation must make physical sense.** A laptop's keyboard sits closest to the person using it;
     the screen stands between the keyboard and the desk's open space, tilted to face that person — not
     floating in the middle, not backwards.
-14. **Match the reference the owner gives, as closely as the tools allow — and say so honestly when
+14. **Every chair must face its table/desk, and every laptop must face its chair.** A chair's front
+    (seat opening, armrests) points toward the desk or table it belongs to, with its back/headrest on
+    the outer side, away from the surface — never sideways or backwards to it. A laptop's screen faces
+    back toward whichever chair it belongs to, not toward the table centre, another chair, or nowhere
+    in particular. Check this on every new seat before showing the picture, not just for the first one.
+15. **Match the reference the owner gives, as closely as the tools allow — and say so honestly when
     they don't.** Hand-typed SVG coordinates cannot reproduce a photo pixel-for-pixel; if the owner
     wants that level of match, the correct answer is to use their actual reference image directly (see
-    rule 16), not to keep re-guessing coordinates.
+    rule 17), not to keep re-guessing coordinates.
 
 ## 5. Scale and future-proofing
 
-15. **Design for every real plan size, not a convenient example.** Real plan sizes today are 10, 25,
+16. **Design for every real plan size, not a convenient example.** Real plan sizes today are 10, 25,
     50, 100, and 200 people (`packages/shared/src/plans.ts` — capped at 200 on purpose; there is no 500
     yet). A seating/capacity idea must work at both the smallest and largest real size.
 
 ## 6. Once an image is approved, treat it as the source of truth
 
-16. **An approved image is the exact asset — not a starting point to redraw from memory.** Once the
+17. **An approved image is the exact asset — not a starting point to redraw from memory.** Once the
     owner approves a specific picture (or supplies their own reference photo and says to use it), reuse
     that exact file (or an exact crop/composite built only from that same file) for every related piece.
     Do not quietly substitute a hand-drawn approximation of it later.
-17. **Reuse approved pieces instead of re-inventing them.** When building a new seating block (e.g. a
+18. **Reuse approved pieces instead of re-inventing them.** When building a new seating block (e.g. a
     4-seat table), reuse the already-approved chair and laptop images directly (resized/rotated as
     needed) rather than drawing new ones.
 
