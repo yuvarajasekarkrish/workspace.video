@@ -31,14 +31,19 @@ function drawPanel(layer: Container, box: Box, radius: number): void {
   );
 }
 
-/** The area's name lies quietly in its bottom-right corner, as on the Gemini map. Wrapped in its
- *  own Container (not added to `layer` directly) so its local transform can cancel the floor's tilt
- *  AND zoom (see FloorView's `setZoom`), keeping the text a fixed 16 px on screen at any zoom —
- *  DESIGN.md's text-size floor and D17's decision 5B. The wrapper's OWN position is still set in
- *  floor coordinates, so it is still carried to the right place on screen by the parent chain. */
+/** The area's name lies quietly in its bottom-right corner, as on the Gemini map. Two nested
+ *  containers, each doing exactly one job, so `setZoom` can never disturb where the label sits:
+ *   - `anchor` — carries ONLY the position (in floor coordinates), so it lands in the right area's
+ *     corner exactly as before, at any pan or zoom.
+ *   - `billboard` (its child) — carries ONLY the counter-scale/rotation `setZoom` writes with
+ *     `setFromMatrix` (which resets a container's full local transform, position included — the
+ *     reason this needs to be its own container and not the same one `anchor` uses).
+ *  Keeping text a fixed 16 px on screen at any zoom: DESIGN.md's text-size floor and D17's 5B. */
 function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Container {
-  const wrapper = new Container();
-  wrapper.position.set(corner.x + corner.width - 22, corner.y + corner.height - 16);
+  const anchor = new Container();
+  anchor.position.set(corner.x + corner.width - 22, corner.y + corner.height - 16);
+  const billboard = new Container();
+  anchor.addChild(billboard);
   const label = new Text({
     text: zone.label,
     style: {
@@ -51,9 +56,9 @@ function drawZoneLabel(layer: Container, zone: LayoutZone, corner: Box): Contain
   });
   label.alpha = 0.6;
   label.anchor.set(1, 1);
-  wrapper.addChild(label);
-  layer.addChild(wrapper);
-  return wrapper;
+  billboard.addChild(label);
+  layer.addChild(anchor);
+  return billboard;
 }
 
 function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
