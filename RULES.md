@@ -47,6 +47,12 @@ not just skimming the part that seems relevant.
    (a square table, one chair on each side) — not an invented shape. Any new block must be built from
    a shape that already exists in `modules.ts`, or the owner must explicitly say a genuinely new shape
    is wanted.
+8a. **Before replacing or verifying any asset in the real code, check the Artifact board first.** If a
+    coded board already exists for that exact seat/block (e.g. `ChairCoded`, `FourSeatTableCoded`), use
+    what it already proved instead of re-investigating from scratch by hunting through screenshots of
+    the real app. The artifact work already established the correct shape, position and rotation —
+    don't redo that verification a second time by a different, slower method. Only go looking in the
+    live app when no artifact already covers the thing being checked.
 
 ## 3. Stay inside the workspace's own look
 
