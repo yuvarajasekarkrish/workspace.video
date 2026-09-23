@@ -113,9 +113,21 @@ not just skimming the part that seems relevant.
 18. **Reuse approved pieces instead of re-inventing them.** When building a new seating block (e.g. a
     4-seat table), reuse the already-approved chair and laptop images directly (resized/rotated as
     needed) rather than drawing new ones.
+19. **Never silently swap an already-approved look for a new one.** If a new visual style is created for
+    something that already has an approved look (e.g. a new higher-fidelity desk pod), the existing
+    approved asset stays exactly as it is, in use, by default. The new one becomes an additional choice,
+    not a replacement — see rule 20.
+20. **Any new visual variant must become a real, selectable option in the admin builder — not just a
+    hardcoded swap.** When a new furniture/desk/room style is approved, it is not enough to change what
+    the one default layout draws. It has to be built so an admin can actually choose it (or the existing
+    look) for their own workspace, once the admin builder exists to offer that choice. Until the builder
+    exists to expose it, a new approved style is built to be selectable later, not wired in as the new
+    silent default.
 
 ## What "add detail" is scoped to, and what it is not
 
 This whole effort is about how existing, already-tested furniture (desk, chair, table, etc. — the 9
-real seating blocks in `modules.ts`) *looks*. It is not the admin builder, it does not let anyone choose
-seat counts, and it does not change how many people a room holds. Keep those separate.
+real seating blocks in `modules.ts`) *looks*. It does not change how many people a room holds, and it
+does not build the admin builder's UI itself — but per rule 20, every new visual option this work
+produces must be built as something that builder can eventually offer, not a one-off replacement of
+what's there today.
