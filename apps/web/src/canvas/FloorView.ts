@@ -38,6 +38,15 @@ function getChairTexture(): Promise<Texture> {
   return chairTexturePromise;
 }
 
+// The chair's clickable seat radius (queries.ts's hitTestSeats, 28px around the seat anchor) and
+// every desk/table spacing formula (modules.ts) are keyed off CHAIR_SIZE (32px) and are NOT
+// touched here - only how big the picture itself is drawn. At the room's typical "fit whole
+// floor" zoom a 32px chair renders only a few screen pixels, effectively invisible. 1.3x is as
+// far as this can go without the chair visually overlapping its own desk: every spacing formula
+// leaves exactly 6px of clearance beyond the assumed 16px chair half-width (see modules.ts's
+// "+ 6"), and 1.3x keeps the enlarged half-width (~20.8px) inside that same clearance.
+const CHAIR_VISUAL_SCALE = 1.3;
+
 // Swaps the plain circle placeholder for the real chair image once the shared texture is ready.
 // The circle is already drawn and on screen by the time this resolves, so nothing is ever missing
 // while the image loads. If the load fails, the placeholder simply stays - same "never show
@@ -49,8 +58,8 @@ function queueChairSprite(layer: Container, placeholder: Graphics, piece: Furnit
       if (layer.destroyed || placeholder.destroyed) return; // room rebuilt or torn down mid-load
       const sprite = new Sprite(texture);
       sprite.anchor.set(0.5);
-      sprite.width = width;
-      sprite.height = height;
+      sprite.width = width * CHAIR_VISUAL_SCALE;
+      sprite.height = height * CHAIR_VISUAL_SCALE;
       sprite.rotation = rotation;
       sprite.position.set(x + width / 2, y + height / 2);
       layer.addChild(sprite);
@@ -76,7 +85,11 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
 
   switch (piece.kind) {
     case "chair": {
-      g.circle(x + width / 2, y + height / 2, width / 2).fill(CHAIR_FILL).stroke({ width: 1.5, color: LINE, alpha: 0.15 });
+      // Same visual-only enlargement as the sprite it's a placeholder for (queueChairSprite) -
+      // width/height stay CHAIR_SIZE for hit-testing and spacing, only the drawn radius grows.
+      g.circle(x + width / 2, y + height / 2, (width / 2) * CHAIR_VISUAL_SCALE)
+        .fill(CHAIR_FILL)
+        .stroke({ width: 1.5, color: LINE, alpha: 0.15 });
       break;
     }
     case "plant": {

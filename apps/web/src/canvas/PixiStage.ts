@@ -61,6 +61,13 @@ export interface PixiStageOptions {
  * hook) and mutates Pixi display objects — it never touches React, so no
  * amount of position/drag traffic can cause a React re-render.
  */
+// RoomDock (the bottom mic/camera/etc bar) floats over the canvas as a sibling DOM element, not
+// inside it, so the canvas itself is always full height. Measured on the live page: the bar is
+// 54px tall plus its own 16px gap to the window's bottom edge (`bottom-4` in RoomDock.tsx) = 70px.
+// Without this, "fit whole floor" fits the floor into the FULL window height, so anything near
+// the bottom of the map ends up drawn underneath the bar instead of visible above it.
+const BOTTOM_DOCK_RESERVED_PX = 72;
+
 export class PixiStage {
   private readonly app = new Application();
   private readonly world = new Container();
@@ -193,7 +200,10 @@ export class PixiStage {
     // Show the whole floor, centred, when the room opens.
     this.floorSize = { width: movementConfig.roomWidthPx, height: movementConfig.roomHeightPx };
     // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
-    this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
+    this.viewport.fitToFloor(this.floorSize, {
+      width: this.app.screen.width,
+      height: Math.max(0, this.app.screen.height - BOTTOM_DOCK_RESERVED_PX),
+    });
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
 
@@ -637,7 +647,10 @@ export class PixiStage {
 
   /** Shows the whole floor again, centred. For the "fit" button. */
   fitView(): void {
-    this.viewport.fitToFloor(this.floorSize, { width: this.app.screen.width, height: this.app.screen.height });
+    this.viewport.fitToFloor(this.floorSize, {
+      width: this.app.screen.width,
+      height: Math.max(0, this.app.screen.height - BOTTOM_DOCK_RESERVED_PX),
+    });
     this.gate.wake();
   }
 
