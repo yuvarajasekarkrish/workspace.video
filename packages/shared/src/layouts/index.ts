@@ -1,5 +1,7 @@
 export * from "./types";
 export * from "./grid";
+export * from "./furnitureGrid";
+export * from "./collision";
 export * from "./modules";
 export * from "./openOffice";
 export * from "./mapLayout";
