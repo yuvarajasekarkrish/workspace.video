@@ -29,7 +29,10 @@ export const NAME_TAG_TEXT = 0xe2e8f0;
 export const LINE = WHITE;
 export const PANEL_FILL = 0x1e1e1e;
 export const SLAB_EDGE = 0x121212;
-export const CHAIR_FILL = 0x334155;
+// Was 0x334155 (1.61:1 on the panel, 1.91:1 on ground - both fail WCAG 1.4.11's 3:1 minimum for
+// non-text contrast, measured directly). 0x696969 is the darkest pure grey - still black/graphite/
+// white, no new hue - that clears 3:1 against both backgrounds (3.04:1 / 3.61:1, measured).
+export const CHAIR_FILL = 0x696969;
 export const PLANT_GREEN = 0x10b981;
 
 // Things people add to the map.

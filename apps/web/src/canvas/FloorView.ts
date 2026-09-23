@@ -56,12 +56,21 @@ function queueChairSprite(layer: Container, placeholder: Graphics, piece: Furnit
   getChairTexture()
     .then((texture) => {
       if (layer.destroyed || placeholder.destroyed) return; // room rebuilt or torn down mid-load
+      // The photo's own average colour measures 1.53:1 / 1.82:1 against the panel/ground - a
+      // photo's own pixels can't be recoloured like a fill, so a backing plate in the same
+      // WCAG-passing CHAIR_FILL grey sits behind it, giving the chair a boundary that clears
+      // 3:1 whether or not the photo itself does at any given point in the image.
+      const backing = new Graphics()
+        .circle(0, 0, (width / 2) * CHAIR_VISUAL_SCALE)
+        .fill(CHAIR_FILL);
+      backing.position.set(x + width / 2, y + height / 2);
       const sprite = new Sprite(texture);
       sprite.anchor.set(0.5);
       sprite.width = width * CHAIR_VISUAL_SCALE;
       sprite.height = height * CHAIR_VISUAL_SCALE;
       sprite.rotation = rotation;
       sprite.position.set(x + width / 2, y + height / 2);
+      layer.addChild(backing);
       layer.addChild(sprite);
       layer.removeChild(placeholder);
     })
@@ -97,11 +106,15 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
       break;
     }
     case "desk": {
-      g.roundRect(x, y, width, height, 6).fill({ color: LINE, alpha: 0.08 }).stroke({ width: 1.5, color: LINE, alpha: 0.15 });
+      // alpha was 0.08 (1.26:1 against the panel, measured) - fails WCAG 1.4.11's 3:1 non-text
+      // minimum. 0.34 is the lowest alpha of this same white-on-graphite fill that clears it
+      // (3.13:1, measured) - same colours, no new hue, just enough of it to be seen.
+      g.roundRect(x, y, width, height, 6).fill({ color: LINE, alpha: 0.34 }).stroke({ width: 1.5, color: LINE, alpha: 0.15 });
       break;
     }
     case "table": {
-      g.roundRect(x, y, width, height, Math.min(40, height / 2)).fill({ color: LINE, alpha: 0.05 }).stroke({ width: 1.5, color: LINE, alpha: 0.2 });
+      // Same measured fix as "desk": 0.05 was 1.15:1, 0.34 clears WCAG's 3:1 minimum.
+      g.roundRect(x, y, width, height, Math.min(40, height / 2)).fill({ color: LINE, alpha: 0.34 }).stroke({ width: 1.5, color: LINE, alpha: 0.2 });
       break;
     }
     case "sofa": {
@@ -109,7 +122,8 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
       break;
     }
     case "counter": {
-      g.roundRect(x, y, width, height, 6).fill({ color: LINE, alpha: 0.08 }).stroke({ width: 1.5, color: LINE, alpha: 0.15 });
+      // Same fill formula, same fix as "desk" above.
+      g.roundRect(x, y, width, height, 6).fill({ color: LINE, alpha: 0.34 }).stroke({ width: 1.5, color: LINE, alpha: 0.15 });
       break;
     }
     case "screen": {
