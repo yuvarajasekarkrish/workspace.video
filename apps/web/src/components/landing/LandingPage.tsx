@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { SignInForm } from "../SignInForm";
 import { DevSignInForm } from "../DevSignInForm";
+import { signInAddressFor } from "@/lib/returnPath";
 
 /**
  * The signed-out landing page: the owner's Gemini design (docs/designs/gemini-landing.html.html),
@@ -268,9 +269,9 @@ function MapScreen({
   return (
     <main className="gl-app-view relative h-full flex-1">
       {adminOpen && (
-        <div className="gl-glass-panel absolute right-6 top-6 z-[200] flex w-80 flex-col gap-4 rounded-2xl border border-accent/30 p-5 shadow-2xl animate-fade-in">
+        <div className="gl-glass-panel absolute right-6 top-6 z-[200] flex w-80 flex-col gap-4 rounded-2xl border border-white/30 p-5 shadow-2xl animate-fade-in">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-accent">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-white">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <path d="M12 20h9" />
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
@@ -300,7 +301,7 @@ function MapScreen({
                 className="flex min-h-11 items-center justify-between rounded-lg border border-white/10 bg-white/5 p-2.5 text-left text-xs font-medium transition-colors hover:bg-white/10"
               >
                 <span>{label}</span>
-                <span className="text-[10px] text-accent">{tag}</span>
+                <span className="text-[10px] text-gray-300">{tag}</span>
               </button>
             ))}
           </div>
@@ -421,45 +422,33 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
       >
         <div className="flex items-center gap-8">
           <a href="#" onClick={go("home")} aria-label="workspace.video" className="flex items-center gap-3">
-            <div className="h-4 w-4 rounded-full bg-accent" />
+            <div className="h-4 w-4 rounded-full bg-white" />
             <span className="text-xl font-bold tracking-tight text-white">
               workspace<span className="font-normal text-gray-400">.video</span>
             </span>
           </a>
           <div className="hidden items-center gap-6 text-sm font-medium text-gray-300 md:flex">
             <a href="#" onClick={go("workspace")} className="transition-colors hover:text-white">
-              Spatial Map
-            </a>
-            <a href="#" onClick={go("meeting")} className="transition-colors hover:text-white">
-              Instant Space
+              Demo
             </a>
             <a href="#" onClick={go("pricing")} className="transition-colors hover:text-white">
               Pricing
+            </a>
+            <a href="#" onClick={go("meeting")} className="transition-colors hover:text-white">
+              Instant Space
             </a>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={toggleAdmin}
-            className="flex min-h-11 items-center gap-2 rounded-lg border border-accent/40 bg-accent/20 px-4 py-2 text-xs font-semibold text-accent transition-colors hover:bg-accent/30"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-            Admin Builder
-          </button>
           <a href="#" onClick={go("auth")} className="hidden text-sm font-medium text-gray-300 hover:text-white sm:block">
             Sign in
           </a>
           <a
-            href="#"
-            onClick={go("workspace")}
+            href={signInAddressFor("/workspaces/new")}
             className="whitespace-nowrap rounded-lg bg-white px-5 py-2 text-sm font-semibold text-charcoal transition-colors hover:bg-gray-200"
           >
-            Launch Workspace
+            Create workspace
           </a>
         </div>
       </nav>
@@ -468,7 +457,7 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
         <main className="gl-app-view flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-7xl flex-col items-center px-6 py-20 text-center md:py-32">
             <div className="mb-8 inline-flex animate-fade-in items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-gray-300">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+              <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
               Now supporting up to 200 users per workspace with Admin Drag &amp; Drop Builder
             </div>
 
@@ -485,7 +474,7 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
               <button
                 type="button"
                 onClick={go("workspace")}
-                className="rounded-xl bg-accent px-8 py-4 text-lg font-semibold text-charcoal shadow-lg shadow-accent/20 transition-colors hover:bg-accent-hover"
+                className="rounded-xl bg-white px-8 py-4 text-lg font-semibold text-charcoal shadow-lg shadow-white/10 transition-colors hover:bg-gray-200"
               >
                 Explore the 200-User Map
               </button>
@@ -537,7 +526,7 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
               <div className="grid flex-1 grid-cols-2 gap-4">
                 <div className="relative flex items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gray-800">
                   <div className="text-center">
-                    <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-accent text-3xl font-bold text-charcoal">
+                    <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-white text-3xl font-bold text-charcoal">
                       Y
                     </div>
                     <p className="font-medium">You</p>
@@ -558,7 +547,7 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
             <button
               type="button"
               onClick={go("workspace")}
-              className="rounded-xl bg-accent px-8 py-4 text-lg font-semibold text-charcoal transition-colors hover:bg-accent-hover"
+              className="rounded-xl bg-white px-8 py-4 text-lg font-semibold text-charcoal transition-colors hover:bg-gray-200"
             >
               Get Started Free
             </button>
@@ -569,7 +558,7 @@ export function LandingPage({ devAuth = false, returnTo, notice }: { devAuth?: b
       {view === "auth" && (
         <main className="gl-app-view items-center justify-center py-10">
           <div className="gl-glass-panel w-full max-w-xl animate-fade-in rounded-2xl p-8 text-center">
-            <div className="mx-auto mb-4 h-10 w-10 rounded-full bg-accent" />
+            <div className="mx-auto mb-4 h-10 w-10 rounded-full bg-white" />
             <h2 className="mb-6 text-2xl font-bold">Welcome back</h2>
             <SignInForm variant="hero" returnTo={returnTo} notice={notice} />
             {devAuth && (

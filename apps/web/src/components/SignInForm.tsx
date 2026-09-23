@@ -128,7 +128,7 @@ export function SignInForm({
           type="button"
           onClick={() => handleResend(status.email)}
           disabled={waiting || resending}
-          className="min-h-12 w-full rounded bg-accent px-3 py-2 text-base font-medium text-on-accent disabled:opacity-50"
+          className="min-h-12 w-full rounded bg-white px-3 py-2 text-base font-medium text-charcoal hover:bg-gray-200 disabled:opacity-50"
         >
           {resending ? "Sending…" : waiting ? `Send it again (${secondsLeft}s)` : "Send it again"}
         </button>
@@ -149,7 +149,7 @@ export function SignInForm({
             setSecondsLeft(0);
             setStatus({ kind: "idle" });
           }}
-          className="text-base text-link hover:underline"
+          className="text-base text-gray-300 hover:text-white hover:underline"
         >
           Use a different email
         </button>
@@ -190,7 +190,7 @@ export function SignInForm({
           <button
             type="submit"
             disabled={sending}
-            className={`min-h-12 rounded bg-accent px-5 py-2 text-base font-semibold text-on-accent hover:bg-accent-hover disabled:opacity-50 ${hero ? "w-full sm:w-auto" : "w-full"}`}
+            className={`min-h-12 rounded bg-white px-5 py-2 text-base font-semibold text-charcoal hover:bg-gray-200 disabled:opacity-50 ${hero ? "w-full sm:w-auto" : "w-full"}`}
           >
             {sending ? "Sending…" : hero ? "Get started" : "Email me a link"}
           </button>
@@ -199,11 +199,11 @@ export function SignInForm({
         {hero && (
           <p className="text-base text-fg-muted">
             By continuing you accept our{" "}
-            <Link href="/terms" className="text-link underline underline-offset-4">
+            <Link href="/terms" className="text-gray-300 underline underline-offset-4 hover:text-white">
               Terms
             </Link>{" "}
             and{" "}
-            <Link href="/privacy" className="text-link underline underline-offset-4">
+            <Link href="/privacy" className="text-gray-300 underline underline-offset-4 hover:text-white">
               Privacy Policy
             </Link>
             .

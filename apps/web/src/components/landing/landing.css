@@ -293,13 +293,13 @@
     0 4px 8px rgba(0, 0, 0, 0.6);
 }
 .gl-user-dot.gl-you {
-  background-color: #f5a623;
+  background-color: #ffffff;
   border-color: #fff;
   width: 14px;
   height: 14px;
   z-index: 100;
   box-shadow:
-    0 0 16px rgba(245, 166, 35, 0.8),
+    0 0 16px rgba(255, 255, 255, 0.8),
     0 4px 8px rgba(0, 0, 0, 0.6);
 }
 .gl-user-name {
@@ -318,7 +318,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .gl-user-dot.gl-you .gl-user-name {
-  color: #f5a623;
+  color: #ffffff;
   font-weight: 600;
-  border-color: rgba(245, 166, 35, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
 }
