@@ -43,11 +43,12 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
 
   // The workspace's own look (D18-D20): a chosen accent palette and/or a flat instead of tilted
-  // view. `null` in either field means "the file's own default", so a workspace that never picked
-  // one renders exactly as it always has — this call adds one row read, already reading the room's
-  // own record above, no loop and no extra round trip per person.
+  // view. `null` in the accent field means "the file's own default". For viewMode, the owner
+  // changed the file's own default to flat (a floating tilted view didn't work out) - a workspace
+  // that explicitly saved "tilted" still gets it; only the unset/null case changed. This call adds
+  // one row read, already reading the room's own record above, no loop and no extra round trip.
   const appearance = await getWorkspaceAppearance(room.workspaceId);
-  const tilted = appearance?.viewMode !== "flat";
+  const tilted = appearance?.viewMode === "tilted";
   const palette = appearance?.accentPalette ? paletteById(appearance.accentPalette) : null;
 
   // Decided by the ONE function the realtime server also uses at join_room, so client and server
