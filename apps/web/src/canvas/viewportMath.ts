@@ -16,3 +16,28 @@ export function exceedsDragThreshold(pressStart: Point, current: Point, threshol
 export function clampZoom(scale: number, min = MIN_ZOOM, max = MAX_ZOOM): number {
   return Math.min(Math.max(scale, min), max);
 }
+
+/**
+ * Space the floor must keep clear of when it is fitted, so it never sits under the room's floating controls: the
+ * room name and status pills along the top, the people list and zoom buttons at the sides, and the bottom dock.
+ * On a narrow (phone) screen the side panels are hidden, so only a small gutter is kept at the sides.
+ */
+export interface Insets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export function fitInsets(view: { width: number; height: number }): Insets {
+  const narrow = view.width < 700;
+  // Top: the connection and online pills at the top left (two rows). Left: the map runs to the edge below them.
+  // Right: the current area chip, the "In this room" list (about 190 px) and the zoom buttons.
+  return { top: 84, bottom: 92, left: 16, right: narrow ? 16 : 214 };
+}
+
+/** How far in past the fitted view a person may zoom (the fitted view is the furthest out). */
+export const MAX_ZOOM_OVER_FIT = 3;
+
+/** Floor drawn around the layout on every side (FloorView) and included in the fit (Viewport), in floor pixels. */
+export const FLOOR_MARGIN = 24;

@@ -17,13 +17,13 @@ const EASE_PER_SECOND = 14;
 const SETTLED_WITHIN = 0.05;
 
 /** The step across the flat floor that makes something appear `height` higher on the screen (and no sideways move). */
-export function liftVector(height: number): Point {
-  return unproject({ x: 0, y: -height }, { x: 0, y: 0 }, 1);
+export function liftVector(height: number, tilted = true): Point {
+  return unproject({ x: 0, y: -height }, { x: 0, y: 0 }, 1, tilted);
 }
 
 /** The step across the flat floor that moves something `right` and `down` on the screen (for cast shadows). */
-export function screenStep(right: number, down: number): Point {
-  return unproject({ x: right, y: down }, { x: 0, y: 0 }, 1);
+export function screenStep(right: number, down: number, tilted = true): Point {
+  return unproject({ x: right, y: down }, { x: 0, y: 0 }, 1, tilted);
 }
 
 /** One frame of easing toward a target, never overshooting; lands exactly on the target once close. */
@@ -38,11 +38,11 @@ export function stepLift(current: number, target: number, dtSeconds: number): nu
  * raised is tested where it is drawn (raised), not where it sits, and keeps priority: otherwise the mouse near an
  * edge would raise the plate, the raised edge would slip away from the mouse, the plate would drop, and it would flicker.
  */
-export function pickSlab(plan: FloorPlan, floorPoint: Point, current: { slabId: string; lift: number } | null): string | null {
+export function pickSlab(plan: FloorPlan, floorPoint: Point, current: { slabId: string; lift: number } | null, tilted = true): string | null {
   if (current) {
     const slab = plan.slabs.find((s) => s.id === current.slabId);
     if (slab) {
-      const step = liftVector(current.lift);
+      const step = liftVector(current.lift, tilted);
       const p = { x: floorPoint.x - step.x, y: floorPoint.y - step.y };
       const r = slab.rect;
       if (p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height) return slab.id;

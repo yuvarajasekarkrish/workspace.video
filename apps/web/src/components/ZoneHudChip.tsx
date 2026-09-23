@@ -39,7 +39,7 @@ export function ZoneHudChip({ layout }: ZoneHudChipProps) {
   const capacity = layout.zones.find((z) => z.id === zone.id)?.capacity;
 
   return (
-    <div className="absolute left-3 top-24 z-30 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-xs backdrop-blur">
+    <div className="absolute right-3 top-3 z-30 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 text-xs backdrop-blur">
       <span className="h-2 w-2 rounded-full bg-accent" />
       <span>{zone.label}</span>
       {typeof capacity === "number" && (

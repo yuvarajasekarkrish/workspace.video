@@ -1,6 +1,6 @@
 import { Container, Graphics, Matrix, Text } from "pixi.js";
 import { uprightMatrix } from "./isoMath";
-import { ACCENT, BLACK, INK, NAME_TAG_TEXT, PERSON_SLATE, WHITE } from "./palette";
+import { BLACK, NAME_TAG_TEXT, ROOM_OUTLINE, ROOM_PERSON, ROOM_SELF, WHITE } from "./palette";
 
 // The Gemini design's people: a slate dot for everyone else, an accent dot with a soft glow for you, and a small
 // dark name tag above (docs/designs/gemini-landing.html.html), shown only where it's useful (see setNameVisible;
@@ -43,16 +43,17 @@ export class Avatar {
     this.container.addChild(this.body);
 
     if (isLocal) {
-      const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: ACCENT, alpha: 0.22 });
+      const glow = new Graphics().circle(0, 0, YOU_RADIUS + 9).fill({ color: ROOM_SELF, alpha: 0.18 });
       this.body.addChild(glow);
     }
     const dot = new Graphics()
       .circle(0, 0, isLocal ? YOU_RADIUS : RADIUS)
-      .fill(isLocal ? ACCENT : PERSON_SLATE)
-      .stroke({ width: isLocal ? 3 : 2.5, color: isLocal ? WHITE : INK });
+      .fill(isLocal ? ROOM_SELF : ROOM_PERSON)
+      // a dark outline keeps every person readable on a light chair or table (WCAG 1.4.11; see palette.ts)
+      .stroke({ width: 3, color: ROOM_OUTLINE });
     this.body.addChild(dot);
 
-    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: ACCENT, alpha: 0.7 });
+    this.seatedRing = new Graphics().circle(0, 0, SEATED_RING_RADIUS).stroke({ width: 2, color: ROOM_SELF, alpha: 0.8 });
     this.seatedRing.visible = false;
     this.body.addChild(this.seatedRing);
 
@@ -61,7 +62,7 @@ export class Avatar {
     this.label = new Text({
       text: name,
       style: {
-        fill: isLocal ? ACCENT : NAME_TAG_TEXT,
+        fill: isLocal ? ROOM_SELF : NAME_TAG_TEXT,
         // 16 px on screen, per DESIGN.md's text-size floor and D17's decision 5B for the map's own
         // text (area labels and, where shown, a person's name).
         fontSize: 16,
@@ -88,7 +89,7 @@ export class Avatar {
       .clear()
       .roundRect(-width / 2, centreY - height / 2, width, height, height / 2)
       .fill({ color: BLACK, alpha: 0.8 })
-      .stroke({ width: 1, color: isLocal ? ACCENT : WHITE, alpha: isLocal ? 0.3 : 0.1 });
+      .stroke({ width: 1, color: WHITE, alpha: isLocal ? 0.5 : 0.1 });
     this.label.position.set(0, centreY);
   }
 

@@ -1,6 +1,6 @@
 import { Container, Matrix } from "pixi.js";
 import type { Point } from "@workspace-video/shared";
-import { exceedsDragThreshold } from "./viewportMath";
+import { exceedsDragThreshold, fitInsets, FLOOR_MARGIN, MAX_ZOOM_OVER_FIT } from "./viewportMath";
 import { fitFloor, isoMatrix, project, unproject, zoomAtCursor } from "./isoMath";
 
 export interface ViewportCallbacks {
@@ -87,13 +87,55 @@ export class Viewport {
     this.world.setFromMatrix(new Matrix(m.a, m.b, m.c, m.d, this.origin.x, this.origin.y));
   }
 
-  /** Shows the whole floor, centred, inside a window of this size. Used when the room opens and for a "fit" button. */
+  /** The fitted view: the furthest out a person can zoom, and where the floor sits then. */
+  private fit: { scale: number; region: { x: number; y: number; width: number; height: number }; floor: { width: number; height: number } } | null = null;
+
+  /**
+   * Shows the whole floor, centred in the space between the room's floating controls (fitInsets), so nothing covers
+   * it. Used when the room opens, on every window resize and for the "fit" button. This is also the limit of zooming
+   * out; zooming in stops at MAX_ZOOM_OVER_FIT times this.
+   */
   fitToFloor(floor: { width: number; height: number }, view: { width: number; height: number }): void {
-    const fit = fitFloor(floor, view, 0.92, this.tilted);
+    const inset = fitInsets(view);
+    const region = { x: inset.left, y: inset.top, width: Math.max(1, view.width - inset.left - inset.right), height: Math.max(1, view.height - inset.top - inset.bottom) };
+    // Fit the floor together with the margin FloorView draws around it; fitFloor places the padded floor's corner,
+    // so the layout's own (0, 0) sits one margin further in.
+    const m = FLOOR_MARGIN;
+    const fit = fitFloor({ width: floor.width + m * 2, height: floor.height + m * 2 }, region, 0.98, this.tilted, Infinity);
     this.zoom = fit.scale;
-    this.origin = fit.position;
+    const shift = project({ x: m, y: m }, { x: 0, y: 0 }, fit.scale, this.tilted);
+    this.origin = { x: fit.position.x + region.x + shift.x, y: fit.position.y + region.y + shift.y };
+    this.fit = { scale: fit.scale, region, floor };
     this.fitted = true;
     this.applyTransform();
+  }
+
+  /**
+   * Keeps the floor where it belongs after a zoom: while it is smaller than its space it stays centred there; once it
+   * is bigger, its edges may not come inside the space's edges. So the map never drifts off or under the controls.
+   */
+  private clampToFit(): void {
+    if (!this.fit) return;
+    const { region, floor } = this.fit;
+    const m = FLOOR_MARGIN;
+    const corners = [
+      { x: -m, y: -m },
+      { x: floor.width + m, y: -m },
+      { x: -m, y: floor.height + m },
+      { x: floor.width + m, y: floor.height + m },
+    ].map((c) => project(c, this.origin, this.zoom, this.tilted));
+    const minX = Math.min(...corners.map((c) => c.x)), maxX = Math.max(...corners.map((c) => c.x));
+    const minY = Math.min(...corners.map((c) => c.y)), maxY = Math.max(...corners.map((c) => c.y));
+    const axis = (lo: number, hi: number, start: number, size: number): number => {
+      if (hi - lo <= size) return start + (size - (hi - lo)) / 2 - lo; // centre it
+      if (lo > start) return start - lo; // a gap on the leading side
+      if (hi < start + size) return start + size - hi; // a gap on the trailing side
+      return 0;
+    };
+    this.origin = {
+      x: this.origin.x + axis(minX, maxX, region.x, region.width),
+      y: this.origin.y + axis(minY, maxY, region.y, region.height),
+    };
   }
 
   /** Whether the view is still the whole-map fit, untouched by the person since. */
@@ -174,8 +216,8 @@ export class Viewport {
     // ambiguous until onPointerMove sees it cross the drag threshold —
     // unless an object or furniture gesture just claimed it, which
     // pre-empts both.
-    this.isPanning =
-      !this.objectGestureClaimed && !this.furnitureGestureClaimed && (isMiddle || (isLeft && this.spaceHeld));
+    // The map is fixed in place (the owner's call, 2026-09-23): it never pans; only zooming moves it.
+    this.isPanning = false;
   };
 
   private onPointerMove = (e: PointerEvent): void => {
@@ -188,17 +230,9 @@ export class Viewport {
     // Furniture gestures have no drag follow-through — just suppress pan.
     if (this.furnitureGestureClaimed) return;
 
+    // A press that moved past the drag threshold is not a click-to-walk; the map itself does not follow it.
     if (!this.isPanning && exceedsDragThreshold(this.pressStart, { x: e.clientX, y: e.clientY })) {
       this.isPanning = true;
-    }
-
-    if (this.isPanning) {
-      this.origin = {
-        x: this.panOriginWorld.x + (e.clientX - this.panOriginScreen.x),
-        y: this.panOriginWorld.y + (e.clientY - this.panOriginScreen.y),
-      };
-      this.fitted = false;
-      this.applyTransform();
     }
   };
 
@@ -246,10 +280,14 @@ export class Viewport {
 
   /** Zooms by `factor`, keeping the floor position under `anchor` (a screen position) exactly where it is. */
   zoomAt(anchor: Point, factor: number): void {
-    const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor, undefined, undefined, this.tilted);
+    const min = this.fit?.scale;
+    const max = this.fit ? this.fit.scale * MAX_ZOOM_OVER_FIT : undefined;
+    const { scale, position } = zoomAtCursor(anchor, this.origin, this.zoom, factor, min, max, this.tilted);
     this.zoom = scale;
     this.origin = position;
-    this.fitted = false;
+    this.clampToFit();
+    // Zoomed all the way out is the fitted view again, so a window resize keeps it fitted.
+    this.fitted = this.fit !== null && scale <= this.fit.scale + 1e-9;
     this.applyTransform();
   }
 }

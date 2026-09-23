@@ -61,12 +61,6 @@ export interface PixiStageOptions {
  * hook) and mutates Pixi display objects — it never touches React, so no
  * amount of position/drag traffic can cause a React re-render.
  */
-// RoomDock (the bottom mic/camera/etc bar) floats over the canvas as a sibling DOM element, not
-// inside it, so the canvas itself is always full height. Measured on the live page: the bar is
-// 54px tall plus its own 16px gap to the window's bottom edge (`bottom-4` in RoomDock.tsx) = 70px.
-// Without this, "fit whole floor" fits the floor into the FULL window height, so anything near
-// the bottom of the map ends up drawn underneath the bar instead of visible above it.
-const BOTTOM_DOCK_RESERVED_PX = 72;
 
 export class PixiStage {
   private readonly app = new Application();
@@ -88,8 +82,9 @@ export class PixiStage {
   /** Which area the mouse is over and how high each area is raised (see lift.ts). Holds no timers. */
   private readonly lifts = new LiftState();
   private detachHover: (() => void) | null = null;
+  // The map is fixed to the screen: any window resize fits it again, zoomed in or not.
   private readonly onRendererResize = (): void => {
-    if (this.viewport.isFitted()) this.fitView();
+    this.fitView();
   };
   private unsubscribeSnapshotWatch: (() => void) | null = null;
   private unsubscribeObjectsWatch: (() => void) | null = null;
@@ -189,9 +184,9 @@ export class PixiStage {
     const movementConfig = movementConfigForLayout(this.layout, DEFAULT_MOVEMENT_CONFIG);
 
     this.viewport.world.addChild(createBackground(movementConfig));
-    this.floor = buildFloorView(this.layout);
+    this.floor = buildFloorView(this.layout, this.tilted);
     this.viewport.world.addChild(this.floor.container);
-    this.seatOverlay = new SeatOverlay(this.layout, this.floor.plan);
+    this.seatOverlay = new SeatOverlay(this.layout, this.floor.plan, this.tilted);
     this.viewport.world.addChild(this.seatOverlay.container);
     this.objectLayer.sortableChildren = true;
     this.viewport.world.addChild(this.objectLayer);
@@ -202,7 +197,7 @@ export class PixiStage {
     // Not fitView(): that also wakes the drawing loop, which does not exist yet at this point in start-up.
     this.viewport.fitToFloor(this.floorSize, {
       width: this.app.screen.width,
-      height: Math.max(0, this.app.screen.height - BOTTOM_DOCK_RESERVED_PX),
+      height: this.app.screen.height,
     });
     // Pixi's own internal clock (Ticker.system, used for its memory clean-up chores) rests and wakes with ours.
     this.gate = new IdleGate(tickerGroup(this.app.ticker, Ticker.system));
@@ -375,7 +370,7 @@ export class PixiStage {
       const slab = slabAt(this.floor.plan, position);
       const height = slab ? this.lifts.liftOf(slab.id) : 0;
       if (height > 0) {
-        const step = liftVector(height);
+        const step = liftVector(height, this.tilted);
         avatar.setPosition(position.x + step.x, position.y + step.y);
         return;
       }
@@ -416,9 +411,10 @@ export class PixiStage {
 
       const floorPoint = this.viewport.screenToWorld(screenPoint);
       const currentSlab = this.lifts.hoveredId();
-      const nextSlab = pickSlab(this.floor.plan, floorPoint, currentSlab ? { slabId: currentSlab, lift: this.lifts.liftOf(currentSlab) } : null);
+      const nextSlab = pickSlab(this.floor.plan, floorPoint, currentSlab ? { slabId: currentSlab, lift: this.lifts.liftOf(currentSlab) } : null, this.tilted);
       if (nextSlab !== currentSlab) {
         this.lifts.setHovered(nextSlab);
+        this.seatOverlay.showFreeOn(nextSlab);
         woke = true;
       }
 
@@ -434,6 +430,7 @@ export class PixiStage {
       let woke = false;
       if (this.lifts.hoveredId() !== null) {
         this.lifts.setHovered(null);
+        this.seatOverlay.showFreeOn(null);
         woke = true;
       }
       if (this.hoveredUserId !== null) {
@@ -465,7 +462,7 @@ export class PixiStage {
     for (const slabId of moved) {
       const height = this.lifts.liftOf(slabId);
       this.floor.setLift(slabId, height);
-      this.seatOverlay.liftSlab(slabId, liftVector(height));
+      this.seatOverlay.liftSlab(slabId, liftVector(height, this.tilted));
       stillChanging = true;
     }
 
@@ -649,7 +646,7 @@ export class PixiStage {
   fitView(): void {
     this.viewport.fitToFloor(this.floorSize, {
       width: this.app.screen.width,
-      height: Math.max(0, this.app.screen.height - BOTTOM_DOCK_RESERVED_PX),
+      height: this.app.screen.height,
     });
     this.gate.wake();
   }

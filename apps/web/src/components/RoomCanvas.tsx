@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import type { Point, CanvasObjectType, RoomLayout } from "@workspace-video/shared";
+import type { Point, RoomLayout } from "@workspace-video/shared";
 import { PixiStage } from "@/canvas/PixiStage";
 import { SpatialAudioController } from "@/audio/SpatialAudioController";
 import { ConnectionBadge } from "./ConnectionBadge";
@@ -10,7 +10,6 @@ import { CapacityScreen } from "./CapacityScreen";
 import { RoomHud } from "./RoomHud";
 import { RoomDock } from "./RoomDock";
 import { ZoomControls } from "./ZoomControls";
-import { ObjectToolbar } from "./ObjectToolbar";
 import { ZoneToast } from "./ZoneToast";
 import { ZoneHudChip } from "./ZoneHudChip";
 
@@ -118,14 +117,6 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, 
   const handleZoomOut = useCallback(() => stageRef.current?.zoomBy(1 / ZOOM_STEP), []);
   const handleFit = useCallback(() => stageRef.current?.fitView(), []);
 
-  const handleCreateObject = useCallback((type: CanvasObjectType, data: Record<string, unknown>) => {
-    stageRef.current?.createObjectAtViewCenter(type, data);
-  }, []);
-
-  const handleDeleteSelected = useCallback(() => {
-    stageRef.current?.deleteSelectedObject();
-  }, []);
-
   const handleRetryJoin = useCallback(() => {
     stageRef.current?.retryJoin();
   }, []);
@@ -146,7 +137,8 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, 
         zones={layout.zones}
       />
       <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onFit={handleFit} />
-      <ObjectToolbar localUserId={localUserId} onCreate={handleCreateObject} onDeleteSelected={handleDeleteSelected} />
+      {/* The + Note / Shape / Zone / Image toolbar is not shown in the room (the owner's call, 2026-09-23); the
+          objects already on the map still show and sync. */}
       <CapacityScreen onRetry={handleRetryJoin} />
     </div>
   );

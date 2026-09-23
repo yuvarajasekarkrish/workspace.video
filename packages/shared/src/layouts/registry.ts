@@ -1,14 +1,14 @@
 import type { RoomLayout } from "./types";
 import { openOffice1 } from "./openOffice";
 import { spatialMap1 } from "./mapLayout";
-import { professional200 } from "./professional200";
+import { office300 } from "./office300";
 
 export const DEFAULT_LAYOUT_ID = "openOffice@1";
 
 const LAYOUT_REGISTRY: Record<string, RoomLayout> = {
   [openOffice1.id]: openOffice1,
   [spatialMap1.id]: spatialMap1,
-  [professional200.id]: professional200,
+  [office300.id]: office300,
 };
 
 /** Returns `null` for an unknown id rather than throwing — callers (see

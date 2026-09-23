@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { Viewport } from "../Viewport";
+import { fitInsets, FLOOR_MARGIN, MAX_ZOOM_OVER_FIT } from "../viewportMath";
 
 // The room re-fits the whole map when the window is resized, but only while the person has not zoomed or moved
 // the view themselves: a person who zoomed in on their desk must not be thrown back to the whole map by a resize.
@@ -48,15 +49,59 @@ describe("Viewport.isFitted", () => {
     expect(v.isFitted()).toBe(true);
   });
 
-  it("stops being fitted when the person drags the map", () => {
+  it("stays fixed when the person drags: the map never pans (the owner's call, 2026-09-23)", () => {
     const v = make();
     v.fitToFloor(FLOOR, WINDOW);
-    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" })); // space held: the left button pans
+    const before = v.worldToScreen({ x: 0, y: 0 });
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
     pointer(document.querySelector("canvas")!, "pointerdown", 100, 100);
     pointer(window, "pointermove", 160, 140);
     pointer(window, "pointerup", 160, 140);
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "Space" }));
-    expect(v.isFitted()).toBe(false);
+    expect(v.isFitted()).toBe(true);
+    expect(v.worldToScreen({ x: 0, y: 0 })).toEqual(before);
+  });
+
+  it("keeps the fitted floor clear of the top pills, side panels and bottom dock", () => {
+    const v = make();
+    v.fitToFloor(FLOOR, WINDOW);
+    const m = FLOOR_MARGIN;
+    const corners = [v.worldToScreen({ x: -m, y: -m }), v.worldToScreen({ x: FLOOR.width + m, y: -m }), v.worldToScreen({ x: -m, y: FLOOR.height + m }), v.worldToScreen({ x: FLOOR.width + m, y: FLOOR.height + m })];
+    const inset = fitInsets(WINDOW);
+    for (const c of corners) {
+      expect(c.x).toBeGreaterThanOrEqual(inset.left - 0.5);
+      expect(c.x).toBeLessThanOrEqual(WINDOW.width - inset.right + 0.5);
+      expect(c.y).toBeGreaterThanOrEqual(inset.top - 0.5);
+      expect(c.y).toBeLessThanOrEqual(WINDOW.height - inset.bottom + 0.5);
+    }
+  });
+
+  it("fits a small office (about 10 people) into the same clear space as a big one, centred (flat view)", () => {
+    const v = make(false);
+    const small = { width: 3 * 160, height: 2 * 160 };
+    v.fitToFloor(small, WINDOW);
+    // the drawn floor: the layout plus the margin FloorView draws around it
+    const tl = v.worldToScreen({ x: -FLOOR_MARGIN, y: -FLOOR_MARGIN }), br = v.worldToScreen({ x: small.width + FLOOR_MARGIN, y: small.height + FLOOR_MARGIN });
+    const inset = fitInsets(WINDOW);
+    expect(tl.x).toBeGreaterThanOrEqual(inset.left - 0.5);
+    expect(br.x).toBeLessThanOrEqual(WINDOW.width - inset.right + 0.5);
+    expect(tl.y).toBeGreaterThanOrEqual(inset.top - 0.5);
+    expect(br.y).toBeLessThanOrEqual(WINDOW.height - inset.bottom + 0.5);
+    // it fills the space in at least one direction, not a tiny map in the middle
+    const usedW = (br.x - tl.x) / (WINDOW.width - inset.left - inset.right);
+    const usedH = (br.y - tl.y) / (WINDOW.height - inset.top - inset.bottom);
+    expect(Math.max(usedW, usedH)).toBeGreaterThan(0.95);
+  });
+
+  it("zooms only between the fitted view and MAX_ZOOM_OVER_FIT times it", () => {
+    const v = make();
+    v.fitToFloor(FLOOR, WINDOW);
+    const fit = v.getScale();
+    for (let i = 0; i < 10; i++) v.zoomAt({ x: 400, y: 300 }, 1 / 1.2);
+    expect(v.getScale()).toBeCloseTo(fit);
+    expect(v.isFitted()).toBe(true);
+    for (let i = 0; i < 40; i++) v.zoomAt({ x: 400, y: 300 }, 1.2);
+    expect(v.getScale()).toBeCloseTo(fit * MAX_ZOOM_OVER_FIT);
   });
 
   it("stays fitted after a plain click, which only walks and never moves the view", () => {

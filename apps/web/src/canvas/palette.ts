@@ -51,3 +51,49 @@ export const IMAGE_PLACEHOLDER_STROKE = 0x3a4266;
 export const EMBED_FILL = 0x2a2f3d;
 export const EMBED_STROKE = 0x4a5066;
 export const EMBED_TEXT = 0x8890a0;
+
+// The rendered-office look (the owner's reference image, 2026-09-23): one grey concrete floor and
+// monochrome furniture with real height, shaded by which face is seen.
+export const CONCRETE = 0x2a2a2d;
+export const CONCRETE_EDGE = 0x1b1b1d;
+export const FURNITURE_DARK = 0x2c2c2f;
+export const FURNITURE_MID = 0x4e4e53;
+export const FURNITURE_LIGHT = 0x9a9a9f;
+export const TABLE_TOP = 0x77777c;
+export const MONITOR = 0x151517;
+export const FOLIAGE = 0x56634f;
+export const PARTITION = 0x2a2a2d;
+export const GLASS = 0xa9bccb;
+export const WOOD = 0x6b5a48;
+/** The ring over a free seat in the area under the mouse. */
+export const FREE_SEAT = 0x4ade80;
+/** The faint blue glow on a monitor's screen. */
+export const SCREEN_GLOW = 0x3a4a5a;
+/** Small warm touches in the rendered office: fruit, a marker, stage lights and the whiteboard. */
+export const FRUIT_YELLOW = 0xc9a44a;
+export const FRUIT_RED = 0xb5563f;
+export const FRUIT_GREEN = 0x7c9a4a;
+export const WHITEBOARD = 0xe8e8ea;
+/**
+ * Chairs must be easy to see at the fitted zoom, without zooming in: WCAG 2.2 non-text contrast (1.4.11) asks for
+ * at least 3:1 against what is next to them. Seat on floor 11.3:1, back on floor 8.2:1, seat on a table 3.5:1, table on
+ * floor 3.2:1 (checked with the WCAG relative-luminance formula, 2026-09-23).
+ */
+export const CHAIR_SEAT = 0xe4e4e8;
+export const CHAIR_BACK = 0xc4c4ca;
+
+/**
+ * The product theme in the room (the owner's call, 2026-09-23, following the landing page): strict monochrome —
+ * black, graphite, white — with no accent colour. State is shown by fill, outline, dashes and glow instead of hue,
+ * each pair checked against WCAG 2.2 non-text contrast (1.4.11, at least 3:1):
+ *   you (white) on floor 14.3 · another person (grey) on floor 5.1 · a person's dark outline on a chair 15.6
+ *   taken seat (black dot) on a chair 15.6, its white rim on the floor 14.3 · free-seat dashed ring on floor 14.3,
+ *   on a table 4.5 · floor border on the page 3.9.
+ */
+export const ROOM_SELF = WHITE;
+export const ROOM_PERSON = 0x9a9aa0;
+export const ROOM_OUTLINE = 0x0a0a0a;
+export const ROOM_TAKEN = 0x0a0a0a;
+export const ROOM_FREE_RING = WHITE;
+export const ROOM_SELECTION = WHITE;
+export const FLOOR_BORDER = 0x6e6e73;

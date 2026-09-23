@@ -547,7 +547,11 @@ export function privateCabin(idPrefix: string, rect: TileRect, opts: { label: st
 /** `tableCount` tables, each with `chairsPerTable` chairs around it,
  *  staggered vertically within the rect (never stacked in a straight line)
  *  — the collaboration-table arrangement. */
-export function collabTables(idPrefix: string, rect: TileRect, opts: { tableCount: number; chairsPerTable: number }): ModuleResult {
+export function collabTables(
+  idPrefix: string,
+  rect: TileRect,
+  opts: { tableCount: number; chairsPerTable: number; /** Line the tables up in one column instead of staggering them. */ aligned?: boolean },
+): ModuleResult {
   const box = tileRectToWorld(rect);
   const zoneId = `${idPrefix}-zone`;
   const label = "Collaboration";
@@ -558,7 +562,7 @@ export function collabTables(idPrefix: string, rect: TileRect, opts: { tableCoun
   const result = empty();
   let seatNum = 1;
   for (let t = 0; t < opts.tableCount; t++) {
-    const stagger = t % 2 === 0 ? 0.2 : 0.4;
+    const stagger = opts.aligned ? (1 - 0.55) / 2 : t % 2 === 0 ? 0.2 : 0.4;
     const tx = box.x + box.width * stagger;
     const ty = box.y + rowH * (t + 0.5) - tableH / 2;
     const cx = tx + tableW / 2;
@@ -777,6 +781,52 @@ export function roundLounge(idPrefix: string, rect: TileRect, opts: { segments: 
   }
 
   result.zones.push({ id: zoneId, label, kind: "open", rect, capacity: opts.segments * opts.seatsPerSegment });
+  return result;
+}
+
+/**
+ * Banks of shared desks for 2 or 3 people (the owner's "2-desk people / 3-desk people" option, 2026-09-23): each
+ * cell is two desks back to back, every person with their own chair facing their own place at the desk. Seats follow
+ * the same rule as every other module: one seat anchored exactly on each chair. The bank is one open area, so it
+ * counts its own people and lights up on hover.
+ */
+export function deskBank(
+  idPrefix: string,
+  rect: TileRect,
+  opts: { seatsPerDesk: 2 | 3; cols: number; rows: number; startNumber: number; label: string },
+): ModuleResult {
+  const box = tileRectToWorld(rect);
+  const cellW = box.width / opts.cols;
+  const cellH = box.height / opts.rows;
+  const zoneId = `${idPrefix}-zone`;
+  const pitch = 60; // one person's width along the desk
+  const deskW = pitch * opts.seatsPerDesk;
+  const deskD = 44;
+  const chairGap = deskD + CHAIR_SIZE / 2 + 4; // chair centre from the desks' shared back edge
+  const result = empty();
+
+  let num = opts.startNumber;
+  for (let r = 0; r < opts.rows; r++) {
+    for (let c = 0; c < opts.cols; c++) {
+      const cx = box.x + cellW * (c + 0.5);
+      const cy = box.y + cellH * (r + 0.5);
+      for (const side of [-1, 1] as const) {
+        const deskId = `${idPrefix}-desk-${num}`;
+        const label = `Desk ${num}`;
+        result.furniture.push({ id: deskId, kind: "desk", x: cx - deskW / 2, y: side < 0 ? cy - deskD : cy, width: deskW, height: deskD, rotation: 0, label });
+        for (let i = 0; i < opts.seatsPerDesk; i++) {
+          const x = cx - deskW / 2 + pitch * (i + 0.5);
+          const y = cy + side * chairGap;
+          const letter = String.fromCharCode(97 + i);
+          // each person faces their own place on the desk (straight across it)
+          result.furniture.push(chair(`${deskId}-chair-${letter}`, x, y, x, cy + (side * deskD) / 2));
+          result.seats.push({ id: `${deskId}-${letter}`, label, anchor: { x, y }, zoneId });
+        }
+        num += 1;
+      }
+    }
+  }
+  result.zones.push({ id: zoneId, label: opts.label, kind: "open", rect, capacity: result.seats.length });
   return result;
 }
 

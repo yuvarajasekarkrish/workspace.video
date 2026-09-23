@@ -2,7 +2,7 @@ import { Container, Graphics, Text, Sprite, Assets, Texture } from "pixi.js";
 import type { ObjectState } from "@workspace-video/shared";
 import type { ObjectRender } from "@/store/objectsStore";
 import {
-  ACCENT,
+  ROOM_SELECTION,
   EMBED_FILL,
   EMBED_STROKE,
   EMBED_TEXT,
@@ -17,7 +17,7 @@ import {
   cssHex,
 } from "../palette";
 
-const SELECTION_COLOR = ACCENT;
+const SELECTION_COLOR = ROOM_SELECTION;
 
 function hexToNumber(hex: string, fallback: number): number {
   const parsed = Number.parseInt(hex.replace("#", ""), 16);

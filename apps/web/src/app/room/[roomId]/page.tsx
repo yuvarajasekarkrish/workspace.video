@@ -43,10 +43,9 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
   const room = await prisma.room.findUniqueOrThrow({ where: { id: roomId } });
 
   // The workspace's own look (D18-D20): a chosen accent palette and/or a flat instead of tilted
-  // view. `null` in the accent field means "the file's own default". For viewMode, the owner
-  // changed the file's own default to flat (a floating tilted view didn't work out) - a workspace
-  // that explicitly saved "tilted" still gets it; only the unset/null case changed. This call adds
-  // one row read, already reading the room's own record above, no loop and no extra round trip.
+  // view. `null` in either field means "the file's own default": the default view is flat, looking
+  // down on the floor fitted to the screen (the owner's call, 2026-09-23); a workspace that chose
+  // "tilted" keeps it. This call adds one row read, no loop and no extra round trip per person.
   const appearance = await getWorkspaceAppearance(room.workspaceId);
   const tilted = appearance?.viewMode === "tilted";
   const palette = appearance?.accentPalette ? paletteById(appearance.accentPalette) : null;
@@ -81,7 +80,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
     : undefined;
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-[#0b0d12]" style={paletteStyle}>
+    <main className="h-screen w-screen overflow-hidden bg-ground" style={paletteStyle}>
       <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 text-sm text-neutral-400">
         {room.name}
       </div>

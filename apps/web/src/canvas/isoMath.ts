@@ -90,6 +90,7 @@ export function fitFloor(
   view: { width: number; height: number },
   margin = 0.92,
   tilted = true,
+  maxScale = MAX_ZOOM,
 ): { scale: number; position: Point } {
   if (!(floor.width > 0 && floor.height > 0 && view.width > 0 && view.height > 0)) return { scale: 1, position: { x: 0, y: 0 } };
 
@@ -106,7 +107,7 @@ export function fitFloor(
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
 
-  const scale = clampZoom(Math.min(view.width / (maxX - minX), view.height / (maxY - minY)) * margin);
+  const scale = clampZoom(Math.min(view.width / (maxX - minX), view.height / (maxY - minY)) * margin, MIN_ZOOM, maxScale);
   return {
     scale,
     position: { x: view.width / 2 - ((minX + maxX) / 2) * scale, y: view.height / 2 - ((minY + maxY) / 2) * scale },
