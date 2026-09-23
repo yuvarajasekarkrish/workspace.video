@@ -19,8 +19,16 @@ function merge(...parts: ModuleResult[]): ModuleResult {
   };
 }
 
-const DESK_SIZE = 72;
-const CHAIR_SIZE = 32;
+// Both raised slightly for visibility (owner request). Bounded by deskGrid's own 160px cell
+// (TILE_PX in grid.ts), the tightest allocation in the whole layout - every other block gets a
+// multi-tile box with much more room. With the old sizes, a desk pair's two chairs already spanned
+// 148px of that 160px cell (12px slack). 76/34 spans 156px (4px slack, 2px each side) - the most
+// headroom allows without risking a chair visually reaching into the next desk's cell. Checked
+// every other block's own box in openOffice.ts before picking these numbers: all of them (bench
+// tables, private cabins, collab tables, the kitchen) get a box several tiles wide, so this same
+// increase leaves them with far more room than deskGrid, never less.
+const DESK_SIZE = 76;
+const CHAIR_SIZE = 34;
 const PLANT_SIZE = 28;
 
 /** `faceX`/`faceY`: the point this chair's seat faces (almost always its own desk/table
