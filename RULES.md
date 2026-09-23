@@ -26,6 +26,14 @@ not just skimming the part that seems relevant.
    or describing a seat, desk, or block, check what the actual code already builds for that exact
    thing (`packages/shared/src/layouts/modules.ts`, `openOffice.ts`, and how `FloorView.ts` draws it
    today). Show a side-by-side: what the real code draws today, next to the new version.
+5a. **Strict: any artifact built to match a real product page or real code must show that comparison
+    on the artifact itself, every time — never just checked privately and asserted in words.** If a
+    board claims to reuse a real formula (e.g. the table's `roundRect` radius, a real size or spacing
+    value), the board must visibly show the real reference next to the new one, labelled, so the owner
+    can check it with their own eyes — not just take a written claim that it matches. A board with no
+    real thing to compare against (like the laptop, which has no real code yet) must say so plainly on
+    the board instead of comparing against nothing. This applies to every future artifact, not only the
+    room-canvas ones already covered by rule 5.
 6. **Check every real variant before assuming one.** A desk, table, or block might have more than one
    real shape (2-seat desk vs 4-seat bench table vs 20-seat meeting table are genuinely different
    things in the code). Search the actual layout code for every variant that exists and confirm with
