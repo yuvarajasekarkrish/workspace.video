@@ -1,4 +1,4 @@
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, Sprite, Texture } from "pixi.js";
 import type { RoomLayout, FurniturePiece } from "@workspace-video/shared";
 import { liftVector, screenStep } from "./lift";
 import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
@@ -19,6 +19,47 @@ const REST_SHADOW_OFFSET = 6;
 // How thick a slab looks, in screen pixels before zoom: the strip of side wall seen below its top face.
 const AREA_THICKNESS = 14;
 const GROUP_THICKNESS = 9;
+
+// The approved chair photo, shared by every chair drawn anywhere in the app - loaded once, not
+// once per chair or once per room. Uses a plain <img> + Texture.from(img) rather than
+// Assets.load(url): proven on the "ChairCoded" artifact board, where Assets.load(url) silently
+// failed on an extension-less URL. This file's real URL does have an extension, but the load
+// path stays identical to what was already tested working, per the owner's instruction.
+let chairTexturePromise: Promise<Texture> | null = null;
+function getChairTexture(): Promise<Texture> {
+  if (!chairTexturePromise) {
+    chairTexturePromise = new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(Texture.from(img));
+      img.onerror = () => reject(new Error("chair texture failed to load: /furniture/chair.png"));
+      img.src = "/furniture/chair.png";
+    });
+  }
+  return chairTexturePromise;
+}
+
+// Swaps the plain circle placeholder for the real chair image once the shared texture is ready.
+// The circle is already drawn and on screen by the time this resolves, so nothing is ever missing
+// while the image loads. If the load fails, the placeholder simply stays - same "never show
+// nothing" behavior as ObjectView.ts's image loading.
+function queueChairSprite(layer: Container, placeholder: Graphics, piece: FurniturePiece): void {
+  const { x, y, width, height, rotation } = piece;
+  getChairTexture()
+    .then((texture) => {
+      if (layer.destroyed || placeholder.destroyed) return; // room rebuilt or torn down mid-load
+      const sprite = new Sprite(texture);
+      sprite.anchor.set(0.5);
+      sprite.width = width;
+      sprite.height = height;
+      sprite.rotation = rotation;
+      sprite.position.set(x + width / 2, y + height / 2);
+      layer.addChild(sprite);
+      layer.removeChild(placeholder);
+    })
+    .catch(() => {
+      // Placeholder circle stays visible - never a blank spot where a chair should be.
+    });
+}
 
 function drawPanel(layer: Container, box: Box, radius: number): void {
   layer.addChild(
@@ -84,6 +125,7 @@ function drawFurniturePiece(layer: Container, piece: FurniturePiece): void {
   }
 
   layer.addChild(g);
+  if (piece.kind === "chair") queueChairSprite(layer, g, piece);
 }
 
 /**

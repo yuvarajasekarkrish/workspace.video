@@ -23,8 +23,15 @@ const DESK_SIZE = 72;
 const CHAIR_SIZE = 32;
 const PLANT_SIZE = 28;
 
-function chair(id: string, x: number, y: number): FurniturePiece {
-  return { id, kind: "chair", x: x - CHAIR_SIZE / 2, y: y - CHAIR_SIZE / 2, width: CHAIR_SIZE, height: CHAIR_SIZE, rotation: 0 };
+/** `faceX`/`faceY`: the point this chair's seat faces (almost always its own desk/table
+ *  centre) - every call site already knows this point, since it placed the chair relative
+ *  to it. `rotation` is the angle from the chair to that point: the same rule proven correct
+ *  on the 4-seat table (each seat's rotation independently verified against its own facing
+ *  direction) made general, not a new one - a chair with no real facing point (there are
+ *  none left after this change) would simply keep facing right (rotation 0). */
+function chair(id: string, x: number, y: number, faceX: number, faceY: number): FurniturePiece {
+  const rotation = Math.atan2(faceY - y, faceX - x);
+  return { id, kind: "chair", x: x - CHAIR_SIZE / 2, y: y - CHAIR_SIZE / 2, width: CHAIR_SIZE, height: CHAIR_SIZE, rotation };
 }
 
 function plant(id: string, x: number, y: number): FurniturePiece {
@@ -66,8 +73,8 @@ export function deskGrid(
         label: `Desk ${num}`,
       });
       const chairGap = DESK_SIZE / 2 + CHAIR_SIZE / 2 + 6;
-      result.furniture.push(chair(`${deskId}-chair-a`, cx - chairGap, cy));
-      result.furniture.push(chair(`${deskId}-chair-b`, cx + chairGap, cy));
+      result.furniture.push(chair(`${deskId}-chair-a`, cx - chairGap, cy, cx, cy));
+      result.furniture.push(chair(`${deskId}-chair-b`, cx + chairGap, cy, cx, cy));
       result.seats.push({ id: `${deskId}-a`, label: `Desk ${num}`, anchor: { x: cx - chairGap, y: cy } });
       result.seats.push({ id: `${deskId}-b`, label: `Desk ${num}`, anchor: { x: cx + chairGap, y: cy } });
       num += 1;
@@ -97,10 +104,10 @@ export function benchTable(idPrefix: string, rect: TileRect, label: string): Mod
   return {
     furniture: [
       { id: `${idPrefix}-table`, kind: "table", x: cx - side / 2, y: cy - side / 2, width: side, height: side, rotation: 0, label },
-      chair(`${idPrefix}-chair-n`, cx, cy - half),
-      chair(`${idPrefix}-chair-s`, cx, cy + half),
-      chair(`${idPrefix}-chair-e`, cx + half, cy),
-      chair(`${idPrefix}-chair-w`, cx - half, cy),
+      chair(`${idPrefix}-chair-n`, cx, cy - half, cx, cy),
+      chair(`${idPrefix}-chair-s`, cx, cy + half, cx, cy),
+      chair(`${idPrefix}-chair-e`, cx + half, cy, cx, cy),
+      chair(`${idPrefix}-chair-w`, cx - half, cy, cx, cy),
     ],
     seats: [
       { id: `${idPrefix}-n`, label, anchor: { x: cx, y: cy - half }, zoneId },
@@ -123,6 +130,7 @@ export function meetingRoom(idPrefix: string, rect: TileRect, opts: { label: str
   const tx = box.x + (box.width - tableW) / 2;
   const ty = box.y + (box.height - tableH) / 2;
   const cy = ty + tableH / 2;
+  const cx = tx + tableW / 2;
 
   const perSide = Math.max(0, Math.floor((opts.capacity - 2) / 2));
   const result = empty();
@@ -132,7 +140,7 @@ export function meetingRoom(idPrefix: string, rect: TileRect, opts: { label: str
   let seatNum = 1;
   const addSeat = (x: number, y: number) => {
     const seatId = `${idPrefix}-${seatNum}`;
-    result.furniture.push(chair(`${seatId}-chair`, x, y));
+    result.furniture.push(chair(`${seatId}-chair`, x, y, cx, cy));
     result.seats.push({ id: seatId, label: opts.label, anchor: { x, y }, zoneId });
     seatNum += 1;
   };
@@ -182,7 +190,7 @@ export function standupArea(idPrefix: string, rect: TileRect, opts: { capacity: 
       for (const dy of [-CHAIR_SIZE / 2 - 6, 24 + CHAIR_SIZE / 2 + 6]) {
         const y = ty + dy;
         const seatId = `${idPrefix}-${seatNum}`;
-        result.furniture.push(chair(`${seatId}-chair`, x, y));
+        result.furniture.push(chair(`${seatId}-chair`, x, y, x, ty + 12));
         result.seats.push({ id: seatId, label, anchor: { x, y }, zoneId });
         seatNum += 1;
       }
@@ -220,7 +228,7 @@ export function allHands(idPrefix: string, rect: TileRect, opts: { rows: number;
       const x = box.x + cellW * (c + 0.5);
       const y = audienceTop + cellH * (r + 0.5);
       const seatId = `${idPrefix}-${r * opts.cols + c + 1}`;
-      result.furniture.push(chair(`${seatId}-chair`, x, y));
+      result.furniture.push(chair(`${seatId}-chair`, x, y, x, audienceTop));
       result.seats.push({ id: seatId, label, anchor: { x, y }, zoneId: audienceId });
     }
   }
@@ -248,8 +256,8 @@ export function privateCabin(idPrefix: string, rect: TileRect, opts: { label: st
   return {
     furniture: [
       { id: `${idPrefix}-desk`, kind: "desk", x: cx - DESK_SIZE / 2, y: cy - DESK_SIZE / 2, width: DESK_SIZE, height: DESK_SIZE, rotation: 0, label: opts.label },
-      chair(`${idPrefix}-chair-a`, cx - half, cy),
-      chair(`${idPrefix}-chair-b`, cx + half, cy),
+      chair(`${idPrefix}-chair-a`, cx - half, cy, cx, cy),
+      chair(`${idPrefix}-chair-b`, cx + half, cy, cx, cy),
       plant(`${idPrefix}-plant`, box.x + box.width - 16, box.y + 16),
     ],
     seats: [
@@ -284,7 +292,7 @@ export function collabTables(idPrefix: string, rect: TileRect, opts: { tableCoun
     const perSide = Math.floor((opts.chairsPerTable - 2) / 2);
     const addSeat = (x: number, y: number) => {
       const seatId = `${idPrefix}-${seatNum}`;
-      result.furniture.push(chair(`${seatId}-chair`, x, y));
+      result.furniture.push(chair(`${seatId}-chair`, x, y, cx, cy));
       result.seats.push({ id: seatId, label, anchor: { x, y }, zoneId });
       seatNum += 1;
     };
@@ -317,7 +325,7 @@ export function kitchen(idPrefix: string, rect: TileRect, opts: { stoolCount: nu
     const x = counterX + (counterW / (opts.stoolCount + 1)) * (i + 1);
     const y = counterY + 20 + CHAIR_SIZE / 2 + 6;
     const seatId = `${idPrefix}-${i + 1}`;
-    result.furniture.push(chair(`${seatId}-chair`, x, y));
+    result.furniture.push(chair(`${seatId}-chair`, x, y, x, counterY));
     result.seats.push({ id: seatId, label, anchor: { x, y }, zoneId });
   }
 
