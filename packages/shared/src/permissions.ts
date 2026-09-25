@@ -47,6 +47,28 @@ export type RuleResult = { allowed: true } | { allowed: false; code: RuleCode; r
 const refuse = (code: RuleCode, reason: string): RuleResult => ({ allowed: false, code, reason });
 const allow: RuleResult = { allowed: true };
 
+/**
+ * A zone's access restriction, if any — see packages/shared/src/layouts/types.ts's
+ * LayoutZone.access. Every existing zone has no `access` at all (treated as
+ * `{ kind: "open" }`), so every workspace built before this existed keeps
+ * working with zero behavior change. Deliberately a plain data shape here,
+ * not tied to any one layout kind, so any zone (meeting, cabin, open, a
+ * future kind) can carry it.
+ */
+export type ZoneAccessPolicy = { kind: "open" } | { kind: "restricted"; allowedRoles: readonly WorkspaceRoleName[] };
+
+/** Whether a person with this role (null = not a member) may enter a zone
+ *  with this access policy. Pure — no DB, no room/session state — same
+ *  contract as canDoLayoutAction/checkRoleChange above, reused by the
+ *  realtime server rather than a second permission model: see
+ *  RoomManager's zone-entry checks in claimSeat/teleportTo/applyMove. */
+export function canEnterZone(access: ZoneAccessPolicy | undefined, role: WorkspaceRoleName | null): RuleResult {
+  if (!access || access.kind === "open") return allow;
+  if (!isRole(role)) return refuse("not_a_member", "You are not a member of this workspace.");
+  if (!access.allowedRoles.includes(role)) return refuse("forbidden", "You don't have access to this area.");
+  return allow;
+}
+
 export interface RoleChangeInput {
   actorRole: WorkspaceRoleName | null;
   actorIsTarget: boolean;

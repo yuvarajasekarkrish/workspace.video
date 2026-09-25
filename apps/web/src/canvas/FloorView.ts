@@ -5,6 +5,7 @@ import { FLOOR_MARGIN } from "./viewportMath";
 import { planFloor, type Box, type FloorPlan, type SlabPlan } from "./slabPlan";
 import { BLACK, CONCRETE, CONCRETE_EDGE, FLOOR_BORDER, LINE } from "./palette";
 import { Painter, depthOf, drawPiece3d, drawRoomWalls, setZonesOf } from "./furniture3d";
+import { buildGridOverlay } from "./GridOverlay";
 
 /**
  * The office floor: a layout's areas and furniture, drawn once in the Gemini design's look (charcoal panels, soft
@@ -113,7 +114,10 @@ export function buildFloorView(layout: RoomLayout, tilted = true): FloorView {
   const m = FLOOR_MARGIN;
   base.rect(-m + edge.x, -m + edge.y, size.width + m * 2, size.height + m * 2).fill(CONCRETE_EDGE);
   base.rect(-m, -m, size.width + m * 2, size.height + m * 2).fill(CONCRETE).stroke({ width: 3, color: FLOOR_BORDER });
-  container.addChild(base, shadows, slabLayer, loose);
+  // A faint reference grid on the real tile unit (TILE_PX), on top of the floor and beneath every
+  // plate/furniture layer - purely additive, see GridOverlay.ts. Does not touch any layout file.
+  const grid = buildGridOverlay(layout.floor.cols, layout.floor.rows);
+  container.addChild(base, grid, shadows, slabLayer, loose);
   const zoneById = new Map(layout.zones.map((z) => [z.id, z]));
   const pieceZone = new Map(layout.furniture.map((f) => [f.id, zoneAt(layout, { x: f.x + f.width / 2, y: f.y + f.height / 2 })?.id ?? null]));
   setZonesOf((piece) => pieceZone.get(piece.id) ?? null);

@@ -1,43 +1,22 @@
 /**
- * Idempotent dev seed: two workspace members and one shared room, matching
- * what Milestone 1's manual two-browser verification needs. Safe to re-run.
+ * Idempotent dev seed: one workspace per plan (Phase 8), so every participant
+ * limit is reachable for manual verification. Safe to re-run.
+ *
+ * The old "test-ws" workspace + "seed-room-1" (a hand-drawn custom map, from
+ * Milestone 1's manual two-browser verification) was removed once
+ * office300@1 became the sole default layout — test@example.com now lands in
+ * "seed-room-startup" instead (see DevSignInForm.tsx). The custom-map-builder
+ * engine itself (mapLayout.ts, roomMap.ts) is untouched — a real, separate
+ * feature — this only removes the one seeded example that used it.
  */
 import { prisma } from "../src/index.js";
-import { PLAN_IDS } from "@workspace-video/shared";
+import { PLAN_IDS, COSMIC_CAMPUS_100_ID } from "@workspace-video/shared";
 
 async function main() {
   const userA = await prisma.user.upsert({
     where: { email: "test@example.com" },
     update: {},
     create: { email: "test@example.com", name: "Test User" },
-  });
-  const userB = await prisma.user.upsert({
-    where: { email: "second@example.com" },
-    update: {},
-    create: { email: "second@example.com", name: "Second User" },
-  });
-
-  const workspace = await prisma.workspace.upsert({
-    where: { slug: "test-ws" },
-    update: {},
-    create: { name: "Test WS", slug: "test-ws" },
-  });
-
-  for (const [user, role] of [
-    [userA, "owner"],
-    [userB, "member"],
-  ] as const) {
-    await prisma.workspaceMember.upsert({
-      where: { workspaceId_userId: { workspaceId: workspace.id, userId: user.id } },
-      update: {},
-      create: { workspaceId: workspace.id, userId: user.id, role },
-    });
-  }
-
-  const room = await prisma.room.upsert({
-    where: { id: "seed-room-1" },
-    update: {},
-    create: { id: "seed-room-1", workspaceId: workspace.id, name: "Main Room" },
   });
 
   // One workspace per plan (Phase 8), so every participant limit is reachable
@@ -66,11 +45,29 @@ async function main() {
     planWorkspaces.push({ slug: planWorkspace.slug, roomId: planRoom.id });
   }
 
+  // A separate demo workspace for the Cosmic Campus — 100 template, on the
+  // 100-person plan, so the template can be opened without touching any of
+  // the per-plan rooms above (they keep the default layout).
+  const cosmicWorkspace = await prisma.workspace.upsert({
+    where: { slug: "cosmic-campus-demo" },
+    update: {},
+    create: { name: "Cosmic Campus", slug: "cosmic-campus-demo", plan: "large" },
+  });
+  await prisma.workspaceMember.upsert({
+    where: { workspaceId_userId: { workspaceId: cosmicWorkspace.id, userId: userA.id } },
+    update: {},
+    create: { workspaceId: cosmicWorkspace.id, userId: userA.id, role: "owner" },
+  });
+  const cosmicRoom = await prisma.room.upsert({
+    where: { id: "seed-room-cosmic" },
+    update: {},
+    create: { id: "seed-room-cosmic", workspaceId: cosmicWorkspace.id, name: "Cosmic Campus", config: { layoutId: COSMIC_CAMPUS_100_ID } },
+  });
+
   console.log("Seeded:", {
-    users: [userA.email, userB.email],
-    workspace: workspace.slug,
-    room: room.id,
+    user: userA.email,
     planWorkspaces,
+    cosmicRoom: cosmicRoom.id,
   });
 }
 

@@ -167,11 +167,18 @@ function pick(id: string, n: number): number {
   return h % n;
 }
 
-/** An office chair: five-star base on castors, gas lift, cushioned seat, armrests and a curved back, facing `face`. */
+/** An office chair: five-star base on castors, gas lift, cushioned seat, armrests and a curved back, facing `face`.
+ *  `c.visualScale` (default 1) scales ONLY this drawing — `cx`/`cy` (the chair's
+ *  logical center, which IS the seat anchor by construction — see modules.ts's
+ *  chair()) are computed from `c.width`/`c.height` exactly as before this field
+ *  existed, so a scaled chair is drawn bigger/smaller around the same fixed
+ *  point rather than shifting it. See FurniturePiece.visualScale's own docs
+ *  and modules.ts's deskGridChairOverlapRisk for the one geometry this can
+ *  visually collide with (deskGrid's neighboring cell). */
 function drawChair(p: Painter, c: FurniturePiece, face: Point): void {
   const cx = c.x + c.width / 2;
   const cy = c.y + c.height / 2;
-  const s = Math.min(c.width, c.height) * 0.92;
+  const s = Math.min(c.width, c.height) * 0.92 * (c.visualScale ?? 1);
   p.shadow({ x: cx - s / 2, y: cy - s / 2, w: s, d: s }, 2, 0.25);
   // five-star base
   for (let i = 0; i < 5; i++) {

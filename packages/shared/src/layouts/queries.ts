@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Point } from "../geometry";
-import type { LayoutZone, RoomLayout, Seat } from "./types";
+import type { FurniturePiece, LayoutZone, RoomLayout, Seat } from "./types";
 import { pointInTileRect } from "./grid";
 import { DEFAULT_LAYOUT_ID, resolveLayout } from "./registry";
 
@@ -26,6 +26,37 @@ export function seatById(layout: RoomLayout, seatId: string): Seat | undefined {
   return layout.seats.find((s) => s.id === seatId);
 }
 
+/** The shared-table/desk-group id a seat belongs to, derived from its own id
+ *  rather than a separate stored field — every seat generator in
+ *  modules.ts (deskGrid, privateCabin, meetingRoom, collaboration tables,
+ *  pods) builds a seat's id as `${groupIdPrefix}-<seatSuffix>` (e.g.
+ *  `desk-12-a`/`desk-12-b`, `cabin-3-a`/`cabin-3-b`, `pod-4-seat`), so
+ *  stripping the trailing `-<suffix>` segment recovers exactly the id
+ *  every chair/table FurniturePiece at that same table also shares as its
+ *  own prefix. Confirmed against every real generator in modules.ts before
+ *  relying on it, per the "check real variants before assuming" rule —
+ *  this is not a guess at a convention, it's the one every seat id in the
+ *  codebase already follows. */
+export function tableGroupIdForSeat(seatId: string): string {
+  return seatId.replace(/-[^-]+$/, "");
+}
+
+/** Every seat sharing `seatId`'s table/desk group (including `seatId`
+ *  itself), in the layout's own seat order — used by the auto-seat-within-
+ *  table selection strategy to find alternatives at the same table when the
+ *  originally requested seat is unavailable. Returns just `[seat]` if the
+ *  seat exists but no sibling shares its group id (nothing to fall back to
+ *  within the table), and `[]` if the seat itself doesn't exist. */
+export function seatsAtSameTable(layout: RoomLayout, seatId: string): Seat[] {
+  const seat = seatById(layout, seatId);
+  if (!seat) return [];
+  // Explicit membership wins, and never mixes with the prefix rule: a seat
+  // that names its table matches only seats naming the same table.
+  if (seat.tableId !== undefined) return layout.seats.filter((s) => s.tableId === seat.tableId);
+  const groupId = tableGroupIdForSeat(seatId);
+  return layout.seats.filter((s) => s.tableId === undefined && tableGroupIdForSeat(s.id) === groupId);
+}
+
 export function zoneById(layout: RoomLayout, zoneId: string): LayoutZone | undefined {
   return layout.zones.find((z) => z.id === zoneId);
 }
@@ -48,6 +79,29 @@ export function hitTestSeats(layout: RoomLayout, worldPoint: Point, radiusPx = 2
     }
   }
   return best;
+}
+
+/** The `desk`/`table` furniture piece under `worldPoint`, or null — lets a
+ *  click that misses every chair's small hitTestSeats radius (a click on
+ *  the shared table surface itself, not one specific seat) still resolve
+ *  to "the user wants a seat at THIS table", the trigger for the
+ *  auto-seat-within-table selection strategy. Axis-aligned only: every
+ *  `desk`/`table` piece modules.ts generates has rotation 0 (only their
+ *  chairs rotate to face the table), so a plain bounding-box test is exact
+ *  for every real layout today, not an approximation. */
+export function furnitureAt(layout: RoomLayout, worldPoint: Point): FurniturePiece | null {
+  for (const piece of layout.furniture) {
+    if (piece.kind !== "desk" && piece.kind !== "table") continue;
+    if (
+      worldPoint.x >= piece.x &&
+      worldPoint.x <= piece.x + piece.width &&
+      worldPoint.y >= piece.y &&
+      worldPoint.y <= piece.y + piece.height
+    ) {
+      return piece;
+    }
+  }
+  return null;
 }
 
 const RoomConfigShape = z.object({ layoutId: z.string().min(1) }).partial();

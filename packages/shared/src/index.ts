@@ -8,3 +8,4 @@ export * from "./layouts";
 export * from "./secrets";
 export * from "./permissions";
 export * from "./workspaceAppearance";
+export * from "./seating";

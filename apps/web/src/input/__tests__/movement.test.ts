@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   clampToBounds,
   integrateKeyboardMove,
-  stepTowardWalkTarget,
   shouldEmitMove,
   WALK_SPEED_PX_PER_SEC,
 } from "../movement";
@@ -59,29 +58,6 @@ describe("integrateKeyboardMove", () => {
       bounds,
     );
     expect(next.x).toBe(bounds.roomWidthPx);
-  });
-});
-
-describe("stepTowardWalkTarget", () => {
-  it("does not overshoot a close target", () => {
-    const target = { x: 5, y: 0 };
-    const next = stepTowardWalkTarget({ x: 0, y: 0 }, target, 1); // 1s of travel, target is 5px away
-    expect(next).toEqual(target);
-  });
-
-  it("moves at WALK_SPEED_PX_PER_SEC toward a far target without reaching it early", () => {
-    const target = { x: 10_000, y: 0 };
-    const next = stepTowardWalkTarget({ x: 0, y: 0 }, target, 1);
-    expect(next.x).toBeCloseTo(WALK_SPEED_PX_PER_SEC, 5);
-  });
-
-  it("reaches the exact target after enough elapsed time", () => {
-    let pos = { x: 0, y: 0 };
-    const target = { x: 200, y: 150 };
-    for (let i = 0; i < 600; i++) {
-      pos = stepTowardWalkTarget(pos, target, 1 / 60);
-    }
-    expect(pos).toEqual(target);
   });
 });
 

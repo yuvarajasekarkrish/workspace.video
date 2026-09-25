@@ -12,6 +12,8 @@ import { RoomDock } from "./RoomDock";
 import { ZoomControls } from "./ZoomControls";
 import { ZoneToast } from "./ZoneToast";
 import { ZoneHudChip } from "./ZoneHudChip";
+import { SeatLabelChip } from "./SeatLabelChip";
+import { SeatFeedbackToast } from "./SeatFeedbackToast";
 
 export interface RoomCanvasProps {
   roomId: string;
@@ -127,7 +129,9 @@ export function RoomCanvas({ roomId, localUserId, initialLocalPosition, layout, 
       <ConnectionBadge />
       <OccupancyBadge />
       <ZoneHudChip layout={layout} />
+      <SeatLabelChip />
       <ZoneToast />
+      <SeatFeedbackToast />
       <RoomHud />
       <RoomDock
         onEnableAudio={handleEnableAudio}

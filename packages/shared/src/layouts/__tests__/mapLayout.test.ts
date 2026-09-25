@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { layoutFromMapZones, spatialMap1, SPATIAL_MAP_DEFAULT_ZONES, type MapZone } from "../mapLayout";
+import { layoutFromMapZones, SPATIAL_MAP_DEFAULT_ZONES, type MapZone } from "../mapLayout";
 import { validateLayout } from "../validate";
-import { resolveLayout, listLayoutIds } from "../registry";
+import { resolveLayout, listLayoutIds, DEFAULT_LAYOUT_ID } from "../registry";
 import { zoneAt } from "../queries";
 import { TILE_PX, movementConfigForLayout } from "../grid";
 import { DEFAULT_MOVEMENT_CONFIG } from "../../proximity-config";
@@ -9,6 +9,12 @@ import { DEFAULT_MOVEMENT_CONFIG } from "../../proximity-config";
 // The spatial map (the owner's Gemini design) written as data the realtime engine can run.
 // A map area is a rectangle on the engine's 160 px grid; a desk pod has four seats; the
 // numbers below are the same as the drawn map, so the engine and the screen agree.
+//
+// Not a registered named layout (no room selects it by id — a company's own map is stored
+// and rebuilt fresh via layoutFromMapZones, never looked up in the registry) — built here
+// purely as a test fixture to exercise the shared conversion engine SPATIAL_MAP_DEFAULT_ZONES
+// feeds in production.
+const spatialMap1 = layoutFromMapZones("spatialMap@1", SPATIAL_MAP_DEFAULT_ZONES);
 
 const zone = (id: string) => SPATIAL_MAP_DEFAULT_ZONES.find((z) => z.id === id)!;
 const seatsOf = (zoneId: string) => spatialMap1.seats.filter((s) => s.zoneId === `${zoneId}-zone`);
@@ -20,9 +26,11 @@ describe("spatialMap1: the map as an engine layout", () => {
     expect(result.valid).toBe(true);
   });
 
-  it("is registered, so a room can name it, and the default layout is unchanged", () => {
-    expect(resolveLayout("spatialMap@1")).toBe(spatialMap1);
-    expect(listLayoutIds()).toContain("openOffice@1");
+  it("is not a registered named layout — a company's own map is rebuilt fresh, never looked up by id", () => {
+    expect(resolveLayout("spatialMap@1")).toBeNull();
+    expect(listLayoutIds()).toContain(DEFAULT_LAYOUT_ID);
+    expect(listLayoutIds()).not.toContain("spatialMap@1");
+    expect(listLayoutIds().some((id) => id.startsWith("spatialMap"))).toBe(false);
   });
 
   it("has one engine zone per map area, arriving in the welcome plaza", () => {

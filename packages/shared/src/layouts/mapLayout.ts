@@ -255,5 +255,3 @@ export const SPATIAL_MAP_DEFAULT_ZONES: readonly MapZone[] = [
   { id: "meet_2", type: "meeting", name: "Sync A", rect: { col: 4, row: 9, cols: 2, rows: 2 }, targetUsers: 4 },
   { id: "focus_pod", type: "focus", name: "Focus Pods", rect: { col: 7, row: 9, cols: 4, rows: 2 }, targetUsers: 14 },
 ];
-
-export const spatialMap1: RoomLayout = layoutFromMapZones("spatialMap@1", SPATIAL_MAP_DEFAULT_ZONES);

@@ -1,5 +1,6 @@
 import { prisma } from "./index";
 import { Prisma } from "@prisma/client";
+import type { WorkspaceRoleName } from "@workspace-video/shared";
 
 /** Phase 11 Part C: counts every transient-retry attempt actually taken, so a
  *  future load-test run can attribute join-latency tail (or not) to this
@@ -104,4 +105,25 @@ export async function assertWorkspaceMembership(userId: string, workspaceId: str
   if (!membership) {
     throw new Error("User is not a member of this room's workspace.");
   }
+}
+
+/**
+ * The current role for a user in a workspace, or `null` if they aren't a
+ * member — a fresh read every call, deliberately never cached here. Callers
+ * that need to check zone access (see @workspace-video/shared's
+ * canEnterZone) must call this at the moment they actually need a current
+ * answer, not rely on a value read earlier: a role can change between two
+ * calls (a demotion, a removal), and this function's whole contract is that
+ * it always reflects the database as of right now — the same "membership is
+ * per-user and must always be re-checked" rule assertWorkspaceMembership
+ * above already follows for existence; this extends it to the role itself.
+ */
+export async function getWorkspaceRole(userId: string, workspaceId: string): Promise<WorkspaceRoleName | null> {
+  const membership = await withTransientRetry(() =>
+    prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { role: true },
+    }),
+  );
+  return (membership?.role as WorkspaceRoleName | undefined) ?? null;
 }

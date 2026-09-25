@@ -7,6 +7,12 @@ import type {
   MovementConfig,
   RoomLayout,
   ProximityUpdateEvent,
+  WorkspaceRoleName,
+  Seat,
+  WorkspaceSeatingConfig,
+  SeatSelectionRequest,
+  SeatSelectionResult,
+  SeatSelectionFailureReason,
 } from "@workspace-video/shared";
 import {
   ServerEvents,
@@ -18,14 +24,21 @@ import {
   seatById,
   zoneAt,
   zoneById,
+  canEnterZone,
+  seatsAtSameTable,
+  hitTestSeats,
+  DEFAULT_WORKSPACE_SEATING_CONFIG,
 } from "@workspace-video/shared";
 import type { RoomLease } from "@workspace-video/realtime-core";
 import {
   validateMove,
+  validateTeleport,
   pairKey,
   resolveObjectWrite,
   resolveObjectDelete,
   resolveSeatClaim,
+  freeSeatsInOrder,
+  nearbyFreeSeats,
   effectiveAudio,
   SparseProximityTracker,
   UniformGridIndex,
@@ -81,6 +94,14 @@ export interface TickPhaseTimings {
   /** The directed-audio loop itself, including every proximity:update emit
    *  it sends — this is where Socket.IO/Redis-adapter emit cost lands. */
   audioEmitMs: number;
+  /** Sub-split of audioEmitMs: the candidatePairs consumption loop itself
+   *  (zoneRefFor, effectiveAudio, shouldEmitAudioChange decision work) BEFORE
+   *  any emit happens — see the zoneRecheckCounterparts-memoization
+   *  investigation's Step 1. */
+  pairDecisionMs: number;
+  /** Sub-split of audioEmitMs: flushProximityBatches — the actual Socket.IO
+   *  emit calls, queued during the decision loop above. */
+  pairFlushMs: number;
 }
 
 /** One sampled `move` validation, for diagnosing the correction rate — see
@@ -206,6 +227,15 @@ interface PeerState {
    *  id and a capability always come from the same join and an old socket
    *  can never lend its capability to a newer one. Absent means legacy. */
   proximityBatch?: boolean;
+  /** Bounded-staleness role snapshot for zone-access checks (canEnterZone) —
+   *  see setPeerRole's docs. Deliberately NOT re-fetched from the database
+   *  on every synchronous move (applyMove must stay fast/sync); refreshed on
+   *  every join and on every discrete access-controlled action (teleportTo,
+   *  claimSeat), whose callers (socketHandlers.ts) read a fresh value from
+   *  the database immediately beforehand. Absent means "not yet known" —
+   *  treated as no membership by canEnterZone, so a restricted zone fails
+   *  closed rather than open for a peer whose role was never set. */
+  role?: WorkspaceRoleName;
   position: Point;
   acceptedAtMs: number;
   /** Unspent movement allowance carried from the last accepted move (ms of
@@ -254,6 +284,14 @@ export class RoomManager implements ActiveParticipantCounter {
        *  claimSeat's existence/proximity checks. Never re-resolved mid-room
        *  lifetime (a layout doesn't change under a live room). */
       layout: RoomLayout;
+      /** Which Part 4B seating strategies this room's workspace has turned
+       *  on — see WorkspaceSeatingConfig's docs. No admin UI or database
+       *  column exists yet, so this always starts at
+       *  DEFAULT_WORKSPACE_SEATING_CONFIG (every optional strategy off,
+       *  exact-seat unaffected either way); setSeatingConfig exists so a
+       *  future admin-settings load path (or a test) can override it per
+       *  room without changing selectSeat itself. */
+      seatingConfig: WorkspaceSeatingConfig;
       peers: Map<string, PeerState>; // keyed by userId
       /** Hot-desk occupancy: seatId -> the userId sitting there. Never
        *  persisted — lost on eviction/failover by design (see the plan's
@@ -327,6 +365,11 @@ export class RoomManager implements ActiveParticipantCounter {
        *  against a slow eval causing two overlapping refreshes to race each
        *  other — see ensureRoom's leaseRefreshTimer callback. */
       leaseRefreshInFlight: boolean;
+      /** Pending debounced occupancy:update broadcast, or null if none is
+       *  scheduled — see scheduleOccupancyBroadcast's docs. Always cleared on
+       *  eviction (runEviction) so a fired timer never touches a room that no
+       *  longer exists. */
+      occupancyBroadcastTimer: NodeJS.Timeout | null;
     }
   >();
 
@@ -410,6 +453,12 @@ export class RoomManager implements ActiveParticipantCounter {
     objectRepository: ObjectRepository = noopObjectRepository,
     private readonly diagnostics?: TickDiagnostics,
     options: RoomManagerOptions = {},
+    /** How long to coalesce occupancy:update broadcasts for one room —
+     *  see scheduleOccupancyBroadcast's docs. Injectable (same pattern as
+     *  leaseRefreshIntervalMs above) so a test can set it to 0 for a
+     *  synchronous-equivalent assertion, or verify the coalescing itself
+     *  with a small positive value and fake timers. */
+    private readonly occupancyBroadcastDebounceMs = 150,
   ) {
     this.proximityBatchEnabled = options.proximityBatchEnabled ?? true;
     // Owned internally (not injected as a whole) because it needs a
@@ -500,6 +549,7 @@ export class RoomManager implements ActiveParticipantCounter {
       workspaceId,
       movementConfig,
       layout,
+      seatingConfig: DEFAULT_WORKSPACE_SEATING_CONFIG,
       peers: new Map(),
       seats: new Map(),
       seatOf: new Map(),
@@ -515,6 +565,7 @@ export class RoomManager implements ActiveParticipantCounter {
       tickTimer,
       leaseRefreshTimer,
       leaseRefreshInFlight: false,
+      occupancyBroadcastTimer: null,
     });
   }
 
@@ -596,9 +647,52 @@ export class RoomManager implements ActiveParticipantCounter {
     // write — `insert` itself handles the "already indexed" (reconnect)
     // case by moving instead, so this is safe to call unconditionally.
     room.index.insert(peer.userId, peer.position);
-    const occ = this.occupancy(roomId);
-    this.broadcaster.to(roomId).emit(ServerEvents.OccupancyUpdate, { roomId, ...occ });
+    this.scheduleOccupancyBroadcast(roomId, room);
     return result;
+  }
+
+  /**
+   * Coalesces occupancy:update broadcasts for one room instead of firing one
+   * per admit/remove. Confirmed with a real load-test finding, not a guess:
+   * at N=300 concurrent joins, a full-room broadcast on EVERY single join
+   * (each one's cost growing with however many peers are already present)
+   * cost 7.9 seconds of cumulative blocking time across 300 calls in one
+   * clean 20-second run, with the last few calls (broadcasting to a
+   * near-full room) taking up to 847ms each — see docs/architecture's
+   * load-test results from 2026-09-23. A join/leave BURST (the exact shape
+   * of 300 people arriving in a batch) is precisely what this bunches into
+   * one broadcast: only the FIRST call in a burst schedules a timer: every
+   * call after that, while the timer is still pending, is a no-op — the
+   * eventual single broadcast reads occupancy() at fire time, which
+   * reflects every join/leave that happened during the debounce window, not
+   * a stale snapshot from whenever the timer was scheduled.
+   *
+   * The JOINING client's own view is unaffected: it already learns its
+   * accurate occupancy from peers:snapshot, sent synchronously right after
+   * admitAndAddPeer returns (server.ts) — this debounce only delays the
+   * broadcast to everyone ELSE already in the room, and only by
+   * occupancyBroadcastDebounceMs (default 150ms, imperceptible for a real
+   * human watching a participant count tick up).
+   *
+   * Timer lifecycle: cleared in runEviction alongside tickTimer/
+   * leaseRefreshTimer, so a fired timer can never touch a room that no
+   * longer exists in `this.rooms` (see resource-lifecycle discipline —
+   * every timer here has one clear owner and one clear teardown path).
+   */
+  private scheduleOccupancyBroadcast(
+    roomId: string,
+    room: { occupancyBroadcastTimer: NodeJS.Timeout | null },
+  ): void {
+    if (room.occupancyBroadcastTimer) return; // a broadcast is already pending; it will see this change too
+    room.occupancyBroadcastTimer = setTimeout(() => {
+      room.occupancyBroadcastTimer = null;
+      // The room may have been evicted while this timer was pending (e.g.
+      // the last peer left and the debounce window hadn't elapsed yet) —
+      // `this.rooms` is the source of truth, not the closed-over `room`.
+      if (!this.rooms.has(roomId)) return;
+      const occ = this.occupancy(roomId);
+      this.broadcaster.to(roomId).emit(ServerEvents.OccupancyUpdate, { roomId, ...occ });
+    }, this.occupancyBroadcastDebounceMs);
   }
 
   /** Returns a Promise (rather than being fire-and-forget) so callers that
@@ -678,8 +772,11 @@ export class RoomManager implements ActiveParticipantCounter {
     // Leaving is the one occupancy-changing path peers:snapshot doesn't
     // cover (that's only re-sent on a join) — without this, everyone still
     // in the room would see a stale "active" count until someone else joins.
-    const occ = this.occupancy(roomId);
-    this.broadcaster.to(roomId).emit(ServerEvents.OccupancyUpdate, { roomId, ...occ });
+    // Debounced the same way as admitAndAddPeer's join broadcast — if this
+    // room gets evicted (peers.size === 0, just below) before the timer
+    // fires, scheduleOccupancyBroadcast's own `this.rooms.has` check is what
+    // stops it from touching a room that's already gone.
+    this.scheduleOccupancyBroadcast(roomId, room);
 
     if (room.peers.size === 0) {
       await this.evictRoom(roomId, { notifyOwnerChanged: false });
@@ -706,10 +803,19 @@ export class RoomManager implements ActiveParticipantCounter {
     /** Diagnostics only — see PeerState.lastMoveClientTs. Never used to
      *  validate; a client-supplied timestamp is a teleport vector. */
     clientTs?: number,
-  ): ReturnType<typeof validateMove> | undefined {
+  ): ReturnType<typeof validateMove> | { accepted: false; reason: "access_denied" } | undefined {
     const room = this.rooms.get(roomId);
     const peer = room?.peers.get(userId);
     if (!room || !peer) return undefined;
+
+    // Access is checked against the peer's CURRENT role snapshot (see
+    // PeerState.role's docs — WASD must stay synchronous, so this is a
+    // bounded-staleness check, not a fresh database read on every keystroke,
+    // unlike claimSeat/teleportTo). Checked before anything else changes:
+    // an access-denied move must leave the peer's whole state untouched,
+    // same as any other rejection.
+    const access = this.checkZoneAccess(room, peer, proposed);
+    if (!access.allowed) return { accepted: false, reason: "access_denied" };
 
     // A move from a seated peer is treated as an implicit stand-up — the
     // client stands up optimistically (see the approved plan) and may send
@@ -778,8 +884,52 @@ export class RoomManager implements ActiveParticipantCounter {
       peer.acceptedAtMs = nowMs;
       peer.moveCreditMs = result.nextCreditMs;
       room.index.move(userId, peer.position);
+    } else if (result.reason === "max_speed_exceeded") {
+      // Bounded-credit resync (see validateMove's docs) — advances ONLY the
+      // time/allowance bookkeeping, never peer.position or room.index: the
+      // peer's authoritative location is completely unaffected by a
+      // rejection, exactly as before this fix. This is what stops a
+      // same-tick message burst from permanently diverging (see the
+      // "double-drain" investigation) without weakening the speed check
+      // itself in any way — out_of_bounds and invalid rejections are
+      // deliberately excluded and behave exactly as they always have.
+      peer.acceptedAtMs = result.nextAcceptedAtMs;
+      peer.moveCreditMs = result.nextCreditMs;
     }
 
+    return result;
+  }
+
+  /** Discrete relocation (click-to-move, walk-to-person, walk-to-zone) — a
+   *  different category of action from applyMove's continuous travel, per
+   *  validateMove's own doc comment ("teleport-style repositioning... must
+   *  go through a separate server action that sets position directly").
+   *  Validated by validateTeleport (bounds only, no continuous-speed check —
+   *  there is no meaningful "speed" for a single deliberate jump) rather
+   *  than validateMove. Resets moveCreditMs the same way an accepted
+   *  seat-claim does, so a teleport can never be laundered into extra speed
+   *  budget for the ordinary moves that follow it. Also releases any held
+   *  seat, matching applyMove — moving (by any means) implicitly stands you
+   *  up. */
+  teleportTo(roomId: string, userId: string, target: Point): ReturnType<typeof validateTeleport> | { accepted: false; reason: "access_denied" } | undefined {
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(userId);
+    if (!room || !peer) return undefined;
+
+    const result = validateTeleport(target, room.movementConfig);
+    if (!result.accepted) return result;
+
+    // Access is checked on the VALIDATED (in-bounds) position, and before
+    // releaseSeat: a denied teleport must leave the peer's whole state —
+    // position AND current seat — exactly as it was.
+    const access = this.checkZoneAccess(room, peer, result.position);
+    if (!access.allowed) return { accepted: false, reason: "access_denied" };
+
+    this.releaseSeat(roomId, userId);
+    peer.position = result.position;
+    peer.acceptedAtMs = Date.now();
+    peer.moveCreditMs = 0;
+    room.index.move(userId, peer.position);
     return result;
   }
 
@@ -802,12 +952,47 @@ export class RoomManager implements ActiveParticipantCounter {
    *  against a fresh elapsed-time window and silently pull the peer back
    *  out of the chair (see the plan's explicit test for this). Any
    *  previously-held seat is released as part of the same accepted claim. */
-  claimSeat(roomId: string, userId: string, seatId: string): SeatClaimResult | undefined {
+  /** Destination access control (Part 4A): whether `peer`'s current role
+   *  snapshot may enter the zone at `target`, per canEnterZone. Deliberately
+   *  a SEPARATE check from seat/movement selection — callers run this
+   *  BEFORE resolveSeatClaim/validateMove/validateTeleport, never inside
+   *  them, so the pure occupancy/movement validators stay untouched by
+   *  access control and can't accidentally duplicate or diverge from it. */
+  private checkZoneAccess(room: NonNullable<ReturnType<RoomManager["rooms"]["get"]>>, peer: PeerState, target: Point): { allowed: true } | { allowed: false; reason: "access_denied" } {
+    const zone = zoneAt(room.layout, target);
+    const check = canEnterZone(zone?.access, peer.role ?? null);
+    return check.allowed ? { allowed: true } : { allowed: false, reason: "access_denied" };
+  }
+
+  claimSeat(roomId: string, userId: string, seatId: string): SeatClaimResult | { accepted: false; reason: "access_denied" } | undefined {
     const room = this.rooms.get(roomId);
     const peer = room?.peers.get(userId);
     if (!room || !peer) return undefined;
 
     const seat = seatById(room.layout, seatId);
+    if (seat) {
+      const access = this.checkZoneAccess(room, peer, seat.anchor);
+      if (!access.allowed) return { accepted: false, reason: "access_denied" };
+    }
+    return this.attemptSeatClaim(room, roomId, peer, userId, seatId, seat);
+  }
+
+  /** The exact-seat claim's atomic core, extracted so Part 4B's
+   *  auto-seating strategies (selectSeat, below) commit their chosen
+   *  candidate through this SAME path — never a second, parallel occupancy
+   *  mechanism. claimSeat's own public behavior is unchanged by this
+   *  extraction: it still runs the identical access check, then this same
+   *  body, in the same order. Access control is the CALLER's job (already
+   *  checked by claimSeat above, and by selectSeat below) — this method
+   *  assumes it was already checked and only resolves/commits occupancy. */
+  private attemptSeatClaim(
+    room: NonNullable<ReturnType<RoomManager["rooms"]["get"]>>,
+    roomId: string,
+    peer: PeerState,
+    userId: string,
+    seatId: string,
+    seat: Seat | undefined,
+  ): SeatClaimResult {
     const result = resolveSeatClaim(
       seat,
       peer.position,
@@ -833,6 +1018,141 @@ export class RoomManager implements ActiveParticipantCounter {
     }
 
     return result;
+  }
+
+  /** Sets which optional Part 4B seating strategies this room's workspace
+   *  has enabled — see WorkspaceSeatingConfig's docs. No-op for an unknown
+   *  room. There is no admin UI or database-backed source for this yet
+   *  (see seatingConfig's field docs); this setter exists so a future
+   *  admin-settings load path, or a test exercising a non-default config,
+   *  has somewhere real to put the value. */
+  setSeatingConfig(roomId: string, config: WorkspaceSeatingConfig): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    room.seatingConfig = config;
+  }
+
+  /** Part 4B: resolves and, if a suitable seat is found, atomically claims
+   *  one seat per `request.strategy` — the extensible auto-seating engine
+   *  described by packages/shared/src/seating.ts's contracts. Every branch
+   *  ultimately calls attemptSeatClaim (the exact same atomic path
+   *  claimSeat uses) on its chosen candidate, so this can never produce a
+   *  duplicate assignment or bypass occupancy/access checks: two
+   *  overlapping selectSeat calls for the same table cannot interleave
+   *  (this method, like claimSeat, runs synchronously to completion), so
+   *  the second call's occupancy read always reflects the first's
+   *  already-committed claim.
+   *
+   *  `"exact"` preserves today's claimSeat behavior exactly (same access
+   *  check, same atomic claim, same failure reasons) — it exists here only
+   *  so a single client request path can express every strategy uniformly;
+   *  it changes nothing about how an ordinary chair click behaves.
+   *
+   *  Every other strategy is gated by `room.seatingConfig`: a workspace
+   *  that hasn't enabled a strategy gets `{ outcome: "failed", reason:
+   *  "not_enabled" }` for it, never a silent fallback to a different
+   *  strategy the caller didn't ask for (see the plan's "no negotiation"
+   *  requirement, which already governs exact-seat clicks and applies here
+   *  too: an auto-seat request may pick among a table's OWN free seats, but
+   *  never substitutes a different strategy). `"standingFallback"`,
+   *  `"waitlist"`, and `"groupSeating"` are refused unconditionally
+   *  (`"not_supported"`) regardless of config, since none of those are
+   *  implemented — a config flag for them exists only so the shape doesn't
+   *  need to change the day they are. */
+  selectSeat(roomId: string, userId: string, request: SeatSelectionRequest): SeatSelectionResult | undefined {
+    const room = this.rooms.get(roomId);
+    const peer = room?.peers.get(userId);
+    if (!room || !peer) return undefined;
+
+    const occupantOf = (seatId: string): string | undefined => room.seats.get(seatId);
+
+    const attempt = (seat: Seat): SeatSelectionResult => {
+      const access = this.checkZoneAccess(room, peer, seat.anchor);
+      if (!access.allowed) return { outcome: "failed", reason: "access_denied" };
+      const result = this.attemptSeatClaim(room, roomId, peer, userId, seat.id, seat);
+      return result.accepted
+        ? { outcome: "seated", seatId: result.seatId }
+        : { outcome: "failed", reason: result.reason };
+    };
+
+    /** Tries each candidate in order, stopping at the first successful
+     *  claim. A candidate can fail attempt() for a reason unrelated to
+     *  "already taken" (out_of_range, access_denied to a different zone
+     *  than the seed seat) — trying the rest rather than giving up after
+     *  one keeps the strategy from failing a request some other free seat
+     *  at the same table/radius could have satisfied. */
+    const tryInOrder = (candidates: readonly Seat[], emptyReason: SeatSelectionFailureReason): SeatSelectionResult => {
+      let lastFailure: SeatSelectionResult | null = null;
+      for (const candidate of candidates) {
+        const result = attempt(candidate);
+        if (result.outcome === "seated") return result;
+        lastFailure = result;
+      }
+      return lastFailure ?? { outcome: "failed", reason: emptyReason };
+    };
+
+    switch (request.strategy) {
+      case "exact": {
+        if (!("seatId" in request.target)) return { outcome: "failed", reason: "invalid_request" };
+        const seat = seatById(room.layout, request.target.seatId);
+        if (!seat) return { outcome: "failed", reason: "unknown_seat" };
+        return attempt(seat);
+      }
+
+      case "autoSeatWithinTable": {
+        if (!room.seatingConfig.autoSeatWithinTableEnabled) return { outcome: "failed", reason: "not_enabled" };
+        const seed =
+          "seatId" in request.target
+            ? seatById(room.layout, request.target.seatId)
+            : hitTestSeats(room.layout, request.target.point, Number.POSITIVE_INFINITY);
+        if (!seed) return { outcome: "failed", reason: "unknown_seat" };
+        const tableSeats = seatsAtSameTable(room.layout, seed.id);
+        const free = freeSeatsInOrder(tableSeats, occupantOf, userId);
+        if (free.length === 0) return { outcome: "failed", reason: "table_full" };
+        return tryInOrder(free, "table_full");
+      }
+
+      case "nearbySearch": {
+        if (!room.seatingConfig.nearbySearchEnabled) return { outcome: "failed", reason: "not_enabled" };
+        if (!("point" in request.target)) return { outcome: "failed", reason: "invalid_request" };
+        const nearby = nearbyFreeSeats(
+          room.layout.seats,
+          request.target.point,
+          room.seatingConfig.nearbySearchRadiusPx,
+          occupantOf,
+          userId,
+        );
+        if (nearby.length === 0) return { outcome: "failed", reason: "no_seat_nearby" };
+        return tryInOrder(nearby, "no_seat_nearby");
+      }
+
+      // Never implemented — refused regardless of any config flag. See this
+      // method's own doc comment and WorkspaceSeatingConfig's field docs.
+      case "standingFallback":
+      case "waitlist":
+      case "groupSeating":
+        return { outcome: "failed", reason: "not_supported" };
+    }
+  }
+
+  /** A single peer's current authoritative position, or undefined if they
+   *  aren't in the room — used to report an unchanged position back to the
+   *  client on an access-denied rejection, without snapshotting the whole
+   *  room just to read one peer's position. */
+  getPeerPosition(roomId: string, userId: string): Point | undefined {
+    return this.rooms.get(roomId)?.peers.get(userId)?.position;
+  }
+
+  /** Refreshes the bounded-staleness role snapshot canEnterZone checks — see
+   *  PeerState.role's docs. Callers (socketHandlers.ts) call this with a
+   *  freshly-read database role immediately before a discrete
+   *  access-controlled action (teleportTo, claimSeat) so THAT check is
+   *  genuinely current, and once on every join. A no-op if the peer isn't in
+   *  the room (e.g. a stale/late call after they've already left). */
+  setPeerRole(roomId: string, userId: string, role: WorkspaceRoleName | null): void {
+    const peer = this.rooms.get(roomId)?.peers.get(userId);
+    if (!peer) return;
+    peer.role = role ?? undefined;
   }
 
   /** Frees whichever seat `userId` currently holds. Idempotent — a no-op
@@ -1007,6 +1327,8 @@ export class RoomManager implements ActiveParticipantCounter {
   private readonly tickProximityPhaseMs: number[] = [];
   private readonly tickZoneMs: number[] = [];
   private readonly tickAudioEmitMs: number[] = [];
+  private readonly tickPairDecisionMs: number[] = [];
+  private readonly tickPairFlushMs: number[] = [];
 
   private recordSample(buffer: number[], value: number): void {
     if (buffer.length < RoomManager.MAX_TICK_SAMPLES) {
@@ -1055,6 +1377,8 @@ export class RoomManager implements ActiveParticipantCounter {
       proximity: { avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
       zone: { avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
       audioEmit: { avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
+      pairDecision: { avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
+      pairFlush: { avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
     };
   } {
     const samples = this.tickDurationsMs;
@@ -1069,7 +1393,14 @@ export class RoomManager implements ActiveParticipantCounter {
         p99Ms: 0,
         avgPairChecks: 0,
         avgEmits: 0,
-        phases: { positions: emptyPhase, proximity: emptyPhase, zone: emptyPhase, audioEmit: emptyPhase },
+        phases: {
+          positions: emptyPhase,
+          proximity: emptyPhase,
+          zone: emptyPhase,
+          audioEmit: emptyPhase,
+          pairDecision: emptyPhase,
+          pairFlush: emptyPhase,
+        },
       };
     }
     const sorted = [...samples].sort((a, b) => a - b);
@@ -1090,6 +1421,8 @@ export class RoomManager implements ActiveParticipantCounter {
         proximity: RoomManager.summarize(this.tickProximityPhaseMs),
         zone: RoomManager.summarize(this.tickZoneMs),
         audioEmit: RoomManager.summarize(this.tickAudioEmitMs),
+        pairDecision: RoomManager.summarize(this.tickPairDecisionMs),
+        pairFlush: RoomManager.summarize(this.tickPairFlushMs),
       },
     };
   }
@@ -1115,6 +1448,8 @@ export class RoomManager implements ActiveParticipantCounter {
       this.recordSample(this.tickProximityPhaseMs, phases.proximityMs);
       this.recordSample(this.tickZoneMs, phases.zoneMs);
       this.recordSample(this.tickAudioEmitMs, phases.audioEmitMs);
+      this.recordSample(this.tickPairDecisionMs, phases.pairDecisionMs);
+      this.recordSample(this.tickPairFlushMs, phases.pairFlushMs);
     }
     this.tickWriteIndex++;
     const sample = this.recordTickWindow(performance.now() - start, emitTick);
@@ -1253,14 +1588,34 @@ export class RoomManager implements ActiveParticipantCounter {
     const candidatePairs = new Set<string>();
     for (const [a, b] of rawChangedPairs) candidatePairs.add(pairKey(a, b));
 
+    // Memoized per tick only: zoneRecheckCounterparts(room, zoneId) is a pure
+    // read of room.usersByZone, which is fully settled for the rest of this
+    // tick by the time this loop runs (the zone-diff loop above has already
+    // applied every membership change) — so two zone-changers referencing the
+    // same zoneId this tick are guaranteed to get the identical member set.
+    // Caching avoids re-walking that set (up to ~185 members/call measured at
+    // 300 users on a crowded `open` zone) once per changer instead of once per
+    // distinct zone id. Does not change which pairs end up in candidatePairs —
+    // see the investigation report this implements for the correctness proof.
+    const zoneRecheckCache = new Map<string, ReadonlySet<string>>();
+    const cachedZoneRecheck = (zoneId: string | null): ReadonlySet<string> => {
+      if (!zoneId) return EMPTY_USER_SET;
+      let cached = zoneRecheckCache.get(zoneId);
+      if (!cached) {
+        cached = this.zoneRecheckCounterparts(room, zoneId);
+        zoneRecheckCache.set(zoneId, cached);
+      }
+      return cached;
+    };
+
     for (const { userId, previousZoneId, newZoneId } of zoneChanges) {
       for (const otherId of room.proximity.neighborsOf(userId)) {
         candidatePairs.add(pairKey(userId, otherId));
       }
-      for (const otherId of this.zoneRecheckCounterparts(room, previousZoneId)) {
+      for (const otherId of cachedZoneRecheck(previousZoneId)) {
         if (otherId !== userId) candidatePairs.add(pairKey(userId, otherId));
       }
-      for (const otherId of this.zoneRecheckCounterparts(room, newZoneId)) {
+      for (const otherId of cachedZoneRecheck(newZoneId)) {
         if (otherId !== userId) candidatePairs.add(pairKey(userId, otherId));
       }
       for (const speakerId of room.lastEmittedAudio.get(userId)?.keys() ?? []) {
@@ -1271,11 +1626,23 @@ export class RoomManager implements ActiveParticipantCounter {
       }
     }
 
+    // Memoized per tick only, same safety argument as zoneRecheckCache above:
+    // room.zoneOf is fully settled for the rest of this tick (the zone-diff
+    // loop already ran), and zoneById reads the static layout, which never
+    // changes at runtime — so a given userId's ZoneRef is identical no matter
+    // how many candidate pairs it appears in this tick. A user in a crowded
+    // zone can appear in dozens of pairs; this avoids re-doing zoneById's
+    // linear scan over room.layout.zones from scratch each time (measured:
+    // this decision loop was ~74% of audioEmit's cost at N=200 — see the
+    // pairDecisionMs/pairFlushMs split above).
+    const zoneRefCache = new Map<string, ZoneRef | null>();
     const zoneRefFor = (userId: string): ZoneRef | null => {
+      if (zoneRefCache.has(userId)) return zoneRefCache.get(userId)!;
       const zoneId = room.zoneOf.get(userId);
-      if (!zoneId) return null;
-      const zone = zoneById(room.layout, zoneId);
-      return zone ? { id: zone.id, kind: zone.kind, stageId: zone.stageId } : null;
+      const zone = zoneId ? zoneById(room.layout, zoneId) : undefined;
+      const ref = zone ? { id: zone.id, kind: zone.kind, stageId: zone.stageId } : null;
+      zoneRefCache.set(userId, ref);
+      return ref;
     };
 
     const afterZone = performance.now();
@@ -1284,6 +1651,7 @@ export class RoomManager implements ActiveParticipantCounter {
     // The flush is in a finally: maybeEmitDirectedAudio records an update as
     // sent when it QUEUES it, so a throw mid-loop must still deliver what was
     // queued, or the dedup would suppress those updates until the value changes.
+    let afterPairLoop = afterZone;
     try {
       for (const key of candidatePairs) {
         const [a, b] = key.split(":") as [string, string];
@@ -1301,6 +1669,7 @@ export class RoomManager implements ActiveParticipantCounter {
         this.maybeEmitDirectedAudio(room, b, a, effectiveAudio(raw, zoneB, zoneA));
       }
     } finally {
+      afterPairLoop = performance.now();
       this.flushProximityBatches(room);
     }
 
@@ -1311,6 +1680,8 @@ export class RoomManager implements ActiveParticipantCounter {
       proximityMs: afterProximity - afterPositions,
       zoneMs: afterZone - afterProximity,
       audioEmitMs: afterAudioEmit - afterZone,
+      pairDecisionMs: afterPairLoop - afterZone,
+      pairFlushMs: afterAudioEmit - afterPairLoop,
     };
   }
 
@@ -1335,22 +1706,71 @@ export class RoomManager implements ActiveParticipantCounter {
     const zone = zoneById(room.layout, zoneId);
     if (!zone) return EMPTY_USER_SET;
 
+    let result: ReadonlySet<string>;
     if (zone.kind === "stage") {
-      const result = new Set<string>();
+      const stageResult = new Set<string>();
       for (const z of room.layout.zones) {
         if (z.kind === "audience" && z.stageId === zone.id) {
-          for (const u of room.usersByZone.get(z.id) ?? EMPTY_USER_SET) result.add(u);
+          for (const u of room.usersByZone.get(z.id) ?? EMPTY_USER_SET) stageResult.add(u);
         }
       }
-      return result;
+      result = stageResult;
+    } else if (zone.kind === "audience" && zone.stageId) {
+      result = room.usersByZone.get(zone.stageId) ?? EMPTY_USER_SET;
+    } else if (zone.kind === "meeting" || zone.kind === "cabin" || zone.kind === "open" || zone.kind === "focus") {
+      result = room.usersByZone.get(zone.id) ?? EMPTY_USER_SET;
+    } else {
+      result = EMPTY_USER_SET;
     }
-    if (zone.kind === "audience" && zone.stageId) {
-      return room.usersByZone.get(zone.stageId) ?? EMPTY_USER_SET;
+
+    this.recordZoneRecheck(zone.kind, result.size);
+    return result;
+  }
+
+  /** Diagnostics-only counters answering "when a zone change triggers a
+   *  recheck, how many counterpart users come back?" — added to test the
+   *  hypothesis that audioEmit's ~37ms/tick CPU remainder (candidate
+   *  assembly, not Socket.IO/Redis — see the Phase 10 comment above) is
+   *  dominated by a few zone changes producing large counterpart sets
+   *  (O(zone size)) versus many small ones. Purely additive: does not read
+   *  from or influence any candidate-selection, proximity, or emit logic. */
+  private zoneRecheckCallCount = 0;
+  private zoneRecheckSetSizeTotal = 0;
+  private zoneRecheckMaxSetSize = 0;
+  private readonly zoneRecheckSetSizeByKind = new Map<string, { calls: number; total: number }>();
+
+  private recordZoneRecheck(zoneKind: string, size: number): void {
+    this.zoneRecheckCallCount++;
+    this.zoneRecheckSetSizeTotal += size;
+    if (size > this.zoneRecheckMaxSetSize) this.zoneRecheckMaxSetSize = size;
+    let byKind = this.zoneRecheckSetSizeByKind.get(zoneKind);
+    if (!byKind) {
+      byKind = { calls: 0, total: 0 };
+      this.zoneRecheckSetSizeByKind.set(zoneKind, byKind);
     }
-    if (zone.kind === "meeting" || zone.kind === "cabin" || zone.kind === "open" || zone.kind === "focus") {
-      return room.usersByZone.get(zone.id) ?? EMPTY_USER_SET;
+    byKind.calls++;
+    byKind.total += size;
+  }
+
+  /** Read-only snapshot for /internal/metrics — see recordZoneRecheck's docs. */
+  getZoneRecheckStats(): {
+    calls: number;
+    totalCounterparts: number;
+    avgZoneRecheckSetSize: number;
+    maxZoneRecheckSetSize: number;
+    byKind: Record<string, { calls: number; avgSetSize: number }>;
+  } {
+    const byKind: Record<string, { calls: number; avgSetSize: number }> = {};
+    for (const [kind, { calls, total }] of this.zoneRecheckSetSizeByKind) {
+      byKind[kind] = { calls, avgSetSize: calls > 0 ? total / calls : 0 };
     }
-    return EMPTY_USER_SET;
+    return {
+      calls: this.zoneRecheckCallCount,
+      totalCounterparts: this.zoneRecheckSetSizeTotal,
+      avgZoneRecheckSetSize: this.zoneRecheckCallCount > 0 ? this.zoneRecheckSetSizeTotal / this.zoneRecheckCallCount : 0,
+      maxZoneRecheckSetSize: this.zoneRecheckMaxSetSize,
+      byKind,
+    };
   }
 
   /** Last per-tick candidate-pair count, across whichever room ticked most
@@ -1454,6 +1874,7 @@ export class RoomManager implements ActiveParticipantCounter {
 
     clearInterval(room.tickTimer);
     clearInterval(room.leaseRefreshTimer);
+    if (room.occupancyBroadcastTimer) clearTimeout(room.occupancyBroadcastTimer);
     this.lastEmittedPositions.delete(roomId);
 
     // Flush any pending object writes BEFORE dropping the room from

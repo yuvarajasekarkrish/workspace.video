@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS } from "@workspace-video/shared";
+import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS, DEFAULT_LAYOUT_ID, listLayoutIds } from "@workspace-video/shared";
 import { CreateWorkspaceForm } from "../CreateWorkspaceForm";
 
 vi.mock("next/navigation", () => ({
@@ -32,6 +32,24 @@ describe("CreateWorkspaceForm", () => {
     fireEvent.click(enterprise);
     expect(enterprise.getAttribute("aria-checked")).toBe("true");
     expect(startup.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("offers every registered template, defaults to office300@1, and sends the chosen one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ roomId: "r1" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CreateWorkspaceForm />);
+
+    const select = screen.getByLabelText(/office template/i) as HTMLSelectElement;
+    expect(select.value).toBe(DEFAULT_LAYOUT_ID);
+    expect([...select.options].map((o) => o.value)).toEqual(listLayoutIds());
+
+    fireEvent.change(select, { target: { value: "cosmicCampus100@1" } });
+    fireEvent.change(screen.getByLabelText(/workspace name/i), { target: { value: "Nova" } });
+    fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ name: "Nova", plan: "startup", layoutId: "cosmicCampus100@1" });
+    vi.unstubAllGlobals();
   });
 
   it("disables submit until a name is entered", () => {

@@ -27,6 +27,17 @@ export const MoveEventSchema = z.object({
 });
 export type MoveEvent = z.infer<typeof MoveEventSchema>;
 
+/** Sent once, immediately, for a discrete relocation (click-to-move,
+ *  walk-to-person, walk-to-zone) — never a stream of intermediate positions
+ *  the way `move` is for continuous WASD travel. The server validates this
+ *  through a separate path (RoomManager.teleportTo / validateTeleport) that
+ *  checks bounds but not continuous speed, since a deliberate single jump
+ *  has no meaningful "speed" to measure. */
+export const MoveToEventSchema = z.object({
+  position: PointSchema,
+});
+export type MoveToEvent = z.infer<typeof MoveToEventSchema>;
+
 /** Sent once after connecting, to join a specific room. Room/user identity is NOT
  *  taken from this payload for auth purposes — the server resolves the user from the
  *  authenticated session attached at handshake, and validates the caller is a member
@@ -85,6 +96,23 @@ export const SeatClaimEventSchema = z.object({
 });
 export type SeatClaimEvent = z.infer<typeof SeatClaimEventSchema>;
 
+/** Part 4B: a seat-selection request for a strategy other than (or
+ *  including) an exact seat click — auto-seat-within-a-table or nearby-seat
+ *  search. `target.seatId` (a specific seat, e.g. one the user clicked or
+ *  is currently near) or `target.point` (a world point, e.g. a click on a
+ *  table's surface or bare floor) — never both. The server resolves the
+ *  actual candidate(s) and commits through the same atomic seat-claim path
+ *  `seat:claim` uses; see RoomManager.selectSeat. `"exact"` is also a valid
+ *  strategy here (behaves identically to `seat:claim`) so a client can send
+ *  every strategy through one event if it chooses to, but existing code
+ *  keeps using `seat:claim` for ordinary chair clicks — this event is
+ *  additive, not a replacement. */
+export const SeatSelectEventSchema = z.object({
+  strategy: z.enum(["exact", "autoSeatWithinTable", "nearbySearch", "standingFallback", "waitlist", "groupSeating"]),
+  target: z.union([z.object({ seatId: z.string().min(1) }), z.object({ point: PointSchema })]),
+});
+export type SeatSelectEvent = z.infer<typeof SeatSelectEventSchema>;
+
 /** Releases whichever seat the sender currently occupies. Idempotent — a
  *  release with no seat held is a harmless no-op, which is what makes the
  *  optimistic-stand-up / implicit-release-on-move race safe (see the plan's
@@ -133,13 +161,21 @@ export const OccupancyUpdateEventSchema = z.object({
 export type OccupancyUpdateEvent = z.infer<typeof OccupancyUpdateEventSchema>;
 
 /** Batched incremental position update, emitted once per 100ms tick per room,
- *  containing only peers whose position actually changed since the last tick. */
+ *  containing only peers whose position actually changed since the last tick.
+ *  Also doubles as a new peer's INTRODUCTION to everyone already in the room
+ *  (name/avatarUrl present) — see the join-path docs in socketHandlers.ts for
+ *  why this replaced re-broadcasting the full peers:snapshot on every join.
+ *  `name`/`avatarUrl` are optional and only ever present together, on the
+ *  single entry introducing a brand-new peer; every other (ordinary tick)
+ *  entry carries neither, so the hot per-tick path's payload is unchanged. */
 export const PeersDeltaEventSchema = z.object({
   roomId: z.string().min(1),
   updates: z.array(
     z.object({
       userId: z.string().min(1),
       position: PointSchema,
+      name: z.string().optional(),
+      avatarUrl: z.string().url().nullable().optional(),
     }),
   ),
   /** Peers who disconnected since the last tick. */
@@ -267,11 +303,13 @@ export type ZoneChangedEvent = z.infer<typeof ZoneChangedEventSchema>;
 
 export const ClientEvents = {
   Move: "move",
+  MoveTo: "move:to",
   JoinRoom: "join_room",
   ObjectUpsert: "object:upsert",
   ObjectDelete: "object:delete",
   SeatClaim: "seat:claim",
   SeatRelease: "seat:release",
+  SeatSelect: "seat:select",
 } as const;
 
 export const ServerEvents = {

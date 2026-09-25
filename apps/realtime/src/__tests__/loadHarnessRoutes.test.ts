@@ -65,9 +65,9 @@ describe("load-harness routes guard", () => {
     const provision = vi.fn().mockResolvedValue({ workspaceId: "w", roomId: "r", users: [] });
     maybeRegisterLoadHarnessRoutes(app, { LOAD_HARNESS_ENABLED: "1" }, { provision, teardown: vi.fn() });
 
-    await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5, layoutId: "spatialMap@1" } });
+    await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5, layoutId: "office300@1" } });
     await app.inject({ method: "POST", url: "/internal/load-harness/provision", payload: { n: 5 } });
-    expect(provision).toHaveBeenNthCalledWith(1, 5, "spatialMap@1");
+    expect(provision).toHaveBeenNthCalledWith(1, 5, "office300@1");
     expect(provision).toHaveBeenNthCalledWith(2, 5, undefined);
   });
 

@@ -5,21 +5,27 @@ import {
   ServerEvents,
   JoinRoomEventSchema,
   MoveEventSchema,
+  MoveToEventSchema,
   ObjectUpsertEventSchema,
   ObjectDeleteEventSchema,
   SeatClaimEventSchema,
   SeatReleaseEventSchema,
+  SeatSelectEventSchema,
   resolveRoomLayout,
   zoneById,
+  zoneAt,
+  seatById,
   tileRectCenter,
   movementConfigForLayout,
   DEFAULT_MOVEMENT_CONFIG,
   type PeersSnapshotEvent,
+  type PeersDeltaEvent,
   type ObjectsSnapshotEvent,
   type SeatsSnapshotEvent,
   type RoomLayout,
   type MovementConfig,
   type ParticipantLimitProvider,
+  type Point,
 } from "@workspace-video/shared";
 import { spawnPositionForUser } from "@workspace-video/proximity";
 import type * as Auth from "./auth";
@@ -35,7 +41,7 @@ export interface SocketHandlerDeps {
   joinDuration: { record(ms: number): void };
   disconnectReasonCounts: Record<string, number>;
   loadHarnessLimitOverride: ParticipantLimitProvider;
-  auth: Pick<typeof Auth, "verifySessionToken" | "assertRoomMembership" | "assertWorkspaceMembership">;
+  auth: Pick<typeof Auth, "verifySessionToken" | "assertRoomMembership" | "assertWorkspaceMembership" | "getWorkspaceRole">;
   /** Called once per new connection, before its handlers attach — server.ts
    *  uses it for heartbeat sampling; tests leave it unset. */
   onConnection?: (socket: Socket) => void;
@@ -61,7 +67,7 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
     onConnection,
     emitTail,
   } = deps;
-  const { verifySessionToken, assertRoomMembership, assertWorkspaceMembership } = deps.auth;
+  const { verifySessionToken, assertRoomMembership, assertWorkspaceMembership, getWorkspaceRole } = deps.auth;
 
   // Wraps a direct emit so its duration lands in the tail histogram. Behavior
   // is identical with or without the recorder: `emit` runs exactly once.
@@ -85,6 +91,21 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
   io.on("connection", (socket) => {
     const user = socket.data.user as { userId: string; email: string };
     onConnection?.(socket);
+
+    /** Refreshes this peer's role snapshot with a fresh database read, but
+     *  ONLY when `target`'s zone is actually restricted — the overwhelming
+     *  common case (an open zone, including every zone that existed before
+     *  Part 4A) costs nothing extra: no DB call, no await, same as before
+     *  access control existed. See PeerState.role's docs and
+     *  RoomManager.checkZoneAccess. */
+    const refreshRoleIfZoneRestricted = async (roomId: string, target: Point): Promise<void> => {
+      const info = roomManager.getRoomInfo(roomId);
+      if (!info) return;
+      const zone = zoneAt(info.layout, target);
+      if (!zone?.access || zone.access.kind === "open") return;
+      const role = await getWorkspaceRole(user.userId, info.workspaceId);
+      roomManager.setPeerRole(roomId, user.userId, role);
+    };
 
     socket.on(ClientEvents.JoinRoom, async (raw, ack?: (res: unknown) => void) => {
       const joinStartedAt = performance.now();
@@ -186,10 +207,23 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
 
       const spawnZone = zoneById(layout, layout.spawnZoneId)!;
 
+      // Fresh role read for the zone-access bounded-staleness snapshot (see
+      // PeerState.role's docs) — but ONLY when this layout actually has a
+      // restricted zone anywhere: every workspace today has none (this is a
+      // brand-new opt-in field), so every join stays exactly as fast as it
+      // was before Part 4A for every one of them. Once a workspace does add
+      // a restricted zone, its own joins pay one extra read; nobody else's
+      // do.
+      const hasRestrictedZone = layout.zones.some((z) => z.access?.kind === "restricted");
+      const role = hasRestrictedZone ? await getWorkspaceRole(user.userId, workspaceId) : null;
+
       // admitAndAddPeer checks capacity and inserts the peer in one synchronous
       // call, so two sockets racing for the last slot can't both be admitted.
       // Rejected: do NOT join the socket to the room and do not broadcast
       // anything — nothing about the room's state changes for a refused join.
+      // Computed once, reused both for admission and for the introduction
+      // delta below — never recomputed, so the two can't ever disagree.
+      const spawnPosition = spawnPositionForUser(user.userId, tileRectCenter(spawnZone.rect), undefined, movementConfig);
       const admission = roomManager.admitAndAddPeer(roomId, {
         userId: user.userId,
         name: user.email, // placeholder until profile data is wired up in phase 2
@@ -198,11 +232,8 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
         // This connection's own declaration, stored next to its socket id so
         // both are replaced together by the latest join (see PeerState).
         proximityBatch: proximityBatch === true,
-        // Deterministic per-user ring offset around the layout's spawn zone
-        // center, so multiple avatars don't render exactly on top of each
-        // other (see packages/proximity/src/spawn.ts). Closes the TODO this
-        // used to carry — Room.config is now read above via assertRoomMembership.
-        position: spawnPositionForUser(user.userId, tileRectCenter(spawnZone.rect), undefined, movementConfig),
+        position: spawnPosition,
+        role: role ?? undefined,
       }, limit);
 
       if (!admission.admitted) {
@@ -212,15 +243,29 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       await socket.join(roomId);
       socket.data.roomId = roomId;
 
-      // Broadcast to the whole room, not just this socket: existing peers
-      // otherwise only ever learn of a newcomer via peers:delta, which carries
-      // no name/avatar, so they'd render the newcomer permanently unnamed.
-      // This also doubles as the client's clean-resync primitive on reconnect,
-      // and (via active/limit) how everyone's occupancy display stays current
-      // on the join path — see OccupancyUpdateEventSchema for the leave path.
+      // The full roster goes to the JOINING socket only — this is the one
+      // place it's genuinely needed (a brand-new connection has nothing yet;
+      // this also doubles as its own clean-resync primitive on reconnect).
+      // Broadcasting the WHOLE roster to the WHOLE room on every single join
+      // used to cost O(room size) work times O(room size) recipients — a
+      // real, measured load-test finding (300 concurrent joins: 5+ seconds
+      // of cumulative emit time on this one event alone). Existing peers
+      // instead get a minimal introduction below.
       const occ = roomManager.occupancy(roomId);
       const snapshot: PeersSnapshotEvent = { roomId, peers: roomManager.snapshot(roomId), ...occ };
-      timed(ServerEvents.PeersSnapshot, roomSize(roomId), snapshot, () => io.to(roomId).emit(ServerEvents.PeersSnapshot, snapshot));
+      timed(ServerEvents.PeersSnapshot, toOne, snapshot, () => socket.emit(ServerEvents.PeersSnapshot, snapshot));
+
+      // Existing peers learn the newcomer's identity via a peers:delta entry
+      // carrying name/avatarUrl (see PeersDeltaEventSchema's docs) instead of
+      // the full roster — one small broadcast instead of re-sending
+      // everyone's record to everyone. `socket.to` (not `io.to`) excludes the
+      // joiner itself, which already has its own full snapshot above.
+      const introduction: PeersDeltaEvent = {
+        roomId,
+        updates: [{ userId: user.userId, position: spawnPosition, name: user.email, avatarUrl: null }],
+        left: [],
+      };
+      timed(ServerEvents.PeersDelta, roomSize(roomId), introduction, () => socket.to(roomId).emit(ServerEvents.PeersDelta, introduction));
 
       // Objects:snapshot goes to the JOINING socket only, unlike peers:snapshot
       // — an existing peer's knowledge of the room's objects doesn't change
@@ -249,22 +294,80 @@ export function registerSocketHandlers(deps: SocketHandlerDeps): void {
       // clientTs is passed for diagnostics only — see RoomManager.applyMove.
       const result = roomManager.applyMove(roomId, user.userId, parsed.data.position, parsed.data.clientTs);
       if (result && !result.accepted) {
-        const correction = { position: result.correctedPosition, reason: result.reason };
+        // access_denied carries no correctedPosition (nothing was ever
+        // accepted to correct away from) — report the peer's own current,
+        // unchanged position instead, so the client still has something
+        // valid to snap to; see RoomManager.applyMove's access-check docs.
+        const position = "correctedPosition" in result ? result.correctedPosition : (roomManager.getPeerPosition(roomId, user.userId) ?? parsed.data.position);
+        const correction = { position, reason: result.reason };
         timed(ServerEvents.MoveCorrection, toOne, correction, () => socket.emit(ServerEvents.MoveCorrection, correction));
       }
     });
 
-    socket.on(ClientEvents.SeatClaim, (raw, ack?: (res: unknown) => void) => {
+    socket.on(ClientEvents.MoveTo, async (raw) => {
+      const roomId = socket.data.roomId as string | undefined;
+      if (!roomId) return;
+
+      const parsed = MoveToEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+
+      await refreshRoleIfZoneRestricted(roomId, parsed.data.position);
+
+      const result = roomManager.teleportTo(roomId, user.userId, parsed.data.position);
+      if (result && !result.accepted) {
+        const position = "correctedPosition" in result ? result.correctedPosition : (roomManager.getPeerPosition(roomId, user.userId) ?? parsed.data.position);
+        const correction = { position, reason: result.reason };
+        timed(ServerEvents.MoveCorrection, toOne, correction, () => socket.emit(ServerEvents.MoveCorrection, correction));
+      }
+    });
+
+    socket.on(ClientEvents.SeatClaim, async (raw, ack?: (res: unknown) => void) => {
       const roomId = socket.data.roomId as string | undefined;
       if (!roomId) return ack?.({ error: "not_in_room" });
 
       const parsed = SeatClaimEventSchema.safeParse(raw);
       if (!parsed.success) return ack?.({ error: "invalid_payload" });
 
+      const info = roomManager.getRoomInfo(roomId);
+      const seat = info ? seatById(info.layout, parsed.data.seatId) : undefined;
+      if (seat) await refreshRoleIfZoneRestricted(roomId, seat.anchor);
+
       const result = roomManager.claimSeat(roomId, user.userId, parsed.data.seatId);
       if (!result) return ack?.({ error: "room_not_found" });
       if (!result.accepted) return ack?.({ error: result.reason });
       ack?.({ ok: true });
+    });
+
+    // Part 4B: auto-seat-within-table / nearby-seat search, plus "exact" for
+    // a client that wants to route every strategy through one event. Same
+    // ack-callback shape as seat:claim (a rejection is an expected outcome,
+    // not a transport failure) so the client's existing error-handling
+    // pattern extends here without inventing a second convention.
+    socket.on(ClientEvents.SeatSelect, async (raw, ack?: (res: unknown) => void) => {
+      const roomId = socket.data.roomId as string | undefined;
+      if (!roomId) return ack?.({ error: "not_in_room" });
+
+      const parsed = SeatSelectEventSchema.safeParse(raw);
+      if (!parsed.success) return ack?.({ error: "invalid_payload" });
+
+      const info = roomManager.getRoomInfo(roomId);
+      // Best-effort role refresh: use the exact seat's anchor when the
+      // request names one, otherwise the given search point — whichever the
+      // request actually supplies is the best guess at the destination
+      // available before the strategy resolves its real candidate. The
+      // candidate ultimately chosen still goes through checkZoneAccess
+      // inside RoomManager.selectSeat using whatever role snapshot is
+      // current at that point, exactly like seat:claim/move:to.
+      const refreshTarget =
+        "seatId" in parsed.data.target
+          ? info && seatById(info.layout, parsed.data.target.seatId)?.anchor
+          : parsed.data.target.point;
+      if (refreshTarget) await refreshRoleIfZoneRestricted(roomId, refreshTarget);
+
+      const result = roomManager.selectSeat(roomId, user.userId, parsed.data);
+      if (!result) return ack?.({ error: "room_not_found" });
+      if (result.outcome === "failed") return ack?.({ error: result.reason });
+      ack?.(result);
     });
 
     socket.on(ClientEvents.SeatRelease, (raw, ack?: (res: unknown) => void) => {

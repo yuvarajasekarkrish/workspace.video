@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { RoomLease } from "@workspace-video/realtime-core";
-import { openOffice1, DEFAULT_MOVEMENT_CONFIG, DEFAULT_LAYOUT_ID, resolveLayout, type ObjectState } from "@workspace-video/shared";
+import {
+  office300,
+  cosmicCampus100,
+  DEFAULT_MOVEMENT_CONFIG,
+  DEFAULT_LAYOUT_ID,
+  resolveLayout,
+  DEFAULT_WORKSPACE_SEATING_CONFIG,
+  type ObjectState,
+  type RoomLayout,
+  type WorkspaceSeatingConfig,
+} from "@workspace-video/shared";
 import { RoomManager, type RoomBroadcaster } from "../roomManager.js";
 import type { ObjectRepository } from "../objectPersistence.js";
 
@@ -128,6 +138,588 @@ describe("RoomManager", () => {
 
     const teleport = rm.applyMove("room1", "u1", { x: 9000, y: 9000 });
     expect(teleport?.accepted).toBe(false);
+  });
+
+  describe("applyMove — same-tick burst does not permanently freeze a peer (movement-validation race fix)", () => {
+    it("a max_speed_exceeded rejection leaves the peer's position and spatial index exactly where they were", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      // 0ms elapsed since admission — guaranteed max_speed_exceeded.
+      const rejected = rm.applyMove("room1", "u1", { x: 5000, y: 0 });
+      expect(rejected).toEqual({
+        accepted: false,
+        reason: "max_speed_exceeded",
+        correctedPosition: { x: 0, y: 0 },
+        nextAcceptedAtMs: expect.any(Number),
+        nextCreditMs: expect.any(Number),
+      });
+      // Position (the thing the server must stay authoritative about) is untouched.
+      expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 0, y: 0 });
+    });
+
+    it("out_of_bounds and access_denied rejections are unaffected — no credit or timestamp bookkeeping added", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      const bounds = DEFAULT_MOVEMENT_CONFIG;
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 10, y: 10 } }, 100);
+
+      const result = rm.applyMove("room1", "u1", { x: bounds.roomWidthPx + 500, y: -500 });
+      expect(result).toEqual({ accepted: false, reason: "out_of_bounds", correctedPosition: { x: bounds.roomWidthPx, y: 0 } });
+      expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 10, y: 10 });
+    });
+
+    it("teleportTo still resets moveCreditMs to 0 after a preceding rejection — no banked credit leaks across a teleport", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      // Bank close to the maximum possible credit via a legitimate move, then
+      // an immediate (same-tick) rejection that would, without the reset
+      // below, leave a large amount of credit sitting on the peer.
+      await new Promise((r) => setTimeout(r, 200));
+      rm.applyMove("room1", "u1", { x: 1, y: 0 }); // banks ~200ms of credit (capped at maxBurstMs)
+      const burst = rm.applyMove("room1", "u1", { x: 5000, y: 0 }); // same-tick-ish: still far too fast, rejected
+      expect(burst?.accepted).toBe(false);
+
+      rm.teleportTo("room1", "u1", { x: 4000, y: 4000 });
+
+      // If credit had leaked through the teleport, this large jump (with
+      // ~0ms elapsed since the teleport) would wrongly be accepted.
+      const afterTeleport = rm.applyMove("room1", "u1", { x: 4500, y: 4000 });
+      expect(afterTeleport?.accepted).toBe(false);
+    });
+
+    it("claimSeat still resets moveCreditMs to 0 after a preceding rejection", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      const seat = office300.seats.find((s) => s.label === "Desk 1")!;
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: seat.anchor }, 100);
+
+      rm.applyMove("room1", "u1", { x: seat.anchor.x + 5000, y: seat.anchor.y }); // rejected, banks a little credit
+      rm.claimSeat("room1", "u1", seat.id);
+
+      const afterClaim = rm.applyMove("room1", "u1", { x: seat.anchor.x + 4000, y: seat.anchor.y });
+      expect(afterClaim?.accepted).toBe(false);
+    });
+
+    it("recovers within a few real-paced cycles after a same-tick burst, instead of failing forever (real timing, not simulated)", async () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      // A real, normally-paced 50ms step (mid-walk, not idle-then-move).
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rm.applyMove("room1", "u1", { x: 75, y: 0 })?.accepted).toBe(true);
+
+      // A second real step, fired with no await — two synchronous calls land
+      // in the same (or adjacent) millisecond on a real clock, reproducing
+      // the drain this fix targets without fake timers.
+      const drained = rm.applyMove("room1", "u1", { x: 150, y: 0 });
+      expect(drained?.accepted).toBe(false);
+
+      // Real pacing resumes. The peer must not be stuck forever: it should
+      // catch up within a handful of ordinary 50ms cycles, well inside any
+      // real walk's timeout.
+      let recovered = false;
+      let x = 225;
+      for (let i = 0; i < 5 && !recovered; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        const result = rm.applyMove("room1", "u1", { x, y: 0 });
+        if (result?.accepted) recovered = true;
+        x += 75;
+      }
+      expect(recovered, "the peer must recover, not stay permanently rejected").toBe(true);
+    });
+  });
+
+  describe("teleportTo — discrete relocation (click-to-move, walk-to-person, walk-to-zone)", () => {
+    it("rejects a teleport for a peer that isn't in the room", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+
+      expect(rm.teleportTo("room1", "ghost", { x: 1, y: 1 })).toBeUndefined();
+    });
+
+    it("accepts a far-away in-bounds target instantly — no elapsed-time wait, unlike applyMove", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      // Far away but in-bounds (room is 8000x8000) — the same KIND of jump
+      // applyMove rejected above (line ~129) as too fast is accepted here,
+      // with zero elapsed time — proving this is genuinely a different
+      // validation path, not a relaxed version of the same one.
+      const result = rm.teleportTo("room1", "u1", { x: 7999, y: 7999 });
+      expect(result).toEqual({ accepted: true, position: { x: 7999, y: 7999 } });
+      expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 7999, y: 7999 });
+    });
+
+    it("rejects and clamps an out-of-bounds target, without moving the peer", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 10, y: 10 } }, 100);
+
+      const bounds = DEFAULT_MOVEMENT_CONFIG;
+      const result = rm.teleportTo("room1", "u1", { x: bounds.roomWidthPx + 500, y: -500 });
+      expect(result).toEqual({ accepted: false, reason: "out_of_bounds", correctedPosition: { x: bounds.roomWidthPx, y: 0 } });
+      // The peer never actually moved — a rejection must not silently relocate them.
+      expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 10, y: 10 });
+    });
+
+    it("does not trip a move:correction from a stale speed budget on the very next ordinary move", async () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 0, y: 0 } }, 100);
+
+      rm.teleportTo("room1", "u1", { x: 7999, y: 7999 });
+      emitted.length = 0;
+
+      // Real elapsed time, matching how a throttled client actually behaves
+      // (same note as the applyMove test above).
+      await new Promise((r) => setTimeout(r, 20));
+      const afterTeleport = rm.applyMove("room1", "u1", { x: 7995, y: 7999 });
+      expect(afterTeleport?.accepted).toBe(true);
+      expect(emitted.some((e) => e.event === "move:correction")).toBe(false);
+    });
+
+    it("releases a held seat, matching applyMove's implicit-stand-up-on-move rule", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      const deskSeats = office300.seats.filter((s) => s.label === "Desk 1");
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskSeats[0]!.anchor }, 100);
+      rm.claimSeat("room1", "u1", deskSeats[0]!.id);
+      expect(rm.seatsSnapshot("room1")).toContainEqual({ seatId: deskSeats[0]!.id, userId: "u1" });
+
+      rm.teleportTo("room1", "u1", { x: 500, y: 500 });
+      expect(rm.seatsSnapshot("room1")).toEqual([]);
+    });
+  });
+
+  describe("destination access control (Part 4A) — restricted zones", () => {
+    // A minimal layout with one open zone and one restricted zone (owner/admin
+    // only), so these tests exercise real zone-access data, not a mocked check.
+    const RESTRICTED_LAYOUT: RoomLayout = {
+      id: "test-restricted@1",
+      floor: { cols: 10, rows: 10 },
+      spawnZoneId: "open-zone",
+      furniture: [],
+      seats: [
+        { id: "vip-seat", label: "VIP", anchor: { x: 500, y: 500 }, zoneId: "vip-zone" },
+        { id: "lobby-seat", label: "Lobby", anchor: { x: 50, y: 50 }, zoneId: "open-zone" },
+      ],
+      zones: [
+        { id: "open-zone", label: "Open", kind: "open", rect: { col: 0, row: 0, cols: 10, rows: 3 } },
+        {
+          id: "vip-zone",
+          label: "VIP Room",
+          kind: "meeting",
+          rect: { col: 0, row: 3, cols: 10, rows: 7 },
+          access: { kind: "restricted", allowedRoles: ["owner", "admin"] },
+        },
+      ],
+    };
+
+    function peer(userId: string, position: { x: number; y: number }, socketId = `s-${userId}`) {
+      return { userId, name: userId, avatarUrl: null, socketId, position };
+    }
+
+    describe("teleportTo", () => {
+      it("refuses a role not on the zone's allow-list, and leaves the peer's position unchanged", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 50, y: 50 }), role: "member" }, 100);
+
+        const result = rm.teleportTo("room1", "u1", { x: 500, y: 500 });
+
+        expect(result).toEqual({ accepted: false, reason: "access_denied" });
+        expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 50, y: 50 });
+      });
+
+      it("allows a role on the zone's allow-list", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 50, y: 50 }), role: "admin" }, 100);
+
+        const result = rm.teleportTo("room1", "u1", { x: 500, y: 500 });
+
+        expect(result).toEqual({ accepted: true, position: { x: 500, y: 500 } });
+        expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 500, y: 500 });
+      });
+
+      it("denies someone with no known role at all (fails closed, not open)", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", peer("u1", { x: 50, y: 50 }), 100); // no `role` field at all
+
+        expect(rm.teleportTo("room1", "u1", { x: 500, y: 500 })).toEqual({ accepted: false, reason: "access_denied" });
+      });
+
+      it("does not release a currently-held seat when the destination is denied", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 50, y: 50 }), role: "member" }, 100);
+        rm.claimSeat("room1", "u1", "lobby-seat");
+        expect(rm.seatsSnapshot("room1")).toContainEqual({ seatId: "lobby-seat", userId: "u1" });
+
+        const result = rm.teleportTo("room1", "u1", { x: 500, y: 500 }); // denied: member can't enter vip-zone
+
+        expect(result).toEqual({ accepted: false, reason: "access_denied" });
+        expect(rm.seatsSnapshot("room1")).toContainEqual({ seatId: "lobby-seat", userId: "u1" });
+      });
+    });
+
+    describe("claimSeat", () => {
+      it("refuses a role not on the zone's allow-list, without claiming the seat", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 500, y: 500 }), role: "designer" }, 100);
+
+        const result = rm.claimSeat("room1", "u1", "vip-seat");
+
+        expect(result).toEqual({ accepted: false, reason: "access_denied" });
+        expect(rm.seatsSnapshot("room1")).toEqual([]);
+      });
+
+      it("allows a role on the zone's allow-list", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 500, y: 500 }), role: "owner" }, 100);
+
+        expect(rm.claimSeat("room1", "u1", "vip-seat")).toEqual({ accepted: true, seatId: "vip-seat", previousSeatId: null });
+      });
+    });
+
+    describe("applyMove (WASD)", () => {
+      it("refuses a move into the restricted zone and leaves the position unchanged", async () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 50, y: 50 }), role: "member" }, 100);
+
+        await new Promise((r) => setTimeout(r, 20)); // real elapsed time — see the applyMove timing note elsewhere in this file
+        const result = rm.applyMove("room1", "u1", { x: 500, y: 500 });
+
+        expect(result).toEqual({ accepted: false, reason: "access_denied" });
+        expect(rm.snapshot("room1")[0]!.position).toEqual({ x: 50, y: 50 });
+      });
+
+      it("allows a move into the restricted zone for an allowed role", async () => {
+        // Starts right at the open/restricted boundary (open-zone rows0-3 ->
+        // y:[0,480); vip-zone rows3-10 -> y:[480,1600)) so the move itself is
+        // tiny — this test is about access, not about surviving the speed
+        // check too.
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", { ...peer("u1", { x: 50, y: 479 }), role: "owner" }, 100);
+
+        await new Promise((r) => setTimeout(r, 20));
+        expect(rm.applyMove("room1", "u1", { x: 50, y: 481 })?.accepted).toBe(true);
+      });
+
+      it("uses a bounded-staleness snapshot: setPeerRole updates it without needing a rejoin", async () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+        rm.admitAndAddPeer("room1", peer("u1", { x: 50, y: 479 }), 100); // no role yet
+
+        await new Promise((r) => setTimeout(r, 20));
+        // Denied and rejected BEFORE the position update — the peer is still
+        // at (50,479), so the next attempt is just as small a move.
+        expect(rm.applyMove("room1", "u1", { x: 50, y: 481 })).toEqual({ accepted: false, reason: "access_denied" });
+
+        rm.setPeerRole("room1", "u1", "owner");
+        await new Promise((r) => setTimeout(r, 20));
+        expect(rm.applyMove("room1", "u1", { x: 50, y: 481 })?.accepted).toBe(true);
+      });
+    });
+
+    it("an ordinary open zone (no access field — every zone before Part 4A) admits any role, including none at all", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, RESTRICTED_LAYOUT);
+      rm.admitAndAddPeer("room1", peer("u1", { x: 50, y: 50 }), 100); // no role at all
+
+      expect(rm.teleportTo("room1", "u1", { x: 100, y: 100 })).toEqual({ accepted: true, position: { x: 100, y: 100 } });
+    });
+  });
+
+  describe("selectSeat (Part 4B) — auto-seating strategies", () => {
+    const deskSeats = office300.seats.filter((s) => s.label === "Desk 1");
+    const [deskA, deskB] = deskSeats;
+    const deskTableCenter = { x: (deskA!.anchor.x + deskB!.anchor.x) / 2, y: (deskA!.anchor.y + deskB!.anchor.y) / 2 };
+
+    function configWith(overrides: Partial<WorkspaceSeatingConfig>): WorkspaceSeatingConfig {
+      return { ...DEFAULT_WORKSPACE_SEATING_CONFIG, ...overrides };
+    }
+
+    it("exact strategy behaves identically to claimSeat, including its failure reasons", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskA!.anchor }, 100);
+
+      expect(rm.selectSeat("room1", "u1", { strategy: "exact", target: { seatId: deskA!.id } })).toEqual({
+        outcome: "seated",
+        seatId: deskA!.id,
+      });
+      expect(rm.selectSeat("room1", "u1", { strategy: "exact", target: { seatId: "no-such-seat" } })).toEqual({
+        outcome: "failed",
+        reason: "unknown_seat",
+      });
+    });
+
+    it("refuses every strategy the workspace config has not enabled, without trying it", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+      // seatingConfig defaults to DEFAULT_WORKSPACE_SEATING_CONFIG — every optional strategy off.
+
+      expect(rm.selectSeat("room1", "u1", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } })).toEqual({
+        outcome: "failed",
+        reason: "not_enabled",
+      });
+      expect(rm.selectSeat("room1", "u1", { strategy: "nearbySearch", target: { point: deskTableCenter } })).toEqual({
+        outcome: "failed",
+        reason: "not_enabled",
+      });
+    });
+
+    it("standing/waitlist/group seating are always refused, even if a workspace tried to enable them", () => {
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+      rm.setSeatingConfig("room1", configWith({ standingFallbackEnabled: true, waitlistEnabled: true, groupSeatingEnabled: true }));
+
+      expect(rm.selectSeat("room1", "u1", { strategy: "standingFallback", target: { point: deskTableCenter } })).toEqual({
+        outcome: "failed",
+        reason: "not_supported",
+      });
+      expect(rm.selectSeat("room1", "u1", { strategy: "waitlist", target: { point: deskTableCenter } })).toEqual({
+        outcome: "failed",
+        reason: "not_supported",
+      });
+      expect(rm.selectSeat("room1", "u1", { strategy: "groupSeating", target: { point: deskTableCenter } })).toEqual({
+        outcome: "failed",
+        reason: "not_supported",
+      });
+    });
+
+    describe("autoSeatWithinTable", () => {
+      it("seats the requester in the OTHER free seat at the same table when the seed seat is taken", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: deskTableCenter }, 100);
+
+        expect(rm.claimSeat("room1", "u1", deskA!.id)).toEqual({ accepted: true, seatId: deskA!.id, previousSeatId: null });
+
+        const result = rm.selectSeat("room1", "u2", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } });
+        expect(result).toEqual({ outcome: "seated", seatId: deskB!.id });
+      });
+
+      it("resolves the seed seat from a clicked point on the table, not just an exact seatId", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+
+        const result = rm.selectSeat("room1", "u1", { strategy: "autoSeatWithinTable", target: { point: deskTableCenter } })!;
+        expect(result.outcome).toBe("seated");
+        expect([deskA!.id, deskB!.id]).toContain((result as { seatId: string }).seatId);
+      });
+
+      it("fails with table_full when every seat at the table is already taken by someone else", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: deskTableCenter }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u3", name: "Cy", avatarUrl: null, socketId: "s3", position: deskTableCenter }, 100);
+        rm.claimSeat("room1", "u1", deskA!.id);
+        rm.claimSeat("room1", "u2", deskB!.id);
+
+        const result = rm.selectSeat("room1", "u3", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } });
+        expect(result).toEqual({ outcome: "failed", reason: "table_full" });
+      });
+
+      it("two concurrent requests for the same table's last free seat never both succeed (no duplicate assignment)", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: deskTableCenter }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u3", name: "Cy", avatarUrl: null, socketId: "s3", position: deskTableCenter }, 100);
+        rm.claimSeat("room1", "u1", deskA!.id); // one seat already taken; only deskB is free
+
+        // Node runs each synchronous selectSeat call to completion before the
+        // next starts — this is the same single-threaded guarantee that
+        // makes claimSeat's own first-writer-wins property hold, exercised
+        // here for two DIFFERENT users racing the SAME table's last seat.
+        const first = rm.selectSeat("room1", "u2", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } })!;
+        const second = rm.selectSeat("room1", "u3", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } })!;
+
+        const outcomes = [first.outcome, second.outcome].sort();
+        expect(outcomes).toEqual(["failed", "seated"]);
+        expect(rm.seatsSnapshot("room1").filter((s) => s.seatId === deskB!.id)).toHaveLength(1);
+      });
+
+      it("re-selecting your own already-held seat at the table is a harmless no-op, not a conflict", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+        rm.claimSeat("room1", "u1", deskA!.id);
+
+        const result = rm.selectSeat("room1", "u1", { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } });
+        expect(result).toEqual({ outcome: "seated", seatId: deskA!.id });
+      });
+    });
+
+    describe("nearbySearch", () => {
+      it("seats the requester in the nearest free seat within the configured radius", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ nearbySearchEnabled: true, nearbySearchRadiusPx: 200 }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+
+        const result = rm.selectSeat("room1", "u1", { strategy: "nearbySearch", target: { point: deskTableCenter } })!;
+        expect(result.outcome).toBe("seated");
+        expect([deskA!.id, deskB!.id]).toContain((result as { seatId: string }).seatId);
+      });
+
+      it("fails with no_seat_nearby when nothing free exists within the configured radius", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ nearbySearchEnabled: true, nearbySearchRadiusPx: 1 }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskTableCenter }, 100);
+
+        const result = rm.selectSeat("room1", "u1", { strategy: "nearbySearch", target: { point: deskTableCenter } });
+        expect(result).toEqual({ outcome: "failed", reason: "no_seat_nearby" });
+      });
+
+      it("skips a seat occupied by someone else and finds the next nearest free one", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+        rm.setSeatingConfig("room1", configWith({ nearbySearchEnabled: true, nearbySearchRadiusPx: 200 }));
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: deskA!.anchor }, 100);
+        rm.admitAndAddPeer("room1", { userId: "u2", name: "Bo", avatarUrl: null, socketId: "s2", position: deskTableCenter }, 100);
+        rm.claimSeat("room1", "u1", deskA!.id);
+
+        const result = rm.selectSeat("room1", "u2", { strategy: "nearbySearch", target: { point: deskTableCenter } });
+        expect(result).toEqual({ outcome: "seated", seatId: deskB!.id });
+      });
+    });
+
+    describe("on Cosmic Campus — 100 (explicit table groups)", () => {
+      const exec = cosmicCampus100.furniture.find((f) => f.id === "cosmic-t8-01")!;
+      const execSeats = cosmicCampus100.seats.filter((s) => s.tableId === exec.id);
+      const execCenter = { x: exec.x + exec.width / 2, y: exec.y + exec.height / 2 };
+
+      it("claims an exact seat and places the peer on that seat's anchor, regardless of the chair's visual scale", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, cosmicCampus100);
+        const seat = execSeats[0]!;
+        rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: seat.anchor }, 100);
+
+        expect(rm.claimSeat("room1", "u1", seat.id)).toEqual({ accepted: true, seatId: seat.id, previousSeatId: null });
+        expect(rm.getPeerPosition("room1", "u1")).toEqual(seat.anchor);
+      });
+
+      it("auto-seats only within the same 8-seat table (explicit tableId), filling seats until the table is full", () => {
+        const { broadcaster } = fakeBroadcaster();
+        const rm = createManager(broadcaster, fakeLease(), "instance-a");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, cosmicCampus100);
+        rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true }));
+        expect(execSeats).toHaveLength(8);
+
+        // The server's claim radius (resolveSeatClaim, 120px) is unchanged: this table is wider than that, so each
+        // person stands at a chair of the table, as someone walking up to it would.
+        const seated = new Set<string>();
+        for (let i = 0; i < 8; i++) {
+          const userId = `u${i}`;
+          rm.admitAndAddPeer("room1", { userId, name: userId, avatarUrl: null, socketId: `s${i}`, position: execSeats[i]!.anchor }, 100);
+          const result = rm.selectSeat("room1", userId, { strategy: "autoSeatWithinTable", target: { seatId: execSeats[0]!.id } })!;
+          expect(result.outcome).toBe("seated");
+          seated.add((result as { seatId: string }).seatId);
+        }
+        expect([...seated].sort()).toEqual(execSeats.map((s) => s.id).sort());
+
+        rm.admitAndAddPeer("room1", { userId: "late", name: "late", avatarUrl: null, socketId: "s-late", position: execCenter }, 100);
+        expect(rm.selectSeat("room1", "late", { strategy: "autoSeatWithinTable", target: { seatId: execSeats[0]!.id } })).toEqual({
+          outcome: "failed",
+          reason: "table_full",
+        });
+      });
+    });
+
+    it("respects Part 4A destination access control — a restricted zone refuses auto-seating exactly like an exact claim", () => {
+      const restricted: RoomLayout = {
+        id: "test-restricted-seating@1",
+        floor: { cols: 10, rows: 10 },
+        spawnZoneId: "open-zone",
+        furniture: [],
+        seats: [
+          { id: "vip-a", label: "VIP", anchor: { x: 500, y: 500 }, zoneId: "vip-zone" },
+          { id: "vip-b", label: "VIP", anchor: { x: 520, y: 500 }, zoneId: "vip-zone" },
+        ],
+        zones: [
+          { id: "open-zone", label: "Open", kind: "open", rect: { col: 0, row: 0, cols: 10, rows: 3 } },
+          {
+            id: "vip-zone",
+            label: "VIP Room",
+            kind: "meeting",
+            rect: { col: 0, row: 3, cols: 10, rows: 7 },
+            access: { kind: "restricted", allowedRoles: ["owner", "admin"] },
+          },
+        ],
+      };
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, restricted);
+      rm.setSeatingConfig("room1", configWith({ autoSeatWithinTableEnabled: true, nearbySearchEnabled: true, nearbySearchRadiusPx: 200 }));
+      rm.admitAndAddPeer("room1", { userId: "u1", name: "Ann", avatarUrl: null, socketId: "s1", position: { x: 500, y: 500 }, role: "member" }, 100);
+
+      expect(rm.selectSeat("room1", "u1", { strategy: "autoSeatWithinTable", target: { seatId: "vip-a" } })).toEqual({
+        outcome: "failed",
+        reason: "access_denied",
+      });
+      expect(rm.selectSeat("room1", "u1", { strategy: "nearbySearch", target: { point: { x: 500, y: 500 } } })).toEqual({
+        outcome: "failed",
+        reason: "access_denied",
+      });
+      expect(rm.seatsSnapshot("room1")).toEqual([]);
+    });
   });
 
   it("tick emits a batched peers:delta only for peers whose position changed", async () => {
@@ -717,12 +1309,24 @@ describe("RoomManager", () => {
       expect(rm.admitAndAddPeer("room2", peer("u3"), 2).admitted).toBe(false);
     });
 
+    // A short real debounce (see RoomManager's occupancyBroadcastDebounceMs
+    // constructor param docs) so these tests can await a small real delay
+    // instead of needing fake timers, while still exercising the actual
+    // coalescing behavior rather than debounceMs: 0 (which would collapse
+    // to "fires on the next tick" and never actually prove batching).
+    const OCCUPANCY_DEBOUNCE_MS = 20;
+    function createDebouncedManager(broadcaster: RoomBroadcaster, lease: RoomLease): RoomManager {
+      return createManager(broadcaster, lease, "instance-a", undefined, undefined, undefined, undefined, OCCUPANCY_DEBOUNCE_MS);
+    }
+    const afterDebounce = () => new Promise<void>((resolve) => setTimeout(resolve, OCCUPANCY_DEBOUNCE_MS * 2));
+
     it("broadcasts occupancy:update on admit and on leave", async () => {
       const { broadcaster, emitted } = fakeBroadcaster();
-      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      const rm = createDebouncedManager(broadcaster, fakeLease());
       rm.ensureRoom("room1", "ws1");
 
       rm.admitAndAddPeer("room1", peer("u1"), 5);
+      await afterDebounce();
       expect(emitted).toContainEqual({
         target: "room1",
         event: "occupancy:update",
@@ -730,14 +1334,44 @@ describe("RoomManager", () => {
       });
 
       rm.admitAndAddPeer("room1", peer("u2"), 5);
+      await afterDebounce();
       emitted.length = 0;
       await rm.removePeer("room1", "u1");
+      await afterDebounce();
 
       expect(emitted).toContainEqual({
         target: "room1",
         event: "occupancy:update",
         payload: { roomId: "room1", active: 1, limit: 5 },
       });
+    });
+
+    it("coalesces a burst of admits into exactly one occupancy:update broadcast", async () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createDebouncedManager(broadcaster, fakeLease());
+      rm.ensureRoom("room1", "ws1");
+
+      rm.admitAndAddPeer("room1", peer("u1"), 5);
+      rm.admitAndAddPeer("room1", peer("u2"), 5);
+      rm.admitAndAddPeer("room1", peer("u3"), 5);
+      await afterDebounce();
+
+      const occupancyEmits = emitted.filter((e) => e.event === "occupancy:update");
+      expect(occupancyEmits).toHaveLength(1);
+      expect(occupancyEmits[0]!.payload).toEqual({ roomId: "room1", active: 3, limit: 5 });
+    });
+
+    it("clears a pending occupancy broadcast timer on eviction, never touching an evicted room", async () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createDebouncedManager(broadcaster, fakeLease());
+      rm.ensureRoom("room1", "ws1");
+      rm.admitAndAddPeer("room1", peer("u1"), 5);
+      await rm.removePeer("room1", "u1"); // empties the room -> evicts it
+
+      emitted.length = 0;
+      await afterDebounce(); // if the pending timer weren't cleared, it would fire here against a gone room
+
+      expect(emitted.filter((e) => e.event === "occupancy:update")).toHaveLength(0);
     });
 
     it("occupancy() reports zeros for a room that doesn't exist", () => {
@@ -784,7 +1418,7 @@ describe("RoomManager", () => {
     // The two chairs at "Desk 1" — close enough together (well within the
     // seat claim radius) to exercise re-seating without also having to
     // simulate walking across the room between claims.
-    const desk1Seats = openOffice1.seats.filter((s) => s.label === "Desk 1");
+    const desk1Seats = office300.seats.filter((s) => s.label === "Desk 1");
     const seat = desk1Seats[0]!;
     const otherSeat = desk1Seats[1]!;
 
@@ -804,7 +1438,7 @@ describe("RoomManager", () => {
       try {
         const { broadcaster } = fakeBroadcaster();
         const rm = createManager(broadcaster, fakeLease(), "instance-a");
-        rm.ensureRoom("room1", "ws1");
+        rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
         rm.admitAndAddPeer("room1", peer("u1"), 100); // acceptedAtMs = t0
 
         vi.advanceTimersByTime(10_000); // far enough that a stale window would allow almost anything
@@ -822,7 +1456,7 @@ describe("RoomManager", () => {
     it("rejects claiming an unknown seat", () => {
       const { broadcaster } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
 
       expect(rm.claimSeat("room1", "u1", "no-such-seat")).toEqual({
@@ -834,7 +1468,7 @@ describe("RoomManager", () => {
     it("rejects claiming a seat someone else already occupies", () => {
       const { broadcaster } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.admitAndAddPeer("room1", peer("u2"), 100);
 
@@ -845,17 +1479,36 @@ describe("RoomManager", () => {
     it("rejects a claim from outside the seat's claim radius", () => {
       const { broadcaster } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       // Far from every seat in the layout.
       rm.admitAndAddPeer("room1", peer("u1", { x: seat.anchor.x + 1000, y: seat.anchor.y + 1000 }), 100);
 
       expect(rm.claimSeat("room1", "u1", seat.id)).toEqual({ accepted: false, reason: "out_of_range" });
     });
 
+    it("claiming a specific seat in a many-seat room always gives exactly that seat — no reassignment to another free one", () => {
+      // The Boardroom has 20 real seats — proves this holds for a genuinely
+      // multi-seat area, not just a 2-seat desk. No auto-pick/nearest-free
+      // logic exists anywhere in claimSeat/resolveSeatClaim: the requested
+      // seatId is either accepted exactly as asked, or refused outright.
+      const boardroomSeats = office300.seats.filter((s) => s.zoneId === "meet-a-zone");
+      expect(boardroomSeats.length).toBeGreaterThanOrEqual(5);
+      const chosen = boardroomSeats[2]!; // the "preferred" seat out of several free ones
+      const { broadcaster } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", peer("u1", chosen.anchor), 100);
+
+      const result = rm.claimSeat("room1", "u1", chosen.id);
+
+      expect(result).toEqual({ accepted: true, seatId: chosen.id, previousSeatId: null });
+      expect(rm.seatsSnapshot("room1")).toEqual([{ seatId: chosen.id, userId: "u1" }]);
+    });
+
     it("re-seating releases the previous seat and broadcasts both updates", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.claimSeat("room1", "u1", seat.id);
 
@@ -882,7 +1535,7 @@ describe("RoomManager", () => {
     it("removePeer frees the seat while other peers remain in the room", async () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.admitAndAddPeer("room1", peer("u2", otherSeat.anchor), 100);
       rm.claimSeat("room1", "u1", seat.id);
@@ -906,7 +1559,7 @@ describe("RoomManager", () => {
     it("a move from a seated peer implicitly releases the seat", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.claimSeat("room1", "u1", seat.id);
 
@@ -924,7 +1577,7 @@ describe("RoomManager", () => {
     it("seat:release is idempotent — releasing twice (or with no seat held) is a harmless no-op", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.claimSeat("room1", "u1", seat.id);
 
@@ -940,7 +1593,7 @@ describe("RoomManager", () => {
     it("seatsSnapshot reflects current occupancy for a joining client", () => {
       const { broadcaster } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1"), 100);
       rm.claimSeat("room1", "u1", seat.id);
 
@@ -949,15 +1602,15 @@ describe("RoomManager", () => {
   });
 
   describe("zone audio", () => {
-    // "no zone" reference area: openOffice1's desk grid (col0-2,row3-8) has
-    // no covering LayoutZone. Meeting Room A is col0-3,row0-2 -> world px
-    // x:[0,640), y:[0,480).
-    const OUTSIDE_A = { x: 50, y: 600 };
-    const OUTSIDE_B = { x: 50, y: 1200 }; // 600px from OUTSIDE_A — beyond audioRadius (500)
-    const INSIDE_MEETING_A = { x: 10, y: 100 };
-    const INSIDE_MEETING_B = { x: 610, y: 100 }; // 600px from INSIDE_MEETING_A — SAME distance as outside
-    const JUST_OUTSIDE_HYSTERESIS_A = { x: 50, y: 600 };
-    const JUST_OUTSIDE_HYSTERESIS_B = { x: 50, y: 1110 }; // 510px — inside audioRadius+hysteresis (525) but outside audioRadius (500)
+    // "no zone" reference area: office300's "floor" desk grid (col0,row4,cols4,rows4)
+    // has no covering LayoutZone -> world px x:[0,640), y:[640,1280). The
+    // Boardroom (meet-a-zone) is col0,row0,cols4,rows4 -> world px x:[0,640), y:[0,640).
+    const OUTSIDE_A = { x: 50, y: 650 };
+    const OUTSIDE_B = { x: 50, y: 1250 }; // 600px from OUTSIDE_A — beyond audioRadius (500)
+    const INSIDE_MEETING_A = { x: 10, y: 20 };
+    const INSIDE_MEETING_B = { x: 610, y: 20 }; // 600px from INSIDE_MEETING_A — SAME distance as outside
+    const JUST_OUTSIDE_HYSTERESIS_A = { x: 50, y: 650 };
+    const JUST_OUTSIDE_HYSTERESIS_B = { x: 50, y: 1160 }; // 510px — inside audioRadius+hysteresis (525) but outside audioRadius (500)
 
     function peer(userId: string, position: { x: number; y: number }, socketId = `s-${userId}`) {
       return { userId, name: userId, avatarUrl: null, socketId, position };
@@ -966,7 +1619,7 @@ describe("RoomManager", () => {
     it("a zone crossing between two people at a CONSTANT pairwise distance still emits — tickProximity alone would report no change", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1", OUTSIDE_A), 100);
       rm.admitAndAddPeer("room1", peer("u2", OUTSIDE_B), 100);
       rm.runTickForTest("room1"); // caches raw NOT_NEARBY (600px > audioRadius 500) for this pair
@@ -988,7 +1641,7 @@ describe("RoomManager", () => {
     it("emits zone:changed to a peer's own socket when they cross a zone boundary", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1", OUTSIDE_A), 100);
       rm.runTickForTest("room1");
 
@@ -997,13 +1650,13 @@ describe("RoomManager", () => {
       rm.runTickForTest("room1");
 
       const zoneChanged = emitted.find((e) => e.target === "s-u1" && e.event === "zone:changed");
-      expect(zoneChanged?.payload).toMatchObject({ zone: { label: "Meeting Room A", kind: "meeting" } });
+      expect(zoneChanged?.payload).toMatchObject({ zone: { label: "Boardroom", kind: "meeting" } });
     });
 
     it("a zone override never mutates the RAW cached proximity state, and leaving leaves no phantom hysteresis", () => {
       const { broadcaster } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1", OUTSIDE_A), 100);
       rm.admitAndAddPeer("room1", peer("u2", OUTSIDE_B), 100);
       rm.runTickForTest("room1");
@@ -1040,7 +1693,7 @@ describe("RoomManager", () => {
     it("zoneOf is pruned on removePeer — a rejoining user in the SAME zone is treated as a fresh entry", async () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       // u2 stays in the room throughout so removePeer("u1") doesn't evict
       // the whole room (which would otherwise wipe zoneOf for a different,
       // uninteresting reason) — isolating the actual pruning behavior.
@@ -1059,13 +1712,13 @@ describe("RoomManager", () => {
       // socket — exactly the rejoin bug proximityStates' own pruning
       // (roomManager.ts:172-176) already guards against.
       const zoneChanged = emitted.find((e) => e.target === "s1-new" && e.event === "zone:changed");
-      expect(zoneChanged?.payload).toMatchObject({ zone: { label: "Meeting Room A" } });
+      expect(zoneChanged?.payload).toMatchObject({ zone: { label: "Boardroom" } });
     });
 
     it("lastEmittedAudio is pruned on removePeer — a rejoining user's new socket still receives the current state", async () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("u1", INSIDE_MEETING_A, "s1"), 100);
       rm.admitAndAddPeer("room1", peer("u2", INSIDE_MEETING_B, "s-u2"), 100);
       rm.runTickForTest("room1"); // caches full-gain lastEmittedAudio for both directions
@@ -1087,14 +1740,14 @@ describe("RoomManager", () => {
     // All Hands: stage rect col4,row0,cols3,rows1 -> world x:[640,1120) y:[0,160).
     // Audience rect col4,row1,cols3,rows2 -> world x:[640,1120) y:[160,480).
     const ON_STAGE = { x: 641, y: 1 };
-    const FAR_AUDIENCE_CORNER = { x: 1119, y: 479 }; // ~676px from ON_STAGE — NOT a grid candidate (cell 525px)
+    const FAR_AUDIENCE_CORNER = { x: 1279, y: 639 }; // ~902px from ON_STAGE — NOT a grid candidate (cell 525px)
     const NEUTRAL_1 = { x: 50, y: 700 };
     const NEUTRAL_2 = { x: 50, y: 1300 };
 
     it("an audience member hears a stage speaker at full gain even though they are physically far apart (not a grid neighbour)", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("speaker", NEUTRAL_1, "s-speaker"), 100);
       rm.admitAndAddPeer("room1", peer("listener", NEUTRAL_2, "s-listener"), 100);
       rm.runTickForTest("room1");
@@ -1126,7 +1779,7 @@ describe("RoomManager", () => {
     it("leaving the audience zone (while still far from the stage) correctly reverts to muted, not stuck at full gain", () => {
       const { broadcaster, emitted } = fakeBroadcaster();
       const rm = createManager(broadcaster, fakeLease(), "instance-a");
-      rm.ensureRoom("room1", "ws1");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
       rm.admitAndAddPeer("room1", peer("speaker", ON_STAGE, "s-speaker"), 100);
       rm.admitAndAddPeer("room1", peer("listener", FAR_AUDIENCE_CORNER, "s-listener"), 100);
       rm.runTickForTest("room1"); // listener now hears speaker at full gain
@@ -1138,6 +1791,55 @@ describe("RoomManager", () => {
 
       const audioToListener = emitted.find((e) => e.target === "s-listener" && e.event === "proximity:update");
       expect(audioToListener?.payload).toMatchObject({ peerId: "speaker", audioSubscribed: false });
+    });
+
+    // Collaboration tables: col12,row4,cols4,rows4 -> world x:[1920,2560) y:[640,1280),
+    // a single `open`-kind zone (see office300.ts, modules.ts's collabTables).
+    // Same correctness property as the stage/audience pair above: effectiveAudio
+    // (zoneAudio.ts) grants FULL_GAIN to any two same-zone `open` occupants
+    // regardless of in-zone distance — this is what zoneRecheckCounterparts's
+    // "open" branch exists to enforce, and what makes restricting it to grid
+    // neighbours (a rejected optimization idea) unsafe.
+    const OPEN_A = { x: 1930, y: 650 };
+    const OPEN_B = { x: 2550, y: 1270 }; // ~877px from OPEN_A — well beyond audioRadius+hysteresis (525) and the grid cell size
+    const OPEN_NEUTRAL = { x: 50, y: 650 }; // outside the collab zone entirely, still far from OPEN_A
+
+    it("two open-zone occupants hear each other at full gain even though they are physically far apart (not a grid neighbour)", () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", peer("a", OUTSIDE_A), 100);
+      rm.admitAndAddPeer("room1", peer("b", OUTSIDE_B), 100);
+      rm.runTickForTest("room1");
+
+      expect(Math.hypot(OPEN_A.x - OPEN_B.x, OPEN_A.y - OPEN_B.y)).toBeGreaterThan(525);
+
+      emitted.length = 0;
+      rm.admitAndAddPeer("room1", peer("a", OPEN_A), 100);
+      rm.admitAndAddPeer("room1", peer("b", OPEN_B), 100);
+      rm.runTickForTest("room1");
+
+      const audioToA = emitted.find((e) => e.target === "s-a" && e.event === "proximity:update");
+      const audioToB = emitted.find((e) => e.target === "s-b" && e.event === "proximity:update");
+      expect(audioToA?.payload).toMatchObject({ peerId: "b", audioSubscribed: true, audioGain: 1 });
+      expect(audioToB?.payload).toMatchObject({ peerId: "a", audioSubscribed: true, audioGain: 1 });
+    });
+
+    it("leaving the open zone (while still far from the other occupant) correctly reverts to muted, not stuck at full gain", () => {
+      const { broadcaster, emitted } = fakeBroadcaster();
+      const rm = createManager(broadcaster, fakeLease(), "instance-a");
+      rm.ensureRoom("room1", "ws1", DEFAULT_MOVEMENT_CONFIG, office300);
+      rm.admitAndAddPeer("room1", peer("a", OPEN_A), 100);
+      rm.admitAndAddPeer("room1", peer("b", OPEN_B), 100);
+      rm.runTickForTest("room1"); // b now hears a at full gain (open-zone override)
+
+      emitted.length = 0;
+      // b leaves the "floor" open zone but stays just as far away from a.
+      rm.admitAndAddPeer("room1", peer("b", OPEN_NEUTRAL), 100);
+      rm.runTickForTest("room1");
+
+      const audioToB = emitted.find((e) => e.target === "s-b" && e.event === "proximity:update");
+      expect(audioToB?.payload).toMatchObject({ peerId: "a", audioSubscribed: false });
     });
   });
 
@@ -1210,7 +1912,7 @@ describe("RoomManager", () => {
     // Meeting Room A: world x:[0,640) y:[0,480). Meeting Room B is a
     // separate private zone elsewhere on the floor — use the "no zone" desk
     // grid area (col0-2,row3-8) as a stand-in "different private zone" via
-    // Meeting Room A vs Cabin 1 (a real second private zone in openOffice1).
+    // Meeting Room A vs Cabin 1 (a real second private zone in office300).
     const RAW_NEARBY = { a: { x: 0, y: 700 }, b: { x: 50, y: 700 } }; // 50px apart, no zone
     const RAW_FAR = { a: { x: 0, y: 700 }, b: { x: 4000, y: 4000 } };
     const MEETING_A_1 = { x: 10, y: 100 };

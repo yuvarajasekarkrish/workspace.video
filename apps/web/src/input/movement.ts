@@ -41,28 +41,6 @@ export function integrateKeyboardMove(
   );
 }
 
-/** Steps a position toward a click-to-walk target at WALK_SPEED_PX_PER_SEC,
- *  never overshooting it — shares the same speed as keyboard movement so
- *  neither input mode can outrun the server's speed validator. */
-export function stepTowardWalkTarget(
-  position: Vec2,
-  target: Vec2,
-  dtSeconds: number,
-  bounds: MovementConfig = DEFAULT_MOVEMENT_CONFIG,
-): Vec2 {
-  const dx = target.x - position.x;
-  const dy = target.y - position.y;
-  const distanceToTarget = Math.hypot(dx, dy);
-  const maxStep = WALK_SPEED_PX_PER_SEC * dtSeconds;
-
-  if (distanceToTarget <= maxStep || distanceToTarget === 0) {
-    return clampToBounds(target, bounds);
-  }
-
-  const t = maxStep / distanceToTarget;
-  return clampToBounds({ x: position.x + dx * t, y: position.y + dy * t }, bounds);
-}
-
 /**
  * Decides whether a `move` should be sent to the server right now: at most
  * once per `clientThrottleMs`, and only when the position actually changed

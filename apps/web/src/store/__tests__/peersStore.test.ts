@@ -72,6 +72,38 @@ describe("peersStore", () => {
 
     expect(peersStore.getState().peers.has("ghost")).toBe(false);
   });
+
+  it("applyDelta introduces a brand-new peer when the update carries a name (the join-path fix)", () => {
+    // This is what replaced re-sending the whole roster to everyone on every
+    // join - a real load-test finding at 300 concurrent joins. A new peer
+    // arrives via ONE small delta entry, not a full peers:snapshot.
+    peersStore.getState().applySnapshot("u1", [
+      { userId: "u1", name: "Ann", avatarUrl: null, position: { x: 0, y: 0 } },
+    ]);
+    peersStore.getState().applyDelta(
+      [{ userId: "u2", position: { x: 10, y: 20 }, name: "Bo", avatarUrl: null }],
+      [],
+    );
+
+    const peer = peersStore.getState().peers.get("u2");
+    expect(peer).toMatchObject({ userId: "u2", name: "Bo", avatarUrl: null, position: { x: 10, y: 20 }, isLocal: false });
+    // Starts settled at its authoritative position, same as a fresh snapshot entry.
+    expect(peer?.renderPosition).toEqual({ x: 10, y: 20 });
+  });
+
+  it("applyDelta still ignores a position-only update for an unknown peer even when other entries in the same batch carry a name", () => {
+    peersStore.getState().applySnapshot("u1", []);
+    peersStore.getState().applyDelta(
+      [
+        { userId: "newcomer", position: { x: 1, y: 1 }, name: "New" },
+        { userId: "ghost", position: { x: 2, y: 2 } }, // no name - an ordinary tick, not an introduction
+      ],
+      [],
+    );
+
+    expect(peersStore.getState().peers.has("newcomer")).toBe(true);
+    expect(peersStore.getState().peers.has("ghost")).toBe(false);
+  });
 });
 
 describe("rosterEquals", () => {

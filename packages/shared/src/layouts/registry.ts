@@ -1,14 +1,18 @@
 import type { RoomLayout } from "./types";
-import { openOffice1 } from "./openOffice";
-import { spatialMap1 } from "./mapLayout";
 import { office300 } from "./office300";
+import { cosmicCampus100 } from "./cosmicCampus100";
 
-export const DEFAULT_LAYOUT_ID = "openOffice@1";
+export const DEFAULT_LAYOUT_ID = "office300@1";
 
 const LAYOUT_REGISTRY: Record<string, RoomLayout> = {
-  [openOffice1.id]: openOffice1,
-  [spatialMap1.id]: spatialMap1,
   [office300.id]: office300,
+  [cosmicCampus100.id]: cosmicCampus100,
+};
+
+/** Human names for the template picker. */
+export const LAYOUT_LABELS: Record<string, string> = {
+  [office300.id]: "Office — 300",
+  [cosmicCampus100.id]: "Cosmic Campus — 100",
 };
 
 /** Returns `null` for an unknown id rather than throwing — callers (see

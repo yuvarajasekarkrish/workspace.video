@@ -7,11 +7,15 @@ import {
   MAX_MAP_SEATS,
   type RoomMap,
 } from "../roomMap";
-import { SPATIAL_MAP_DEFAULT_ZONES, spatialMap1, type MapZone } from "../mapLayout";
-import { openOffice1 } from "../openOffice";
+import { SPATIAL_MAP_DEFAULT_ZONES, layoutFromMapZones, type MapZone } from "../mapLayout";
+import { office300 } from "../office300";
 import { validateLayout } from "../validate";
 import { resolveLayout } from "../registry";
 import { parseRoomConfig } from "../queries";
+
+// Not a registered named layout — see mapLayout.test.ts's docs. Built here purely
+// as a fixture to check validateRoomMap compiles a stored map identically.
+const spatialMap1 = layoutFromMapZones("spatialMap@1", SPATIAL_MAP_DEFAULT_ZONES);
 
 // A company's map arrives from the admin panel, so it is untrusted input: it is checked when saved
 // and again when loaded, and a broken one must never change the office silently (decision D6, D7 in
@@ -125,20 +129,19 @@ describe("resolveRoomLayout: one place decides a room's layout", () => {
   it("gives the default office for empty, missing or unreadable settings", () => {
     for (const config of [{}, null, undefined, 5, "x", []]) {
       const resolved = resolveRoomLayout(config);
-      expect(resolved.layout, String(config)).toBe(openOffice1);
+      expect(resolved.layout, String(config)).toBe(office300);
       expect(resolved.source).toBe("default");
       expect(resolved.problem).toBeUndefined();
     }
   });
 
-  it("uses a named layout that exists, and the default for one that does not (as before)", () => {
-    expect(resolveRoomLayout({ layoutId: "openOffice@1" })).toMatchObject({ layout: openOffice1, source: "layoutId" });
-    expect(resolveRoomLayout({ layoutId: "spatialMap@1" })).toMatchObject({ layout: spatialMap1, source: "layoutId" });
-    expect(resolveRoomLayout({ layoutId: "nope@1" })).toMatchObject({ layout: openOffice1, source: "default" });
+  it("uses a named layout that exists, and the default for one that does not", () => {
+    expect(resolveRoomLayout({ layoutId: "office300@1" })).toMatchObject({ layout: office300, source: "layoutId" });
+    expect(resolveRoomLayout({ layoutId: "nope@1" })).toMatchObject({ layout: office300, source: "default" });
   });
 
   it("builds a company's own map from its settings, and it wins over a named layout", () => {
-    const resolved = resolveRoomLayout({ layoutId: "openOffice@1", map: starter() });
+    const resolved = resolveRoomLayout({ layoutId: "office300@1", map: starter() });
     expect(resolved.source).toBe("map");
     expect(resolved.layout.id).toBe("custom");
     expect(resolved.layout.seats).toHaveLength(105);
@@ -147,12 +150,16 @@ describe("resolveRoomLayout: one place decides a room's layout", () => {
 
   it("falls back to the named layout, or the default, when the stored map is broken, and says why", () => {
     const broken = { version: 1, zones: [] };
-    const named = resolveRoomLayout({ layoutId: "spatialMap@1", map: broken });
-    expect(named.layout).toBe(spatialMap1);
+    // office300@1 is also the current default, but this proves the CODE PATH taken
+    // is "layoutId" (an explicit choice), not "default" (a fallback) — a real
+    // distinction even when the two happen to resolve to the same layout object,
+    // since only one layout is registered today (see mapLayout.test.ts's docs).
+    const named = resolveRoomLayout({ layoutId: "office300@1", map: broken });
+    expect(named.layout).toBe(office300);
     expect(named.source).toBe("layoutId");
     expect(named.problem).toMatch(/at least one area/i);
     const bare = resolveRoomLayout({ map: broken });
-    expect(bare.layout).toBe(openOffice1);
+    expect(bare.layout).toBe(office300);
     expect(bare.source).toBe("default");
     expect(bare.problem).toMatch(/at least one area/i);
   });
@@ -175,12 +182,11 @@ describe("resolveRoomLayout: the same answer as the old lookup for every room th
       [],
       5,
       "x",
-      { layoutId: "openOffice@1" },
-      { layoutId: "spatialMap@1" },
+      { layoutId: "office300@1" },
       { layoutId: "nope@1" },
       { layoutId: 7 },
       { layoutId: "" },
-      { layoutId: "openOffice@1", somethingElse: true },
+      { layoutId: "office300@1", somethingElse: true },
     ];
     for (const config of configs) {
       expect(resolveRoomLayout(config).layout, JSON.stringify(config)).toBe(resolveLayout(parseRoomConfig(config).layoutId));

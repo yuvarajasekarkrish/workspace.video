@@ -14,8 +14,10 @@ import {
   SeatUpdateEventSchema,
   ZoneChangedEventSchema,
   type MoveEvent,
+  type MoveToEvent,
   type ObjectUpsertEvent,
   type ObjectDeleteEvent,
+  type SeatSelectionRequest,
 } from "@workspace-video/shared";
 import { peersStore } from "@/store/peersStore";
 import { connectionStore } from "@/store/connectionStore";
@@ -85,6 +87,13 @@ export class RealtimeClient {
     this.socket?.emit(ClientEvents.Move, event);
   }
 
+  /** Sends a discrete relocation (click-to-move, walk-to-person, walk-to-
+   *  zone) — one shot, not a stream of intermediate positions like sendMove.
+   *  See MoveToEventSchema's docs and RoomManager.teleportTo. */
+  sendMoveTo(event: MoveToEvent): void {
+    this.socket?.emit(ClientEvents.MoveTo, event);
+  }
+
   /** Sends an object create/edit. Fire-and-forget, like sendMove — the
    *  server's reconciliation (object:sync, broadcast to the whole room
    *  including the sender) is what the client actually reacts to, not the
@@ -108,6 +117,27 @@ export class RealtimeClient {
         const ackObj = ack as { ok?: boolean; error?: string } | undefined;
         if (ackObj?.error) resolve({ ok: false, error: ackObj.error });
         else resolve({ ok: true });
+      });
+    });
+  }
+
+  /** Part 4B: auto-seat-within-table / nearby-seat search (or "exact" sent
+   *  through this same path). Same wait-for-ack shape as sendSeatClaim, for
+   *  the same reason — a refusal (table full, not enabled, access denied)
+   *  is an expected outcome the caller needs to react to, not a transport
+   *  failure. Resolves the server's SeatSelectionResult on success,
+   *  `{outcome:"failed", reason}` on refusal — the caller (PixiStage) maps
+   *  `reason` to user-facing feedback via seatFeedbackStore. */
+  sendSeatSelect(
+    request: SeatSelectionRequest,
+  ): Promise<{ outcome: "seated"; seatId: string } | { outcome: "failed"; reason: string }> {
+    return new Promise((resolve) => {
+      if (!this.socket) return resolve({ outcome: "failed", reason: "not_connected" });
+      this.socket.emit(ClientEvents.SeatSelect, request, (ack: unknown) => {
+        const ackObj = ack as { error?: string; outcome?: string; seatId?: string } | undefined;
+        if (ackObj?.error) resolve({ outcome: "failed", reason: ackObj.error });
+        else if (ackObj?.outcome === "seated" && ackObj.seatId) resolve({ outcome: "seated", seatId: ackObj.seatId });
+        else resolve({ outcome: "failed", reason: "unknown" });
       });
     });
   }

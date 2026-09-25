@@ -20,7 +20,7 @@
  *   LOAD_HARNESS_ONLY_N          run a single N instead of 50/100/200
  *   LOAD_HARNESS_ONLY_SCENARIO   spread | cluster
  *   LOAD_HARNESS_INCLUDE_500=1   also run N=500 (server needs LOAD_HARNESS_LIMIT_OVERRIDE=500)
- *   LOAD_HARNESS_LAYOUT_ID       layout the throwaway room uses, e.g. spatialMap@1 (default openOffice@1)
+ *   LOAD_HARNESS_LAYOUT_ID       layout the throwaway room uses, e.g. office300@1 (default office300@1)
  *   LOAD_HARNESS_SEATED_FRACTION share of people who take a seat, 0 to 1 (default 0.5)
  *   LOAD_HARNESS_WALK_TO_SEAT    1 = walk each person to their seat before sitting (the server refuses a
  *                                seat unless they are within 120 px). Default off, as in every earlier run.
@@ -316,15 +316,59 @@ async function teardownWorkspace(workspaceId: string, userIds: string[]): Promis
 
 /** Walks a joined socket to `target` in steps the server's speed limit accepts, so a seat claim
  *  from there is inside the server's 120 px range. Ends at the target or after the time limit. */
-async function walkTo(c: ConnectedSocket, target: Point): Promise<void> {
+/** Walk-phase-only diagnostic (see the seat-claim shortfall investigation):
+ *  whether the LOCAL step loop believed it reached the seat's exact anchor
+ *  before the timeout, the client-side distance still remaining if not, and
+ *  how many moves this walk actually sent. This describes what the harness
+ *  ASKED the server for — it does not by itself prove what the server's
+ *  authoritative position ended up at; that's cross-checked against the
+ *  seat:claim ack's own error string and this walker's move:correction count
+ *  by the caller. */
+interface WalkResult {
+  converged: boolean;
+  finalDistancePx: number;
+  movesSent: number;
+  /** How many times this walk reconciled to a server-pushed move:correction
+   *  before computing its next step — see walkTo's docs. Non-zero here means
+   *  at least one move in this walk was rejected; zero means the walk never
+   *  needed to resync at all. */
+  correctionsReconciled: number;
+}
+
+async function walkTo(c: ConnectedSocket, target: Point): Promise<WalkResult> {
   let position = c.spawnPosition;
   const stepPx = (SEAT_WALK_SPEED_PX_PER_SEC * MOVE_INTERVAL_MS) / 1000;
   const deadline = performance.now() + SEAT_WALK_TIMEOUT_MS;
+  let movesSent = 0;
+  let correctionsReconciled = 0;
   while ((position.x !== target.x || position.y !== target.y) && performance.now() < deadline) {
+    // Reconcile to the server's authoritative position before computing the
+    // next step — the same thing a real browser client already does on every
+    // move:correction (see PixiStage.ts's onMoveCorrection). Without this, a
+    // single rejected move (which the movement-validation fix no longer lets
+    // become PERMANENT, but which can still happen once) would leave this
+    // walker computing every future step from a position the server never
+    // accepted, re-diverging on its own.
+    if (c.pendingCorrection) {
+      position = c.pendingCorrection;
+      c.pendingCorrection = null;
+      correctionsReconciled++;
+    }
     position = stepToward(position, target, stepPx);
     c.socket.emit("move", { position, clientTs: Date.now() });
+    movesSent++;
     await new Promise<void>((resolve) => setTimeout(resolve, MOVE_INTERVAL_MS));
   }
+  // One last check after the loop's final sleep, so a correction to the very
+  // last emitted move isn't missed by the convergence check below.
+  if (c.pendingCorrection) {
+    position = c.pendingCorrection;
+    c.pendingCorrection = null;
+    correctionsReconciled++;
+  }
+  const converged = position.x === target.x && position.y === target.y;
+  const finalDistancePx = Math.hypot(target.x - position.x, target.y - position.y);
+  return { converged, finalDistancePx, movesSent, correctionsReconciled };
 }
 
 function mintToken(userId: string, email: string): string {
@@ -370,6 +414,15 @@ interface ConnectedSocket {
    *  spawn point, so the walker must restart from there or its first move
    *  would be a teleport the server rightly rejects. */
   resyncTo: Point | null;
+  /** The server's authoritative position from the most recent unconsumed
+   *  move:correction, or null once reconciled. Mirrors what a real browser
+   *  client already does (apps/web/src/canvas/PixiStage.ts's onMoveCorrection
+   *  -> MovementController.applyCorrection) — walkTo consumes this before
+   *  computing its next step so a rejected move (see the movement-validation
+   *  race fix in packages/proximity/src/movement.ts) doesn't leave this
+   *  synthetic walker's belief permanently diverged from the server's real
+   *  position, the way it did before this field existed. */
+  pendingCorrection: Point | null;
 }
 
 function connectSocket(
@@ -415,10 +468,11 @@ function attachCounters(entry: ConnectedSocket): void {
       if (event === "proximity:batch") entry.proximityUpdatesReceived += payload?.updates?.length ?? 0;
     });
   }
-  entry.socket.on("move:correction", (payload: { reason?: string }) => {
+  entry.socket.on("move:correction", (payload: { reason?: string; position?: Point }) => {
     const reason = payload.reason ?? "unknown";
     correctionReasons[reason] = (correctionReasons[reason] ?? 0) + 1;
     entry.corrections++;
+    if (payload.position) entry.pendingCorrection = payload.position;
   });
 
   // Phase 10c diagnostic: with reconnection disabled, this fires exactly
@@ -653,6 +707,7 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
               // get a moveTimer below — see the walkers filter.
               isIdleCanary: connected.length < IDLE_CANARY_COUNT,
               resyncTo: null,
+              pendingCorrection: null,
             };
             attachCounters(entry);
             connected.push(entry);
@@ -682,28 +737,96 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
     const seatTargets = LAYOUT.seats.slice(0, seatTargetCount(n, seatCandidates.length, LAYOUT.seats.length, SEATED_FRACTION));
     const seatedSockets = new Set<ConnectedSocket>();
     const seatAcks: unknown[] = [];
+    // Walk-phase diagnostic (seat-claim shortfall investigation): one record
+    // per attempted seat, captured BEFORE the steady-state reset below zeroes
+    // `corrections` — this is the only chance to see what happened during the
+    // walk itself, which the reset below would otherwise erase without a trace.
+    interface WalkPhaseRecord {
+      userId: string;
+      seatId: string;
+      correctionsBeforeWalk: number;
+      correctionsAfterWalk: number;
+      walk: WalkResult | null;
+      walkPhaseDurationMs: number;
+      ackOk: boolean;
+      ackReason: string | null;
+    }
+    const walkPhaseRecords: WalkPhaseRecord[] = [];
+    const walkPhaseStartedAtMs = performance.now();
     await Promise.all(
       seatTargets.map(async (seat, i) => {
         const candidate = seatCandidates[i]!;
         seatedSockets.add(candidate);
-        if (WALK_TO_SEAT) await walkTo(candidate, seat.anchor);
-        await new Promise<void>((resolve) => {
+        const correctionsBeforeWalk = candidate.corrections;
+        const recordStartedAtMs = performance.now();
+        const walk = WALK_TO_SEAT ? await walkTo(candidate, seat.anchor) : null;
+        const correctionsAfterWalk = candidate.corrections;
+        const ack: unknown = await new Promise((resolve) => {
           // A timeout counts as "no reply" rather than hanging the run.
-          candidate.socket.timeout(SEAT_CLAIM_TIMEOUT_MS).emit("seat:claim", { seatId: seat.id }, (err: Error | null, ack: unknown) => {
-            seatAcks.push(err ? undefined : ack);
-            resolve();
+          candidate.socket.timeout(SEAT_CLAIM_TIMEOUT_MS).emit("seat:claim", { seatId: seat.id }, (err: Error | null, res: unknown) => {
+            resolve(err ? undefined : res);
           });
+        });
+        seatAcks.push(ack);
+        const parsedAck = typeof ack === "object" && ack !== null ? (ack as { ok?: unknown; error?: unknown }) : {};
+        walkPhaseRecords.push({
+          userId: candidate.userId,
+          seatId: seat.id,
+          correctionsBeforeWalk,
+          correctionsAfterWalk,
+          walk,
+          walkPhaseDurationMs: performance.now() - recordStartedAtMs,
+          ackOk: parsedAck.ok === true,
+          ackReason: typeof parsedAck.error === "string" ? parsedAck.error : parsedAck.ok === true ? null : "no_reply",
         });
       }),
     );
+    const walkPhaseTotalDurationMs = performance.now() - walkPhaseStartedAtMs;
     const seatSummary = summarizeSeatAcks(seatAcks);
     console.log(
       `  seated: ${seatTargets.length} asked · server accepted ${seatSummary.accepted} · refused ${JSON.stringify(seatSummary.refused)}` +
         (WALK_TO_SEAT ? " (each walked to their seat first)" : " (NOT walked to the seat: claims sent from the arrival spot)"),
     );
 
+    // Walk-phase breakdown — see WalkPhaseRecord's docs. Classifies every
+    // failure into a proven bucket instead of assuming a cause.
+    const failed = walkPhaseRecords.filter((r) => !r.ackOk);
+    const failedWithWalkCorrection = failed.filter((r) => r.correctionsAfterWalk > r.correctionsBeforeWalk);
+    const failedDidNotConverge = failed.filter((r) => r.walk !== null && !r.walk.converged);
+    const failedConvergedButRefused = failed.filter(
+      (r) => r.correctionsAfterWalk === r.correctionsBeforeWalk && (r.walk === null || r.walk.converged),
+    );
+    const totalWalkCorrections = walkPhaseRecords.reduce((sum, r) => sum + (r.correctionsAfterWalk - r.correctionsBeforeWalk), 0);
+    const totalReconciled = walkPhaseRecords.reduce((sum, r) => sum + (r.walk?.correctionsReconciled ?? 0), 0);
+    console.log(
+      `  walk-phase (${fmt(walkPhaseTotalDurationMs, 0)}ms total, ${walkPhaseRecords.length} attempted):` +
+        ` corrections during walk: ${totalWalkCorrections} (affecting ${walkPhaseRecords.filter((r) => r.correctionsAfterWalk > r.correctionsBeforeWalk).length} users)` +
+        ` · reconciled to a server correction mid-walk: ${totalReconciled} time(s)` +
+        ` · failures: ${failed.length}` +
+        ` [rejected-move-implicated: ${failedWithWalkCorrection.length}, walk-did-not-converge: ${failedDidNotConverge.length}, converged-but-still-refused: ${failedConvergedButRefused.length}]`,
+    );
+    if (failedConvergedButRefused.length > 0) {
+      console.log(
+        `  UNEXPLAINED: ${failedConvergedButRefused.length} users walked to their exact target, sent no rejected/corrected move, yet the server still refused the claim — reasons: ${JSON.stringify(
+          failedConvergedButRefused.reduce((acc: Record<string, number>, r) => {
+            const key = r.ackReason ?? "no_reply";
+            acc[key] = (acc[key] ?? 0) + 1;
+            return acc;
+          }, {}),
+        )}`,
+      );
+    }
+    const seatIdsClaimed = walkPhaseRecords.filter((r) => r.ackOk).map((r) => r.seatId);
+    const duplicateSeatIds = seatIdsClaimed.filter((id, idx) => seatIdsClaimed.indexOf(id) !== idx);
+    if (duplicateSeatIds.length > 0) {
+      console.log(`  DOUBLE-BOOKING DETECTED: ${JSON.stringify(duplicateSeatIds)}`);
+    } else {
+      console.log(`  no double-booking: ${seatIdsClaimed.length} accepted claims, ${new Set(seatIdsClaimed).size} distinct seats`);
+    }
+
     // Reset counters and the server's "since last read" deltas so everything
-    // below describes only the steady-state window.
+    // below describes only the steady-state window. Walk-phase data above was
+    // already captured and printed before this point — nothing here erases it.
     for (const c of connected) {
       c.eventCounts = {};
       c.proximityUpdatesReceived = 0;
@@ -1097,6 +1220,27 @@ async function runPhase(n: number, scenario: Scenario, limitOverrideNote?: strin
       seated: seatTargets.length,
       seatClaims: seatSummary,
       walkToSeat: WALK_TO_SEAT,
+      walkPhase: {
+        totalDurationMs: walkPhaseTotalDurationMs,
+        attempted: walkPhaseRecords.length,
+        accepted: walkPhaseRecords.filter((r) => r.ackOk).length,
+        totalCorrectionsDuringWalk: totalWalkCorrections,
+        usersWithCorrectionDuringWalk: walkPhaseRecords.filter((r) => r.correctionsAfterWalk > r.correctionsBeforeWalk).length,
+        totalReconciledMidWalk: totalReconciled,
+        failures: {
+          total: failed.length,
+          rejectedMoveImplicated: failedWithWalkCorrection.length,
+          walkDidNotConverge: failedDidNotConverge.length,
+          convergedButStillRefused: failedConvergedButRefused.length,
+          convergedButStillRefusedReasons: failedConvergedButRefused.reduce((acc: Record<string, number>, r) => {
+            const key = r.ackReason ?? "no_reply";
+            acc[key] = (acc[key] ?? 0) + 1;
+            return acc;
+          }, {}),
+        },
+        duplicateSeatIds,
+        distinctSeatsClaimed: new Set(seatIdsClaimed).size,
+      },
       movesSent,
       corrections,
       correctionRatePct,

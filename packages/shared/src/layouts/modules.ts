@@ -37,10 +37,28 @@ const PLANT_SIZE = 28;
  *  to it. `rotation` is the angle from the chair to that point: the same rule proven correct
  *  on the 4-seat table (each seat's rotation independently verified against its own facing
  *  direction) made general, not a new one - a chair with no real facing point (there are
- *  none left after this change) would simply keep facing right (rotation 0). */
-function chair(id: string, x: number, y: number, faceX: number, faceY: number): FurniturePiece {
+ *  none left after this change) would simply keep facing right (rotation 0).
+ *
+ *  `visualScale` (optional) is passed straight through to the returned piece's
+ *  `visualScale` field — it never changes `x`/`y`/`width`/`height` here, so a
+ *  caller passing a scale gets a bigger/smaller DRAWING at the exact same
+ *  logical position and footprint every caller that omits it already gets.
+ *  Omitted entirely (not even set to `1`) when the caller doesn't pass one,
+ *  so an existing call site (deskGrid without chairVisualScale, every other
+ *  generator) produces a byte-identical FurniturePiece to before this
+ *  parameter existed. */
+function chair(id: string, x: number, y: number, faceX: number, faceY: number, visualScale?: number): FurniturePiece {
   const rotation = Math.atan2(faceY - y, faceX - x);
-  return { id, kind: "chair", x: x - CHAIR_SIZE / 2, y: y - CHAIR_SIZE / 2, width: CHAIR_SIZE, height: CHAIR_SIZE, rotation };
+  return {
+    id,
+    kind: "chair",
+    x: x - CHAIR_SIZE / 2,
+    y: y - CHAIR_SIZE / 2,
+    width: CHAIR_SIZE,
+    height: CHAIR_SIZE,
+    rotation,
+    ...(visualScale !== undefined ? { visualScale } : {}),
+  };
 }
 
 function plant(id: string, x: number, y: number): FurniturePiece {
@@ -93,10 +111,91 @@ export function deskGridFits(rect: TileRect, opts: { cols: number; rows: number 
   return { fits: true, cellPx, minPx };
 }
 
+/** Must match apps/web/src/canvas/furniture3d.ts's drawChair — `s = min(c.width,
+ *  c.height) * CHAIR_RENDER_FACTOR * (visualScale ?? 1)` is the actual on-screen
+ *  chair size. Duplicated here (rather than imported) because packages/shared
+ *  has no dependency on the web app's canvas rendering code, and shouldn't
+ *  gain one just for a single shared literal — this constant is deliberately
+ *  small and stable (a cosmetic "how snug the chair sits in its own
+ *  footprint" ratio, not something a template would ever want to change),
+ *  so the duplication risk is low, but it IS a real coupling: if drawChair's
+ *  0.92 ever changes, this must change with it or the overlap warning below
+ *  will silently drift out of sync with what's actually rendered. */
+const CHAIR_RENDER_FACTOR = 0.92;
+
+export interface ChairOverlapRisk {
+  requestedScale: number;
+  /** Half the chair's actual on-screen size at `requestedScale`, in px —
+   *  what would need to fit within availableSlackPx of the desk's own
+   *  (unscaled) half-footprint to avoid visually reaching into the next
+   *  desk's cell. */
+  renderedChairHalfSizePx: number;
+  /** How much room, in px, exists today (at visualScale 1) between the
+   *  chair's own edge and the cell boundary — deskGrid's real, current
+   *  margin, computed from the same DESK_SIZE/CHAIR_SIZE constants
+   *  deskGridFits and chairGap use, not a separately-guessed number. */
+  availableSlackPx: number;
+  /** True when a chair drawn at `requestedScale` would visually reach past
+   *  the cell boundary into the neighboring desk's space. This is a
+   *  reporting-only signal — see this function's own docs — never a
+   *  clamp: the caller decides what to do with a risky scale. */
+  overlapsNeighborCell: boolean;
+  /** How far past the cell boundary the chair would reach, in px; 0 when
+   *  `overlapsNeighborCell` is false. */
+  overlapAmountPx: number;
+}
+
+/**
+ * Reports whether enlarging deskGrid's chairs via `chairVisualScale` would
+ * visually reach into the next desk's cell — WITHOUT introducing real
+ * collision detection and WITHOUT changing anything about how deskGrid
+ * places furniture or seats. Purely diagnostic: it never clamps or modifies
+ * the requested scale, it only tells the caller (a future admin UI, or a
+ * developer picking a value) what the real risk is, so they can decide.
+ *
+ * Only checks the horizontal axis, matching deskGrid's own geometry: chairs
+ * sit left/right of the desk (see chair()'s call sites in deskGrid), so
+ * horizontal clearance is what a bigger chair actually threatens — the
+ * vertical cell height has no equivalent squeeze (MIN_DESK_CELL_HEIGHT is
+ * just DESK_SIZE, with no chair-driven term at all, per deskGridFits' own
+ * docs above).
+ */
+export function deskGridChairOverlapRisk(
+  rect: TileRect,
+  opts: { cols: number; rows: number },
+  requestedScale: number,
+): ChairOverlapRisk {
+  const box = tileRectToWorld(rect);
+  const cellW = box.width / opts.cols;
+  const chairGap = DESK_SIZE / 2 + CHAIR_SIZE / 2 + 6; // same formula deskGrid itself uses
+  const availableSlackPx = cellW / 2 - chairGap - CHAIR_SIZE / 2;
+  const renderedChairHalfSizePx = (CHAIR_SIZE * requestedScale * CHAIR_RENDER_FACTOR) / 2;
+  const overlapAmountPx = Math.max(0, renderedChairHalfSizePx - CHAIR_SIZE / 2 - availableSlackPx);
+  return {
+    requestedScale,
+    renderedChairHalfSizePx,
+    availableSlackPx,
+    overlapsNeighborCell: overlapAmountPx > 0,
+    overlapAmountPx,
+  };
+}
+
 export function deskGrid(
   idPrefix: string,
   rect: TileRect,
-  opts: { cols: number; rows: number; startNumber: number },
+  opts: {
+    cols: number;
+    rows: number;
+    startNumber: number;
+    /** Optional, rendering-only — see FurniturePiece.visualScale's docs.
+     *  Omitted (the default for every existing call site, including
+     *  office300.ts) means every chair renders at its logical size exactly
+     *  as before this option existed; `Seat.anchor`/`chairGap` below are
+     *  computed identically whether or not this is set. Before enabling a
+     *  scale above ~1 here, check deskGridChairOverlapRisk — deskGrid's
+     *  cell has very little horizontal clearance today. */
+    chairVisualScale?: number;
+  },
 ): ModuleResult {
   const box = tileRectToWorld(rect);
   const cellW = box.width / opts.cols;
@@ -120,8 +219,8 @@ export function deskGrid(
         label: `Desk ${num}`,
       });
       const chairGap = DESK_SIZE / 2 + CHAIR_SIZE / 2 + 6;
-      result.furniture.push(chair(`${deskId}-chair-a`, cx - chairGap, cy, cx, cy));
-      result.furniture.push(chair(`${deskId}-chair-b`, cx + chairGap, cy, cx, cy));
+      result.furniture.push(chair(`${deskId}-chair-a`, cx - chairGap, cy, cx, cy, opts.chairVisualScale));
+      result.furniture.push(chair(`${deskId}-chair-b`, cx + chairGap, cy, cx, cy, opts.chairVisualScale));
       result.seats.push({ id: `${deskId}-a`, label: `Desk ${num}`, anchor: { x: cx - chairGap, y: cy } });
       result.seats.push({ id: `${deskId}-b`, label: `Desk ${num}`, anchor: { x: cx + chairGap, y: cy } });
       num += 1;
@@ -827,6 +926,67 @@ export function deskBank(
     }
   }
   result.zones.push({ id: zoneId, label: opts.label, kind: "open", rect, capacity: result.seats.length });
+  return result;
+}
+
+/** The on-screen chair size drawChair produces for a given visualScale. */
+export function renderedChairSizePx(visualScale = 1): number {
+  return CHAIR_SIZE * CHAIR_RENDER_FACTOR * visualScale;
+}
+
+export interface TableGroupSpec {
+  /** Unique, stable table-group id. Also the table furniture piece's id, and every seat's `tableId`. */
+  tableId: string;
+  label: string;
+  center: Point;
+  /** The table's size, in world px (its logical and drawn size are the same: tables are never visually scaled). */
+  width: number;
+  depth: number;
+  /** How many chairs sit along each side. Their sum is the table's capacity; nothing assumes any particular number. */
+  seats: { top: number; bottom: number; left: number; right: number };
+  chairVisualScale: number;
+  /** Gap, in world px, between a chair's DRAWN edge and the table edge. */
+  chairClearancePx: number;
+}
+
+/**
+ * One table with its chairs and seats, with explicit membership: the table piece's id is the table-group id, every
+ * seat carries it as `tableId`, and every chair carries its seat's id as `seatId` — nothing depends on parsing ids.
+ * Chairs are spread evenly along each side and placed from the DRAWN chair size, so a larger `chairVisualScale` moves
+ * the chair (and its seat, which is always exactly the chair's centre) out far enough to clear the table instead of
+ * drawing into it. Each chair faces straight across its own side, like deskBank's.
+ */
+export function tableGroup(spec: TableGroupSpec): ModuleResult {
+  const { tableId, label, center, width, depth } = spec;
+  const offset = renderedChairSizePx(spec.chairVisualScale) / 2 + spec.chairClearancePx;
+  const result = empty();
+  result.furniture.push({ id: tableId, kind: "table", x: center.x - width / 2, y: center.y - depth / 2, width, height: depth, rotation: 0, label });
+
+  let n = 1;
+  const add = (x: number, y: number, faceX: number, faceY: number) => {
+    const seatId = `${tableId}-s${n}`;
+    result.furniture.push({ ...chair(`${seatId}-chair`, x, y, faceX, faceY, spec.chairVisualScale), seatId });
+    result.seats.push({ id: seatId, label, anchor: { x, y }, tableId });
+    n += 1;
+  };
+  const spread = (count: number, length: number, i: number) => -length / 2 + (length * (i + 1)) / (count + 1);
+
+  for (let i = 0; i < spec.seats.top; i++) {
+    const x = center.x + spread(spec.seats.top, width, i);
+    add(x, center.y - depth / 2 - offset, x, center.y);
+  }
+  for (let i = 0; i < spec.seats.bottom; i++) {
+    const x = center.x + spread(spec.seats.bottom, width, i);
+    add(x, center.y + depth / 2 + offset, x, center.y);
+  }
+  for (let i = 0; i < spec.seats.left; i++) {
+    const y = center.y + spread(spec.seats.left, depth, i);
+    add(center.x - width / 2 - offset, y, center.x, y);
+  }
+  for (let i = 0; i < spec.seats.right; i++) {
+    const y = center.y + spread(spec.seats.right, depth, i);
+    add(center.x + width / 2 + offset, y, center.x, y);
+  }
   return result;
 }
 

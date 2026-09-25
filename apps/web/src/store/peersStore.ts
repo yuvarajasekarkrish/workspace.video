@@ -44,9 +44,13 @@ export interface PeersState {
    *  cause a visible snap even though `position` targets are refreshed. */
   applySnapshot: (localUserId: string, incoming: { userId: string; name: string; avatarUrl: string | null; position: Point }[]) => void;
 
-  /** Incremental position update from peers:delta. Never touches identity
-   *  fields, and never touches peers not present in `updates`/`left`. */
-  applyDelta: (updates: { userId: string; position: Point }[], left: string[]) => void;
+  /** Incremental update from peers:delta. Ordinary entries carry only a
+   *  position and never touch identity fields or introduce a peer this
+   *  client doesn't already know. An entry that ALSO carries `name` is a new
+   *  peer's introduction (see PeersDeltaEventSchema's docs) and adds them —
+   *  this is what replaced re-sending the whole roster to everyone on every
+   *  join (a real, measured load-test bottleneck at 300 concurrent joins). */
+  applyDelta: (updates: { userId: string; position: Point; name?: string; avatarUrl?: string | null }[], left: string[]) => void;
 
   /** Local-only immediate position write (from input), independent of the
    *  server round trip. */
@@ -84,11 +88,27 @@ export const peersStore = createStore<PeersState>()(
 
     applyDelta: (updates, left) => {
       const peers = new Map(get().peers);
+      const localUserId = get().localUserId;
 
-      for (const { userId, position } of updates) {
+      for (const { userId, position, name, avatarUrl } of updates) {
         const existing = peers.get(userId);
-        if (!existing) continue; // unknown peer — wait for the next snapshot rather than fabricate one
-        peers.set(userId, { ...existing, position });
+        if (existing) {
+          peers.set(userId, { ...existing, position });
+          continue;
+        }
+        // No existing record AND no name means this is an ordinary position
+        // tick for a peer we haven't met yet (e.g. arrived out of order) —
+        // fabricating one with no identity would show a nameless avatar;
+        // wait for the introduction entry (or a resync) instead.
+        if (name === undefined) continue;
+        peers.set(userId, {
+          userId,
+          name,
+          avatarUrl: avatarUrl ?? null,
+          position,
+          renderPosition: { ...position },
+          isLocal: userId === localUserId,
+        });
       }
 
       for (const userId of left) {

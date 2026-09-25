@@ -35,7 +35,7 @@ async function setup() {
   const suffix = crypto.randomUUID();
   const workspace = await prisma.workspace.create({ data: { name: `Audit Test ${suffix}`, slug: `audit-test-${suffix}`, plan: "team" } });
   workspaceIds.push(workspace.id);
-  const room = await prisma.room.create({ data: { workspaceId: workspace.id, name: "Main", config: { layoutId: "openOffice@1" } } });
+  const room = await prisma.room.create({ data: { workspaceId: workspace.id, name: "Main", config: { layoutId: "office300@1" } } });
   const people = {} as Record<WorkspaceRoleName | "outsider", string>;
   for (const role of ["owner", "admin", "designer", "member"] as const) {
     const user = await makeUser(role);

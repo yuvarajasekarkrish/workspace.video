@@ -32,10 +32,11 @@ export function DevSignInForm() {
         return;
       }
       // A convenience for the one seeded email every local dev session uses (packages/db/prisma/
-      // seed.ts always gives test@example.com the room "seed-room-1"): skip the landing page and
-      // land straight in that room. Any other email still goes to "/", since only this one email's
-      // room id is known ahead of time.
-      router.push(email.trim().toLowerCase() === "test@example.com" ? "/room/seed-room-1" : "/");
+      // seed.ts always makes test@example.com the owner of the "startup" plan workspace, room
+      // "seed-room-startup" — the current default office300@1 layout, not the retired custom-map
+      // room "seed-room-1"): skip the landing page and land straight in that room. Any other email
+      // still goes to "/", since only this one email's room id is known ahead of time.
+      router.push(email.trim().toLowerCase() === "test@example.com" ? "/room/seed-room-startup" : "/");
       router.refresh();
     } catch {
       setError("Couldn't reach the server.");

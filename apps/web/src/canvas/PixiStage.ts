@@ -5,10 +5,13 @@ import {
   DEFAULT_PROXIMITY_CONFIG,
   movementConfigForLayout,
   hitTestSeats,
+  furnitureAt,
   zoneById,
   tileRectCenter,
 } from "@workspace-video/shared";
 import { peersStore, type PeersState } from "@/store/peersStore";
+import { nearbySeatStore } from "@/store/nearbySeatStore";
+import { seatFeedbackStore } from "@/store/seatFeedbackStore";
 import { objectsStore, type ObjectsState } from "@/store/objectsStore";
 import { seatsStore } from "@/store/seatsStore";
 import { createBackground } from "./Background";
@@ -20,7 +23,7 @@ import { SeatOverlay } from "./SeatOverlay";
 import { Avatar, AVATAR_HOVER_RADIUS } from "./Avatar";
 import { Viewport } from "./Viewport";
 import { computeNameVisibility } from "./nameVisibility";
-import { stepToward, hasConverged, stepScalarToward } from "./interpolation";
+import { stepScalarToward } from "./interpolation";
 import { IdleGate, tickerGroup, wakeOnActivity } from "./idleGate";
 import { MovementController } from "@/input/MovementController";
 import { RealtimeClient } from "@/net/RealtimeClient";
@@ -28,6 +31,12 @@ import { ObjectView } from "./objects/ObjectView";
 import { ObjectInteractionController } from "./objects/ObjectInteractionController";
 import { NoteEditor } from "./objects/NoteEditor";
 import { hitTestObjects } from "./objects/objectHitTest";
+
+/** How close the local avatar must be to a zone-less labeled seat (e.g. a
+ *  hot-desk) before its name pops up — see nearbySeatStore.ts. Wider than
+ *  hitTestSeats' own 28px click-to-sit default, since this is "you've
+ *  arrived at your desk," not "your cursor is precisely on the chair." */
+const SEAT_LABEL_RADIUS_PX = 70;
 
 export interface PixiStageOptions {
   canvasContainer: HTMLDivElement;
@@ -108,6 +117,11 @@ export class PixiStage {
   /** Whoever was last found through the people search (walkToPerson) — kept visible by name until
    *  another search result is chosen, they leave, or the person clicks the map themselves (D17, 5B). */
   private highlightedUserId: string | null = null;
+  /** The zone-less labeled seat (e.g. a hot-desk) the local avatar is
+   *  currently near, or null — see nearbySeatStore.ts's docs. Tracked here
+   *  (not in the store) so the ticker can compare against the PREVIOUS
+   *  frame's answer and only call nearbySeatStore.set() on an actual change. */
+  private nearbySeatId: string | null = null;
 
   static async create(options: PixiStageOptions): Promise<PixiStage> {
     const stage = new PixiStage();
@@ -168,7 +182,7 @@ export class PixiStage {
           // A plain click means the person is choosing where to walk themselves, not following a
           // search result any more — the highlight (D17, 5B) belongs to search until they move on.
           this.highlightedUserId = null;
-          this.movementController.setWalkTarget(worldPoint);
+          this.movementController.moveTo(worldPoint, Date.now());
         },
         onObjectGestureStart: (worldPoint) => this.objectInteraction.handleGestureStart(worldPoint),
         onObjectGestureMove: (worldPoint) => this.objectInteraction.handleGestureMove(worldPoint),
@@ -207,6 +221,7 @@ export class PixiStage {
       {
         onLocalPositionChanged: (position) => peersStore.getState().setLocalPosition(position),
         onSendMove: (position) => this.realtimeClient.sendMove({ position, clientTs: Date.now() }),
+        onTeleport: (position) => this.realtimeClient.sendMoveTo({ position }),
         // Fires after `seated` has already flipped false and movement has
         // already resumed for this frame (see MovementController's
         // standUp docs) — this is purely "tell the server", never a gate
@@ -335,11 +350,35 @@ export class PixiStage {
    *  falls through to the normal click-to-walk/pan arbitration. */
   private handleFurnitureGestureStart(worldPoint: Point): boolean {
     const seat = hitTestSeats(this.layout, worldPoint);
-    if (!seat) return false;
+    if (seat) {
+      void this.realtimeClient.sendSeatClaim(seat.id).then((result) => {
+        if (result.ok) this.movementController.applyTeleport(seat.anchor);
+        else seatFeedbackStore.getState().show(result.error);
+      });
+      return true;
+    }
 
-    void this.realtimeClient.sendSeatClaim(seat.id).then((result) => {
-      if (result.ok) this.movementController.applyTeleport(seat.anchor);
-    });
+    // A click that misses every chair's own small hit radius but lands on
+    // the shared desk/table surface itself: "sit anywhere free at this
+    // table" (Part 4B's auto-seat-within-table strategy), rather than
+    // falling through to click-to-walk onto furniture. Off by default for
+    // every workspace today (see WorkspaceSeatingConfig's docs — no admin
+    // UI exists yet to enable it), so this currently surfaces a
+    // "not_enabled" toast rather than seating anyone; the request/response
+    // plumbing is real and ready for when that admin setting exists.
+    const furniture = furnitureAt(this.layout, worldPoint);
+    if (!furniture) return false;
+
+    void this.realtimeClient
+      .sendSeatSelect({ strategy: "autoSeatWithinTable", target: { point: worldPoint } })
+      .then((result) => {
+        if (result.outcome === "seated") {
+          const anchor = this.layout.seats.find((s) => s.id === result.seatId)?.anchor;
+          if (anchor) this.movementController.applyTeleport(anchor);
+        } else {
+          seatFeedbackStore.getState().show(result.reason);
+        }
+      });
     return true;
   }
 
@@ -382,6 +421,20 @@ export class PixiStage {
    *  current zoom (dots grow and shrink with zoom, so the hit area does too) — D17, decision 5B: the
    *  person under the mouse gets their name shown. Picks the nearest one within range, screen-space,
    *  not floor-space, since that is what "under the mouse" actually means to the person looking. */
+  /** Updates nearbySeatStore from a world-space point (either the local
+   *  avatar's renderPosition, per frame, or the mouse's floor-space position,
+   *  per pointermove — see the two call sites) — only writes to the store
+   *  when the answer actually changes. Cosmetic-only hot-desk name popup for
+   *  a zone-less labeled seat; see nearbySeatStore.ts's docs. */
+  private updateNearbySeatFrom(worldPoint: Point): void {
+    const nearSeat = hitTestSeats(this.layout, worldPoint, SEAT_LABEL_RADIUS_PX);
+    const nextNearbySeatId = nearSeat && nearSeat.zoneId === undefined ? nearSeat.id : null;
+    if (nextNearbySeatId !== this.nearbySeatId) {
+      this.nearbySeatId = nextNearbySeatId;
+      nearbySeatStore.getState().set(nearSeat && nextNearbySeatId ? { seatId: nearSeat.id, label: nearSeat.label } : null);
+    }
+  }
+
   private avatarUnderScreenPoint(screenPoint: Point): string | null {
     const hitRadius = AVATAR_HOVER_RADIUS * this.viewport.getScale();
     let nearestUserId: string | null = null;
@@ -423,6 +476,10 @@ export class PixiStage {
         this.hoveredUserId = nextHovered;
         woke = true;
       }
+
+      // Same "mouse near it -> name shows" behavior as hovering an avatar,
+      // for a zone-less labeled seat (a hot-desk) — see nearbySeatStore.ts.
+      this.updateNearbySeatFrom(floorPoint);
 
       if (woke) this.gate.wake();
     };
@@ -477,17 +534,22 @@ export class PixiStage {
         // no smoothing, since it already reflects live input, not a
         // network round trip.
         this.placeAvatar(avatar, peer.renderPosition);
+        // Cosmetic-only hot-desk name popup, mirrored by mouse hover in
+        // attachHover — see nearbySeatStore.ts's docs.
+        this.updateNearbySeatFrom(peer.renderPosition);
         continue;
       }
 
-      if (!hasConverged(peer.renderPosition, peer.position)) {
-        const next = stepToward(peer.renderPosition, peer.position, dtSeconds);
-        // Mutate in place: renderPosition is intentionally not replaced via
-        // store.setState (see peersStore.ts) so this per-frame update never
-        // notifies any subscriber, React or otherwise.
-        peer.renderPosition.x = next.x;
-        peer.renderPosition.y = next.y;
-        stillChanging = true;
+      // Remote avatars snap directly to the latest server-reported position —
+      // no stepToward smoothing — per the owner's explicit choice to trade
+      // gliding motion for instant sync (also removes the continuous sweep
+      // across many small desk plates that caused cascading rises). Mutate
+      // in place: renderPosition is intentionally not replaced via
+      // store.setState (see peersStore.ts) so this never notifies any
+      // subscriber, React or otherwise.
+      if (peer.renderPosition.x !== peer.position.x || peer.renderPosition.y !== peer.position.y) {
+        peer.renderPosition.x = peer.position.x;
+        peer.renderPosition.y = peer.position.y;
       }
       this.placeAvatar(avatar, peer.renderPosition);
     }
@@ -659,7 +721,7 @@ export class PixiStage {
     // D17, 5B: found through search, so their name stays shown until another search result is
     // chosen, they leave, or the person clicks the map themselves (see onClickToWalk).
     this.highlightedUserId = userId;
-    this.movementController.setWalkTarget({ x: peer.position.x, y: peer.position.y });
+    this.movementController.moveTo({ x: peer.position.x, y: peer.position.y }, Date.now());
     this.gate.wake();
   }
 
@@ -670,7 +732,7 @@ export class PixiStage {
   walkToZone(zoneId: string): void {
     const zone = zoneById(this.layout, zoneId);
     if (!zone) return;
-    this.movementController.setWalkTarget(tileRectCenter(zone.rect));
+    this.movementController.moveTo(tileRectCenter(zone.rect), Date.now());
     this.gate.wake();
   }
 
@@ -703,6 +765,7 @@ export class PixiStage {
 
   dispose(): void {
     this.disposed = true;
+    nearbySeatStore.getState().set(null);
     this.detachKeyboard?.();
     this.detachObjectKeyboard?.();
     this.detachDblClick?.();

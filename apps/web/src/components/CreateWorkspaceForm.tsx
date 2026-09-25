@@ -2,17 +2,27 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { PLAN_IDS, PLAN_LABELS, PLAN_PARTICIPANT_LIMITS, type PlanId } from "@workspace-video/shared";
+import {
+  PLAN_IDS,
+  PLAN_LABELS,
+  PLAN_PARTICIPANT_LIMITS,
+  DEFAULT_LAYOUT_ID,
+  LAYOUT_LABELS,
+  listLayoutIds,
+  type PlanId,
+} from "@workspace-video/shared";
 
 /**
- * Every plan renders the identical office floor (openOffice@1) — this form
- * only chooses Workspace.plan, which controls the concurrent-participant
- * limit (see @workspace-video/shared's plans.ts), never the layout. No payment is
- * collected; any signed-in user may pick any plan until billing exists.
+ * Chooses Workspace.plan, which controls the concurrent-participant limit (see
+ * @workspace-video/shared's plans.ts), and the office template the first room
+ * uses (any registered layout; office300@1 unless changed). The two are
+ * independent. No payment is collected; any signed-in user may pick any plan
+ * until billing exists.
  */
 export function CreateWorkspaceForm() {
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<PlanId>("startup");
+  const [layoutId, setLayoutId] = useState(DEFAULT_LAYOUT_ID);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -25,7 +35,7 @@ export function CreateWorkspaceForm() {
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, plan }),
+      body: JSON.stringify({ name, plan, layoutId }),
     });
 
     if (!res.ok) {
@@ -45,8 +55,7 @@ export function CreateWorkspaceForm() {
       <div>
         <h1 className="mb-1 text-lg font-semibold">Create a workspace</h1>
         <p className="text-base text-fg-muted">
-          Every workspace gets the same office floor. Your plan sets how many people can be
-          inside at the same time.
+          Pick an office floor. Your plan sets how many people can be inside at the same time.
         </p>
       </div>
 
@@ -63,6 +72,24 @@ export function CreateWorkspaceForm() {
           placeholder="Northwind Studio"
           className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
         />
+      </div>
+
+      <div className="space-y-1">
+        <label htmlFor="workspace-template" className="block text-base font-medium text-fg">
+          Office template
+        </label>
+        <select
+          id="workspace-template"
+          value={layoutId}
+          onChange={(e) => setLayoutId(e.target.value)}
+          className="min-h-12 w-full rounded border border-line bg-surface px-3 py-2 text-base"
+        >
+          {listLayoutIds().map((id) => (
+            <option key={id} value={id}>
+              {LAYOUT_LABELS[id] ?? id}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="space-y-2">

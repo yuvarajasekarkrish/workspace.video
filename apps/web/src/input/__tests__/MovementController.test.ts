@@ -4,67 +4,75 @@ import { MovementController } from "../MovementController";
 function makeController(initial = { x: 0, y: 0 }) {
   const onLocalPositionChanged = vi.fn();
   const onSendMove = vi.fn();
+  const onTeleport = vi.fn();
   const onStandUp = vi.fn();
-  const controller = new MovementController(initial, { onLocalPositionChanged, onSendMove, onStandUp });
-  return { controller, onLocalPositionChanged, onSendMove, onStandUp };
+  const controller = new MovementController(initial, { onLocalPositionChanged, onSendMove, onTeleport, onStandUp });
+  return { controller, onLocalPositionChanged, onSendMove, onTeleport, onStandUp };
 }
 
 describe("MovementController", () => {
-  it("sends the first move immediately on any movement", () => {
-    const { controller, onSendMove } = makeController();
-    controller.setWalkTarget({ x: 100, y: 0 });
-    controller.update(1 / 60, 1000);
-
-    expect(onSendMove).toHaveBeenCalledTimes(1);
-  });
-
   it("does not call onLocalPositionChanged when there is no input", () => {
     const { controller, onLocalPositionChanged } = makeController();
     controller.update(1 / 60, 1000);
     expect(onLocalPositionChanged).not.toHaveBeenCalled();
   });
 
-  it("a click-to-walk target moves the position toward it over time", () => {
+  describe("moveTo — instant relocation (click-to-move, walk-to-person, walk-to-zone)", () => {
+    it("sets the position immediately, in one step, not over time", () => {
+      const { controller, onLocalPositionChanged } = makeController();
+      controller.moveTo({ x: 1000, y: 0 }, 1000);
+
+      expect(onLocalPositionChanged).toHaveBeenCalledTimes(1);
+      expect(onLocalPositionChanged).toHaveBeenCalledWith({ x: 1000, y: 0 });
+    });
+
+    it("fires onTeleport once, immediately — never the throttled onSendMove path", () => {
+      const { controller, onTeleport, onSendMove } = makeController();
+      controller.moveTo({ x: 1000, y: 0 }, 1000);
+
+      expect(onTeleport).toHaveBeenCalledTimes(1);
+      expect(onTeleport).toHaveBeenCalledWith({ x: 1000, y: 0 });
+      expect(onSendMove).not.toHaveBeenCalled();
+    });
+
+    it("a subsequent update() with no keys held does not move further — nothing left to step", () => {
+      const { controller, onLocalPositionChanged } = makeController();
+      controller.moveTo({ x: 1000, y: 0 }, 1000);
+      onLocalPositionChanged.mockClear();
+
+      controller.update(1 / 60, 1016);
+      expect(onLocalPositionChanged).not.toHaveBeenCalled();
+    });
+
+    it("clamps an out-of-room target to the configured bounds", () => {
+      const bounds = { roomWidthPx: 500, roomHeightPx: 500, maxSpeedPxPerSec: 2000, clientThrottleMs: 50, maxBurstMs: 200 };
+      const onLocalPositionChanged = vi.fn();
+      const controller = new MovementController({ x: 0, y: 0 }, { onLocalPositionChanged, onSendMove: vi.fn(), onTeleport: vi.fn() }, bounds);
+
+      controller.moveTo({ x: 10_000, y: -500 }, 1000);
+
+      expect(onLocalPositionChanged).toHaveBeenCalledWith({ x: 500, y: 0 });
+    });
+
+    it("stands the user up if they were seated, then relocates", () => {
+      const { controller, onStandUp } = makeController();
+      controller.applyTeleport({ x: 10, y: 10 });
+
+      controller.moveTo({ x: 500, y: 10 }, 1000);
+
+      expect(controller.isSeated()).toBe(false);
+      expect(onStandUp).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("a correction snaps position directly", () => {
     const { controller, onLocalPositionChanged } = makeController();
-    controller.setWalkTarget({ x: 1000, y: 0 });
-    controller.update(1 / 60, 1000);
-
-    const [pos] = onLocalPositionChanged.mock.calls[0]!;
-    expect(pos.x).toBeGreaterThan(0);
-    expect(pos.y).toBe(0);
-  });
-
-  it("respects the client throttle: a second changed-position tick within the interval is not sent", () => {
-    const { controller, onSendMove } = makeController();
-    controller.setWalkTarget({ x: 1000, y: 0 });
-
-    controller.update(1 / 60, 1000); // sends (first move)
-    controller.update(1 / 60, 1010); // 10ms later, position changed again, but under 50ms throttle
-
-    expect(onSendMove).toHaveBeenCalledTimes(1);
-  });
-
-  it("sends again once the throttle interval has elapsed and position changed", () => {
-    const { controller, onSendMove } = makeController();
-    controller.setWalkTarget({ x: 1000, y: 0 });
-
-    controller.update(1 / 60, 1000);
-    controller.update(1 / 60, 1060); // 60ms later, past the 50ms throttle
-
-    expect(onSendMove).toHaveBeenCalledTimes(2);
-  });
-
-  it("a correction snaps position and clears any in-flight walk target", () => {
-    const { controller, onLocalPositionChanged } = makeController();
-    controller.setWalkTarget({ x: 1000, y: 0 });
-    controller.update(1 / 60, 1000);
+    controller.moveTo({ x: 1000, y: 0 }, 1000);
     onLocalPositionChanged.mockClear();
 
     controller.applyCorrection({ x: 42, y: 42 });
     expect(onLocalPositionChanged).toHaveBeenCalledWith({ x: 42, y: 42 });
 
-    // Walk target was cleared, so a subsequent update with no keys held
-    // should not move the position further.
     onLocalPositionChanged.mockClear();
     controller.update(1 / 60, 2000);
     expect(onLocalPositionChanged).not.toHaveBeenCalled();
@@ -73,14 +81,13 @@ describe("MovementController", () => {
   describe("seating", () => {
     it("applyTeleport marks the controller seated, snaps position, and clears held state", () => {
       const { controller, onLocalPositionChanged } = makeController();
-      controller.setWalkTarget({ x: 1000, y: 0 }); // an in-flight walk target...
+      controller.moveTo({ x: 1000, y: 0 }, 1000);
 
       controller.applyTeleport({ x: 42, y: 42 });
 
       expect(controller.isSeated()).toBe(true);
       expect(onLocalPositionChanged).toHaveBeenCalledWith({ x: 42, y: 42 });
 
-      // ...that must not resume once seated (walkTarget cleared).
       onLocalPositionChanged.mockClear();
       controller.update(1 / 60, 1000);
       expect(onLocalPositionChanged).not.toHaveBeenCalled();
@@ -120,16 +127,6 @@ describe("MovementController", () => {
       expect(pos.x).toBeGreaterThan(10);
 
       detach();
-    });
-
-    it("a click-to-walk target also stands the user up", () => {
-      const { controller, onStandUp } = makeController();
-      controller.applyTeleport({ x: 10, y: 10 });
-
-      controller.setWalkTarget({ x: 500, y: 10 });
-
-      expect(controller.isSeated()).toBe(false);
-      expect(onStandUp).toHaveBeenCalledTimes(1);
     });
 
     it("standing up is idempotent — onStandUp fires only once even with repeated input", () => {
@@ -198,27 +195,22 @@ describe("MovementController.needsFrames: does the screen still have to draw for
     expect(controller.needsFrames()).toBe(false);
   });
 
-  it("is true while walking to a clicked spot, and false once there", () => {
+  it("is false right after moveTo — nothing left to step, unlike the old click-to-walk", () => {
     const { controller } = makeController();
-    controller.setWalkTarget({ x: 300, y: 0 });
-    expect(controller.needsFrames()).toBe(true);
-    let now = 1000;
-    for (let i = 0; i < 1000 && controller.needsFrames(); i++) controller.update(0.1, (now += 100));
+    controller.moveTo({ x: 300, y: 0 }, 1000);
     expect(controller.needsFrames()).toBe(false);
   });
 
   it("is false while seated, even right after sitting down", () => {
     const { controller } = makeController();
-    controller.setWalkTarget({ x: 300, y: 0 });
-    controller.update(0.1, 1000);
+    controller.moveTo({ x: 300, y: 0 }, 1000);
     controller.applyTeleport({ x: 500, y: 500 });
     expect(controller.needsFrames()).toBe(false);
   });
 
   it("is true after the server corrects the position, until the corrected position has been sent", () => {
     const { controller } = makeController();
-    controller.setWalkTarget({ x: 300, y: 0 });
-    controller.update(0.1, 1000); // moved and sent
+    controller.moveTo({ x: 300, y: 0 }, 1000); // relocated and sent via onTeleport
     controller.applyCorrection({ x: 5, y: 5 });
     expect(controller.needsFrames()).toBe(true);
     controller.update(0.1, 1200);

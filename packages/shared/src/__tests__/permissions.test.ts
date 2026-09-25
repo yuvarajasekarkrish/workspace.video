@@ -4,8 +4,10 @@ import {
   canDoLayoutAction,
   checkRoleChange,
   checkRemoveMember,
+  canEnterZone,
   type LayoutAction,
   type WorkspaceRoleName,
+  type ZoneAccessPolicy,
 } from "../permissions";
 
 // The strict rules from docs/architecture/company-map-builder.md (D4), as one table you can read.
@@ -138,5 +140,33 @@ describe("checkRemoveMember: who may remove whom, and leaving", () => {
   it("refuses someone outside the workspace and a target who is not in it", () => {
     expect(remove({ actorRole: null })).toMatchObject({ allowed: false, code: "not_a_member" });
     expect(remove({ targetRole: null })).toMatchObject({ allowed: false, code: "target_missing" });
+  });
+});
+
+describe("canEnterZone: destination access control", () => {
+  const restricted: ZoneAccessPolicy = { kind: "restricted", allowedRoles: ["owner", "admin"] };
+
+  it("allows anyone (even outside the workspace) when a zone has no access policy at all — every existing zone", () => {
+    expect(canEnterZone(undefined, null).allowed).toBe(true);
+    expect(canEnterZone(undefined, "member").allowed).toBe(true);
+  });
+
+  it("allows anyone when a zone is explicitly open", () => {
+    expect(canEnterZone({ kind: "open" }, null).allowed).toBe(true);
+    expect(canEnterZone({ kind: "open" }, "member").allowed).toBe(true);
+  });
+
+  it("allows a role on the restricted zone's allow-list", () => {
+    expect(canEnterZone(restricted, "owner").allowed).toBe(true);
+    expect(canEnterZone(restricted, "admin").allowed).toBe(true);
+  });
+
+  it("refuses a role not on the restricted zone's allow-list", () => {
+    expect(canEnterZone(restricted, "designer")).toMatchObject({ allowed: false, code: "forbidden" });
+    expect(canEnterZone(restricted, "member")).toMatchObject({ allowed: false, code: "forbidden" });
+  });
+
+  it("refuses someone with no role in the workspace at all, for a restricted zone", () => {
+    expect(canEnterZone(restricted, null)).toMatchObject({ allowed: false, code: "not_a_member" });
   });
 });

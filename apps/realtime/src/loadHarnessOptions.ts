@@ -10,9 +10,9 @@ import {
 
 /**
  * What the load test runs on, read from the environment. With nothing set it is exactly what the
- * test always did (the old office, half the people seated), so earlier result files stay comparable.
+ * test always did (the app's own default layout, half the people seated), so earlier result files stay comparable.
  *
- *   LOAD_HARNESS_LAYOUT_ID       a layout name, for example spatialMap@1 (default openOffice@1)
+ *   LOAD_HARNESS_LAYOUT_ID       a layout name, for example office300@1 (default office300@1)
  *   LOAD_HARNESS_SEATED_FRACTION 0 to 1, the share of people who take a seat (default 0.5)
  *   LOAD_HARNESS_WALK_TO_SEAT    1 = walk each person to their seat before they sit, because the
  *                                server refuses a seat unless the person is within 120 px of it

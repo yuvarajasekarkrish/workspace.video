@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { prisma } from "../index";
-import { assertRoomMembership, assertWorkspaceMembership } from "../membership";
+import { assertRoomMembership, assertWorkspaceMembership, getWorkspaceRole } from "../membership";
 
 /**
  * Integration test against a real local Postgres, matching the precedent in
@@ -37,11 +37,11 @@ describe("assertRoomMembership / assertWorkspaceMembership", () => {
     return { workspace, room };
   }
 
-  async function createMember(workspaceId: string) {
+  async function createMember(workspaceId: string, role: "owner" | "admin" | "designer" | "member" = "member") {
     const suffix = crypto.randomUUID();
     const user = await prisma.user.create({ data: { email: `member-${suffix}@example.com` } });
     createdUserIds.push(user.id);
-    await prisma.workspaceMember.create({ data: { workspaceId, userId: user.id } });
+    await prisma.workspaceMember.create({ data: { workspaceId, userId: user.id, role } });
     return user;
   }
 
@@ -85,5 +85,36 @@ describe("assertRoomMembership / assertWorkspaceMembership", () => {
     await expect(assertWorkspaceMembership(outsider.id, workspace.id)).rejects.toThrow(
       "User is not a member of this room's workspace.",
     );
+  });
+
+  describe("getWorkspaceRole", () => {
+    it("returns the member's actual current role, not just membership existence", async () => {
+      const { workspace } = await createWorkspaceWithRoom();
+      const admin = await createMember(workspace.id, "admin");
+
+      await expect(getWorkspaceRole(admin.id, workspace.id)).resolves.toBe("admin");
+    });
+
+    it("returns null for someone who is not a member at all", async () => {
+      const { workspace } = await createWorkspaceWithRoom();
+      const suffix = crypto.randomUUID();
+      const outsider = await prisma.user.create({ data: { email: `outsider-${suffix}@example.com` } });
+      createdUserIds.push(outsider.id);
+
+      await expect(getWorkspaceRole(outsider.id, workspace.id)).resolves.toBeNull();
+    });
+
+    it("reflects a role change immediately — never a value cached from an earlier read", async () => {
+      const { workspace } = await createWorkspaceWithRoom();
+      const member = await createMember(workspace.id, "member");
+      await expect(getWorkspaceRole(member.id, workspace.id)).resolves.toBe("member");
+
+      await prisma.workspaceMember.update({
+        where: { workspaceId_userId: { workspaceId: workspace.id, userId: member.id } },
+        data: { role: "admin" },
+      });
+
+      await expect(getWorkspaceRole(member.id, workspace.id)).resolves.toBe("admin");
+    });
   });
 });

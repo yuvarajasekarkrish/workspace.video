@@ -85,8 +85,13 @@ function wholeArea(zone: LayoutZone, pieces: number[]): SlabPlan {
   };
 }
 
-/** Cuts one area with several desks into desk groups. Returns null when the area should stay one plate. */
-function splitArea(zone: LayoutZone, indices: number[], furniture: FurniturePiece[]): { groups: SlabPlan[]; loose: number[] } | null {
+/** Groups desk-like furniture (indices) into desk groups by proximity, plus whatever else
+ *  (chairs, screens, plants) reaches one of them. Returns null when there aren't enough
+ *  seeds to bother splitting — the caller keeps everything as one plate (or, for pieces
+ *  with no owning area at all, simply leaves them loose; see planFloor). Pure grouping,
+ *  no notion of a zone — `splitArea` and `groupLoosePieces` each turn the result into
+ *  `SlabPlan`s their own way (one clamped to a zone's box, one not). */
+function groupSeeds(indices: number[], furniture: FurniturePiece[]): { members: number[][]; loose: number[] } | null {
   const seeds = indices.filter((i) => SEED_KINDS.has(furniture[i].kind));
   if (seeds.length < MIN_SEEDS_TO_SPLIT) return null;
 
@@ -104,8 +109,8 @@ function splitArea(zone: LayoutZone, indices: number[], furniture: FurniturePiec
   }
 
   // Everything else goes with its nearest desk, if one is close enough.
-  const members = new Map<number, number[]>();
-  for (const seed of seeds) members.set(find(seed), [...(members.get(find(seed)) ?? []), seed]);
+  const membersByRoot = new Map<number, number[]>();
+  for (const seed of seeds) membersByRoot.set(find(seed), [...(membersByRoot.get(find(seed)) ?? []), seed]);
   const loose: number[] = [];
   for (const i of indices) {
     if (SEED_KINDS.has(furniture[i].kind)) continue;
@@ -115,12 +120,20 @@ function splitArea(zone: LayoutZone, indices: number[], furniture: FurniturePiec
       const distance = gap(furniture[i], furniture[seed]);
       if (distance <= reach && (best === null || distance < best.distance)) best = { seed, distance };
     }
-    if (best) members.get(find(best.seed))!.push(i);
+    if (best) membersByRoot.get(find(best.seed))!.push(i);
     else loose.push(i);
   }
 
+  return { members: [...membersByRoot.values()], loose };
+}
+
+/** Cuts one area with several desks into desk groups. Returns null when the area should stay one plate. */
+function splitArea(zone: LayoutZone, indices: number[], furniture: FurniturePiece[]): { groups: SlabPlan[]; loose: number[] } | null {
+  const grouped = groupSeeds(indices, furniture);
+  if (!grouped) return null;
+
   const zoneBox = tileRectToWorld(zone.rect);
-  const groups: SlabPlan[] = [...members.values()].map((pieces) => {
+  const groups: SlabPlan[] = grouped.members.map((pieces) => {
     const around = bounds(pieces.map((i) => furniture[i]));
     const padded = { x: around.x - GROUP_PAD, y: around.y - GROUP_PAD, width: around.width + GROUP_PAD * 2, height: around.height + GROUP_PAD * 2 };
     return { id: "", zoneId: zone.id, rect: inside(zoneBox, padded), pieces, isGroup: true };
@@ -128,15 +141,36 @@ function splitArea(zone: LayoutZone, indices: number[], furniture: FurniturePiec
   // A steady order (top to bottom, left to right) so a group keeps the same id every time the floor is planned.
   groups.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
   groups.forEach((g, n) => (g.id = `${zone.id}#${n}`));
-  return { groups, loose };
+  return { groups, loose: grouped.loose };
+}
+
+/** The same desk-group splitting as `splitArea`, for furniture that owns no LayoutZone at
+ *  all (e.g. a hot-desk area — see the deskGrid module, which never pushes a zone). Without
+ *  this, that furniture would never become a raisable plate and would just sit flat on the
+ *  floor, unhoverable, no matter how desk-like it looks. Not clamped to any zone box (there
+ *  isn't one) — just padded around its own pieces. `zoneId` is a synthetic, unregistered id:
+ *  FloorView only reads it for a non-group ("isGroup: false") plate's name-on-floor drawing,
+ *  which these groups never are. */
+function groupLoosePieces(indices: number[], furniture: FurniturePiece[]): { groups: SlabPlan[]; loose: number[] } {
+  const grouped = groupSeeds(indices, furniture);
+  if (!grouped) return { groups: [], loose: indices };
+
+  const groups: SlabPlan[] = grouped.members.map((pieces) => {
+    const around = bounds(pieces.map((i) => furniture[i]));
+    const rect = { x: around.x - GROUP_PAD, y: around.y - GROUP_PAD, width: around.width + GROUP_PAD * 2, height: around.height + GROUP_PAD * 2 };
+    return { id: "", zoneId: "loose", rect, pieces, isGroup: true };
+  });
+  groups.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+  groups.forEach((g, n) => (g.id = `loose#${n}`));
+  return { groups, loose: grouped.loose };
 }
 
 export function planFloor(layout: RoomLayout): FloorPlan {
   const byZone = new Map<string, number[]>();
-  const loosePieces: number[] = [];
+  const unowned: number[] = [];
   layout.furniture.forEach((piece, i) => {
     const owner = zoneAt(layout, { x: piece.x + piece.width / 2, y: piece.y + piece.height / 2 });
-    if (!owner) loosePieces.push(i);
+    if (!owner) unowned.push(i);
     else byZone.set(owner.id, [...(byZone.get(owner.id) ?? []), i]);
   });
 
@@ -148,11 +182,19 @@ export function planFloor(layout: RoomLayout): FloorPlan {
     if (split) {
       splitZoneIds.add(zone.id);
       slabs.push(...split.groups);
-      loosePieces.push(...split.loose);
+      unowned.push(...split.loose);
     } else {
       slabs.push(wholeArea(zone, indices));
     }
   }
+
+  // Furniture with no owning zone at all (e.g. a hot-desk area) still gets
+  // grouped into raisable desk plates, same as a zoned area's desks would —
+  // see groupLoosePieces's docs. Only what's left over after that (a lone
+  // plant, say) stays genuinely loose/flat.
+  const { groups: looseGroups, loose: loosePieces } = groupLoosePieces(unowned, layout.furniture);
+  slabs.push(...looseGroups);
+
   return { slabs, loosePieces, splitZoneIds };
 }
 

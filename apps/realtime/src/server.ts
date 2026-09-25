@@ -16,7 +16,7 @@ import {
   stopHeartbeat,
   redisPublishStats,
 } from "./instance";
-import { verifySessionToken, assertRoomMembership, assertWorkspaceMembership } from "./auth";
+import { verifySessionToken, assertRoomMembership, assertWorkspaceMembership, getWorkspaceRole } from "./auth";
 import { RoomManager, broadcasterFromSocketServer, type TickDiagnostics } from "./roomManager";
 import { CountingBroadcaster } from "./countingBroadcaster";
 import { EmitTailRecorder } from "./emitTailRecorder";
@@ -240,6 +240,7 @@ app.get("/internal/metrics", async () => {
     uptimeSeconds: process.uptime(),
     memoryUsage: process.memoryUsage(),
     tick: roomManager.getTickStats(),
+    zoneRecheck: roomManager.getZoneRecheckStats(),
     cpuPercent,
     eventLoop,
     emitRates,
@@ -307,7 +308,7 @@ registerSocketHandlers({
   joinDuration,
   disconnectReasonCounts,
   loadHarnessLimitOverride,
-  auth: { verifySessionToken, assertRoomMembership, assertWorkspaceMembership },
+  auth: { verifySessionToken, assertRoomMembership, assertWorkspaceMembership, getWorkspaceRole },
   onConnection: maybeSampleHeartbeat,
   emitTail,
   onLayoutProblem: ({ roomId, problem }) =>

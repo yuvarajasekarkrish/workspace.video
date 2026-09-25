@@ -1,13 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { resolveLayout, TILE_PX, type FurniturePiece, type RoomLayout } from "@workspace-video/shared";
+import { resolveLayout, layoutFromMapZones, SPATIAL_MAP_DEFAULT_ZONES, TILE_PX, type FurniturePiece, type RoomLayout } from "@workspace-video/shared";
 import { GROUP_PAD, MIN_SEEDS_TO_SPLIT, planFloor, slabAt } from "../slabPlan";
 
 // The floor is drawn as raisable plates: an area with several desks becomes one small plate per desk group (empty
 // floor between them, like the Gemini map); an area with one or two pieces stays one plate. Drawing only: the layout
 // and seats are never changed, and any template goes through the same rule.
 
-const company = resolveLayout("spatialMap@1")!;
-const office = resolveLayout("openOffice@1")!;
+// Not a registered named layout — a company's own map is rebuilt fresh, never
+// looked up by id (see @workspace-video/shared's mapLayout.test.ts docs). Built
+// here as a fixture matching the shape of a real company-drawn custom map.
+const company = layoutFromMapZones("custom", SPATIAL_MAP_DEFAULT_ZONES);
+const office = resolveLayout("office300@1")!;
 
 const piece = (id: string, kind: FurniturePiece["kind"], x: number, y: number, width: number, height: number): FurniturePiece => ({
   id,
@@ -105,6 +108,28 @@ describe("planFloor on the company map", () => {
 
   it("uses the same plate ids every time, so a raised plate stays the same plate", () => {
     expect(planFloor(company).slabs.map((s) => s.id)).toEqual(plan.slabs.map((s) => s.id));
+  });
+});
+
+describe("planFloor: furniture with no owning zone at all (e.g. a hot-desk area)", () => {
+  // office300@1's deskGrid areas never push a LayoutZone (see modules.ts) — this used to mean
+  // their furniture landed in loosePieces and never became a raisable plate, so those desks
+  // never rose on hover the way every other area's furniture does.
+  const plan = planFloor(office);
+
+  it("still groups zone-less desks into their own raisable plates, same as a zoned area's desks would", () => {
+    const deskSeatLabels = office.seats.filter((s) => /^Desk \d+$/.test(s.label));
+    expect(deskSeatLabels.length).toBeGreaterThan(0);
+    for (const seat of deskSeatLabels) {
+      const slab = slabAt(plan, seat.anchor);
+      expect(slab, seat.id).not.toBeNull();
+      expect(slab!.isGroup).toBe(true);
+    }
+  });
+
+  it("gives every piece of furniture exactly one home even when some of it owns no zone", () => {
+    const homes = [...plan.slabs.flatMap((s) => s.pieces), ...plan.loosePieces].sort((a, b) => a - b);
+    expect(homes).toEqual(office.furniture.map((_, i) => i));
   });
 });
 

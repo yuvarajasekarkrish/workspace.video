@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@workspace-video/db";
-import { PlanIdSchema, DEFAULT_LAYOUT_ID } from "@workspace-video/shared";
+import { PlanIdSchema, DEFAULT_LAYOUT_ID, listLayoutIds } from "@workspace-video/shared";
 import { getSessionUser } from "@/lib/session";
 
 // Not a full zod object schema here — apps/web has no direct zod dependency
 // (it only ever reaches zod indirectly through @workspace-video/shared/@workspace-video/db);
 // PlanIdSchema (already exported from @workspace-video/shared) validates `plan`, and
 // `name` gets the same manual check style dev-signin/route.ts already uses.
-function parseBody(body: unknown): { name: string; plan: import("@workspace-video/shared").PlanId } | null {
+// `layoutId` is optional: absent means the default layout, exactly as before;
+// present, it must be a registered layout id.
+function parseBody(body: unknown): { name: string; plan: import("@workspace-video/shared").PlanId; layoutId: string } | null {
   if (typeof body !== "object" || body === null) return null;
-  const { name, plan } = body as { name?: unknown; plan?: unknown };
+  const { name, plan, layoutId } = body as { name?: unknown; plan?: unknown; layoutId?: unknown };
   if (typeof name !== "string") return null;
   const trimmed = name.trim();
   if (trimmed.length < 1 || trimmed.length > 100) return null;
   const parsedPlan = PlanIdSchema.safeParse(plan);
   if (!parsedPlan.success) return null;
-  return { name: trimmed, plan: parsedPlan.data };
+  if (layoutId !== undefined && (typeof layoutId !== "string" || !listLayoutIds().includes(layoutId))) return null;
+  return { name: trimmed, plan: parsedPlan.data, layoutId: (layoutId as string | undefined) ?? DEFAULT_LAYOUT_ID };
 }
 
 function slugify(name: string): string {
@@ -29,8 +32,9 @@ function slugify(name: string): string {
 /**
  * Creates a workspace, its creator's owner membership, and one office room —
  * all in a single transaction so a failure partway through never leaves a
- * workspace with no owner or no room. Every plan gets the identical
- * `openOffice@1` layout (see the plan's central decision: the floor and the
+ * workspace with no owner or no room. The room's layout is the chosen
+ * registered template (default `office300@1` when none is sent), independent
+ * of the plan (see the plan's central decision: the floor and the
  * subscription's participant limit are independent concerns) — `plan` only
  * ever affects PLAN_PARTICIPANT_LIMITS lookups at join time, never which
  * layout a room renders.
@@ -48,9 +52,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const parsed = parseBody(body);
   if (!parsed) {
-    return NextResponse.json({ error: "Invalid workspace name or plan." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid workspace name, plan or template." }, { status: 400 });
   }
-  const { name, plan } = parsed;
+  const { name, plan, layoutId } = parsed;
 
   const result = await prisma.$transaction(async (tx) => {
     const workspace = await tx.workspace.create({
@@ -63,7 +67,7 @@ export async function POST(req: NextRequest) {
       data: {
         workspaceId: workspace.id,
         name: "Main Office",
-        config: { layoutId: DEFAULT_LAYOUT_ID },
+        config: { layoutId },
       },
     });
     return { workspaceId: workspace.id, roomId: room.id };

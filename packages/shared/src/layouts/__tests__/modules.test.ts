@@ -3,6 +3,7 @@ import {
   deskPod,
   deskGrid,
   deskGridFits,
+  deskGridChairOverlapRisk,
   angledDeskPod,
   benchTable,
   benchRows,
@@ -45,6 +46,81 @@ describe("deskGrid", () => {
     const deskCount = result.furniture.filter((f) => f.kind === "desk").length;
     expect(deskCount).toBe(18);
     expect(result.seats).toHaveLength(36);
+  });
+
+  it("omits visualScale entirely when chairVisualScale is not passed — byte-identical to before the option existed", () => {
+    const result = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1 });
+    const chairs = result.furniture.filter((f) => f.kind === "chair");
+    expect(chairs.length).toBeGreaterThan(0);
+    for (const chair of chairs) {
+      expect(chair.visualScale).toBeUndefined();
+    }
+  });
+
+  it("sets visualScale on every chair when chairVisualScale is passed, without touching width/height", () => {
+    const result = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1, chairVisualScale: 1.5 });
+    const chairs = result.furniture.filter((f) => f.kind === "chair");
+    expect(chairs.length).toBeGreaterThan(0);
+    for (const chair of chairs) {
+      expect(chair.visualScale).toBe(1.5);
+      expect(chair.width).toBe(34); // CHAIR_SIZE — the logical footprint, unchanged by scale
+      expect(chair.height).toBe(34);
+    }
+  });
+
+  it("changing chairVisualScale leaves every Seat.anchor exactly unchanged", () => {
+    const baseline = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1 });
+    const scaled = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1, chairVisualScale: 2 });
+    expect(scaled.seats).toEqual(baseline.seats);
+  });
+
+  it("does not affect desk furniture (position, size) at all — only chairs may carry visualScale", () => {
+    const baseline = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1 });
+    const scaled = deskGrid("floor", rect, { cols: 6, rows: 6, startNumber: 1, chairVisualScale: 1.8 });
+    const baselineDesks = baseline.furniture.filter((f) => f.kind === "desk");
+    const scaledDesks = scaled.furniture.filter((f) => f.kind === "desk");
+    expect(scaledDesks).toEqual(baselineDesks);
+    for (const desk of scaledDesks) expect(desk.visualScale).toBeUndefined();
+  });
+});
+
+describe("deskGridChairOverlapRisk", () => {
+  // office300's real desk cell: TILE_PX=160 per desk, matching deskGridFits'
+  // own "accepts the real production arrangement" test above.
+  const productionCell: TileRect = { col: 0, row: 0, cols: 6, rows: 6 };
+  const opts = { cols: 6, rows: 6 };
+
+  it("reports no overlap risk at today's scale (1) — the production layout is safe as-is", () => {
+    const risk = deskGridChairOverlapRisk(productionCell, opts, 1);
+    expect(risk.overlapsNeighborCell).toBe(false);
+    expect(risk.overlapAmountPx).toBe(0);
+    expect(risk.requestedScale).toBe(1);
+    // The documented ~2px-per-side slack (modules.ts's own comment on DESK_SIZE/CHAIR_SIZE).
+    expect(risk.availableSlackPx).toBeCloseTo(2, 5);
+  });
+
+  it("flags overlap risk once the rendered chair reaches past the available slack", () => {
+    // At CHAIR_SIZE=34, CHAIR_RENDER_FACTOR=0.92: renderedHalf = 34*scale*0.92/2.
+    // Overlap begins once renderedHalf - 17 - 2(slack) > 0, i.e. scale > 19/15.64 ≈ 1.215.
+    const belowThreshold = deskGridChairOverlapRisk(productionCell, opts, 1.2);
+    expect(belowThreshold.overlapsNeighborCell).toBe(false);
+
+    const risk = deskGridChairOverlapRisk(productionCell, opts, 1.5);
+    expect(risk.overlapsNeighborCell).toBe(true);
+    expect(risk.overlapAmountPx).toBeGreaterThan(0);
+    expect(risk.requestedScale).toBe(1.5);
+  });
+
+  it("never clamps or modifies the requested scale — purely reporting", () => {
+    const risk = deskGridChairOverlapRisk(productionCell, opts, 3);
+    expect(risk.requestedScale).toBe(3); // reported exactly as asked, however risky
+    expect(risk.overlapsNeighborCell).toBe(true);
+  });
+
+  it("reports MORE available slack for a wider cell (fewer columns in the same rect)", () => {
+    const roomier = deskGridChairOverlapRisk(productionCell, { cols: 3, rows: 6 }, 1);
+    const tighter = deskGridChairOverlapRisk(productionCell, opts, 1);
+    expect(roomier.availableSlackPx).toBeGreaterThan(tighter.availableSlackPx);
   });
 });
 

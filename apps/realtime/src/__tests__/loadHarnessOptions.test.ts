@@ -1,28 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { openOffice1, spatialMap1, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout } from "@workspace-video/shared";
+import { DEFAULT_LAYOUT_ID, resolveLayout, DEFAULT_MOVEMENT_CONFIG, movementConfigForLayout } from "@workspace-video/shared";
 import { parseHarnessOptions, seatTargetCount } from "../loadHarnessOptions";
 
 // What the load test runs on: which layout, and how many of the people sit. With nothing set
-// it must do exactly what it did before (the old office, half the people seated), so past
-// results stay comparable.
+// it must match whatever the app's own default layout is (registry.ts's DEFAULT_LAYOUT_ID) —
+// a real user gets the default with no config either, so the harness's "nothing set" case
+// should exercise the same layout, not a fixed one that could silently drift from reality.
+// Half the people seated stays fixed regardless of which layout is the default.
 
 describe("parseHarnessOptions", () => {
-  it("defaults to the old office with half the people seated, as before", () => {
+  it("defaults to the app's own default layout with half the people seated", () => {
+    const defaultLayout = resolveLayout(DEFAULT_LAYOUT_ID)!;
     const options = parseHarnessOptions({});
-    expect(options.layout).toBe(openOffice1);
+    expect(options.layout).toBe(defaultLayout);
     expect(options.seatedFraction).toBe(0.5);
-    expect(options.movement).toEqual(movementConfigForLayout(openOffice1, DEFAULT_MOVEMENT_CONFIG));
+    expect(options.movement).toEqual(movementConfigForLayout(defaultLayout, DEFAULT_MOVEMENT_CONFIG));
   });
 
-  it("runs on the spatial map when asked, with the walking limits of its own floor", () => {
-    const options = parseHarnessOptions({ LOAD_HARNESS_LAYOUT_ID: "spatialMap@1" });
-    expect(options.layout).toBe(spatialMap1);
-    expect(options.movement.roomWidthPx).toBe(spatialMap1.floor.cols * 160);
-    expect(options.movement.roomHeightPx).toBe(spatialMap1.floor.rows * 160);
+  it("runs on a named layout when asked, with the walking limits of its own floor", () => {
+    const layout = resolveLayout("office300@1")!;
+    const options = parseHarnessOptions({ LOAD_HARNESS_LAYOUT_ID: "office300@1" });
+    expect(options.layout).toBe(layout);
+    expect(options.movement.roomWidthPx).toBe(layout.floor.cols * 160);
+    expect(options.movement.roomHeightPx).toBe(layout.floor.rows * 160);
   });
 
   it("refuses an unknown layout name and lists the known ones, instead of silently using another", () => {
-    expect(() => parseHarnessOptions({ LOAD_HARNESS_LAYOUT_ID: "nope@1" })).toThrow(/unknown layout "nope@1".*openOffice@1.*spatialMap@1/i);
+    expect(() => parseHarnessOptions({ LOAD_HARNESS_LAYOUT_ID: "nope@1" })).toThrow(/unknown layout "nope@1".*office300@1/i);
   });
 
   it("reads the seated fraction, and refuses anything that is not a number from 0 to 1", () => {

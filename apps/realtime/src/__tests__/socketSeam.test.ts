@@ -9,11 +9,17 @@ import {
   ServerEvents,
   ProximityBatchEventSchema,
   SPATIAL_MAP_DEFAULT_ZONES,
-  spatialMap1,
-  openOffice1,
+  layoutFromMapZones,
+  office300,
+  DEFAULT_LAYOUT_ID,
+  resolveLayout,
   zoneAt,
   type PeersSnapshotEvent,
 } from "@workspace-video/shared";
+
+// Not a registered named layout — see mapLayout.test.ts's docs. Built here purely
+// as a fixture matching the shape of a real company-drawn custom map (the pattern the now-retired seed-room-1 example used).
+const spatialMap1 = layoutFromMapZones("custom", SPATIAL_MAP_DEFAULT_ZONES);
 import { RoomManager, broadcasterFromSocketServer } from "../roomManager.js";
 import { registerSocketHandlers } from "../socketHandlers.js";
 import type { ObjectRepository } from "../objectPersistence.js";
@@ -29,7 +35,11 @@ const WORKSPACE_ID = "ws1";
 async function startSeam(
   objectRepository?: ObjectRepository,
   emitTail?: EmitTailRecorder,
-  options: { roomConfig?: unknown; onLayoutProblem?: (info: { roomId: string; problem: string }) => void } = {},
+  options: {
+    roomConfig?: unknown;
+    onLayoutProblem?: (info: { roomId: string; problem: string }) => void;
+    getWorkspaceRole?: (userId: string, workspaceId: string) => Promise<string | null>;
+  } = {},
 ) {
   const httpServer: HttpServer = createServer();
   const io = new SocketIOServer(httpServer);
@@ -57,6 +67,12 @@ async function startSeam(
       verifySessionToken: (token: string) => ({ userId: token, email: `${token}@test` }),
       assertRoomMembership: async () => ({ workspaceId: WORKSPACE_ID, config: options.roomConfig ?? {} }),
       assertWorkspaceMembership: async () => {},
+      // Every zone in these tests is open (no access policy set), so this
+      // never actually gets called on the hot path — present only so the
+      // real join flow's role-fetch call doesn't throw "not a function",
+      // unless a test overrides it to prove otherwise (see the role-
+      // propagation tests below).
+      getWorkspaceRole: options.getWorkspaceRole ?? (async () => "member"),
     } as never,
   });
 
@@ -112,6 +128,16 @@ describe("socket seam", () => {
     return me.position;
   }
 
+  it("never calls getWorkspaceRole on join when the room's layout has no restricted zone — office300@1 today", async () => {
+    // Part 4A's zero-cost-for-the-common-case guarantee, proven over the
+    // real join wire: every workspace today has zero restricted zones, so
+    // this extra DB read must not fire for any of them.
+    const getWorkspaceRole = vi.fn(async () => "member");
+    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "office300@1" }, getWorkspaceRole });
+    await joinAndReadPosition("u1");
+    expect(getWorkspaceRole).not.toHaveBeenCalled();
+  });
+
   it("puts a joiner in the arrival area of the company's own map when the room's settings hold one", async () => {
     seam = await startSeam(undefined, undefined, { roomConfig: { map: { version: 1, zones: SPATIAL_MAP_DEFAULT_ZONES } } });
     const position = await joinAndReadPosition("u1");
@@ -119,9 +145,9 @@ describe("socket seam", () => {
   });
 
   it("keeps a room on the office it always had when its settings hold no map", async () => {
-    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "openOffice@1" } });
+    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "office300@1" } });
     const position = await joinAndReadPosition("u1");
-    expect(zoneAt(openOffice1, position)?.id).toBe(openOffice1.spawnZoneId);
+    expect(zoneAt(office300, position)?.id).toBe(office300.spawnZoneId);
   });
 
   it("does not let a broken stored map turn the office into something else silently: it falls back, still lets people in, and reports why", async () => {
@@ -131,7 +157,8 @@ describe("socket seam", () => {
       onLayoutProblem: (info) => problems.push(info),
     });
     const position = await joinAndReadPosition("u1");
-    expect(zoneAt(openOffice1, position)?.id).toBe(openOffice1.spawnZoneId);
+    const defaultLayout = resolveLayout(DEFAULT_LAYOUT_ID)!;
+    expect(zoneAt(defaultLayout, position)?.id).toBe(defaultLayout.spawnZoneId);
     expect(problems).toHaveLength(1);
     expect(problems[0]!.roomId).toBe(ROOM_ID);
     expect(problems[0]!.problem).toMatch(/at least one area/i);
@@ -177,6 +204,109 @@ describe("socket seam", () => {
     const after = seam.roomManager.snapshot(ROOM_ID).find((p) => p.userId === "u1")?.position;
     expect(after, "a move from the live socket must be accepted").toEqual(target);
     expect(seam.roomManager.getStaleDisconnectsIgnored(), "the guard must be observable in metrics").toBe(1);
+  });
+
+  it("move:to teleports far across the room instantly, with no move:correction — unlike the same jump via move", async () => {
+    seam = await startSeam();
+    const s1 = await connect("u1");
+    expect(await join(s1)).toEqual({ ok: true });
+
+    const corrections: unknown[] = [];
+    s1.on(ServerEvents.MoveCorrection, (c: unknown) => corrections.push(c));
+
+    // Far enough (office300's floor is 3200x1760px) that the same jump
+    // through `move` (continuous-speed validated) would be rejected as
+    // max_speed_exceeded — see roomManager.test.ts's teleportTo tests for
+    // the direct contrast. Still safely in-bounds for THIS room's real size.
+    const target = { x: 3100, y: 1700 };
+    s1.emit(ClientEvents.MoveTo, { position: target });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const after = seam.roomManager.snapshot(ROOM_ID).find((p) => p.userId === "u1")?.position;
+    expect(after, "the peer must have actually relocated to the target").toEqual(target);
+    expect(corrections, "a legitimate teleport must never be corrected back").toHaveLength(0);
+  });
+
+  it("seat:select auto-seats a user at a real desk's other chair, over real sockets, once the workspace enables it", async () => {
+    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "office300@1" } });
+    const [deskA, deskB] = office300.seats.filter((s) => s.label === "Desk 1");
+
+    const s1 = await connect("u1");
+    expect(await join(s1)).toEqual({ ok: true });
+    // Off by default (Part 4B's WorkspaceSeatingConfig — see roomManager.ts):
+    // enabling it here, after the room exists, stands in for the admin
+    // setting that doesn't exist yet.
+    seam.roomManager.setSeatingConfig(ROOM_ID, {
+      autoSeatWithinTableEnabled: true,
+      nearbySearchEnabled: false,
+      nearbySearchRadiusPx: 200,
+      standingFallbackEnabled: false,
+      waitlistEnabled: false,
+      groupSeatingEnabled: false,
+    });
+    // Real proximity requirement, same as an ordinary seat:claim: the peer
+    // must actually be near the table before a claim on either of its
+    // chairs succeeds — teleport there first via the real move:to path.
+    const tableCenter = { x: (deskA!.anchor.x + deskB!.anchor.x) / 2, y: (deskA!.anchor.y + deskB!.anchor.y) / 2 };
+    s1.emit(ClientEvents.MoveTo, { position: tableCenter });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const ack = await new Promise((resolve) =>
+      s1.emit(ClientEvents.SeatSelect, { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } }, resolve),
+    );
+    expect(ack).toEqual({ outcome: "seated", seatId: expect.any(String) });
+    expect([deskA!.id, deskB!.id]).toContain((ack as { seatId: string }).seatId);
+    expect(seam.roomManager.seatsSnapshot(ROOM_ID)).toContainEqual({ seatId: (ack as { seatId: string }).seatId, userId: "u1" });
+  });
+
+  it("seat:select refuses a strategy the workspace hasn't enabled, over real sockets", async () => {
+    seam = await startSeam(undefined, undefined, { roomConfig: { layoutId: "office300@1" } });
+    const [deskA] = office300.seats.filter((s) => s.label === "Desk 1");
+
+    const s1 = await connect("u1");
+    expect(await join(s1)).toEqual({ ok: true });
+
+    const ack = await new Promise((resolve) =>
+      s1.emit(ClientEvents.SeatSelect, { strategy: "autoSeatWithinTable", target: { seatId: deskA!.id } }, resolve),
+    );
+    expect(ack).toEqual({ error: "not_enabled" });
+    expect(seam.roomManager.seatsSnapshot(ROOM_ID)).toEqual([]);
+  });
+
+  it("introduces a newcomer to existing peers via peers:delta (name/avatarUrl included), not a full re-broadcast snapshot", async () => {
+    // Real load-test finding this fixes: broadcasting the WHOLE roster to the
+    // WHOLE room on every single join cost 5+ seconds of cumulative emit time
+    // at 300 concurrent joins. Existing peers only need to learn the ONE new
+    // peer's identity - they already have everyone else's.
+    seam = await startSeam();
+
+    const s1 = await connect("u1");
+    expect(await join(s1)).toEqual({ ok: true });
+
+    // Listeners attached BEFORE u2 joins, so u2's own introduction to u1 is
+    // captured too - asserted on below, not just u3's, so the test can't
+    // pass by accident on a race between the join ack and the separate
+    // broadcast (both are real, independent socket messages).
+    const s1Snapshots: PeersSnapshotEvent[] = [];
+    const s1Deltas: { updates: { userId: string; name?: string; avatarUrl?: string | null; position: { x: number; y: number } }[] }[] = [];
+    s1.on(ServerEvents.PeersSnapshot, (p: PeersSnapshotEvent) => s1Snapshots.push(p));
+    s1.on(ServerEvents.PeersDelta, (p: (typeof s1Deltas)[number]) => s1Deltas.push(p));
+
+    const s2 = await connect("u2");
+    expect(await join(s2)).toEqual({ ok: true });
+    await waitFor(() => s1Deltas.length >= 1, "u1 to receive u2's introduction delta");
+
+    const s3 = await connect("u3");
+    expect(await join(s3)).toEqual({ ok: true });
+    await waitFor(() => s1Deltas.length >= 2, "u1 to receive u3's introduction delta");
+
+    // u1 (already in the room for both joins) gets NO peers:snapshot at all -
+    // only the two delta introductions. u3 itself still gets its own full
+    // snapshot (covered by the existing "times the join's direct emits" test).
+    expect(s1Snapshots).toHaveLength(0);
+    expect(s1Deltas).toHaveLength(2);
+    expect(s1Deltas[0]!.updates).toEqual([expect.objectContaining({ userId: "u2", name: "u2@test", avatarUrl: null })]);
+    expect(s1Deltas[1]!.updates).toEqual([expect.objectContaining({ userId: "u3", name: "u3@test", avatarUrl: null })]);
   });
 
   it("times the join's direct emits, and the client still receives the same snapshots", async () => {

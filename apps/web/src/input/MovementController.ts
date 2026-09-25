@@ -1,10 +1,6 @@
 import type { Point, MovementConfig } from "@workspace-video/shared";
 import { DEFAULT_MOVEMENT_CONFIG } from "@workspace-video/shared";
-import {
-  integrateKeyboardMove,
-  stepTowardWalkTarget,
-  shouldEmitMove,
-} from "./movement";
+import { integrateKeyboardMove, clampToBounds, shouldEmitMove } from "./movement";
 
 const KEY_TO_DIRECTION: Record<string, Point> = {
   KeyW: { x: 0, y: -1 },
@@ -24,6 +20,10 @@ export interface MovementControllerCallbacks {
   /** Called with a move payload exactly when it should be sent to the
    *  server (already throttled/deduped by movement.ts's shouldEmitMove). */
   onSendMove: (position: Point) => void;
+  /** Called once, immediately, for a discrete relocation (click-to-move,
+   *  walk-to-person, walk-to-zone) — see moveTo's docs. Never throttled the
+   *  way onSendMove is: a one-shot event, not a continuous stream. */
+  onTeleport: (position: Point) => void;
   /** Called exactly once, locally, the instant the user's own movement
    *  input stands them up out of a seat (a keydown or a click-to-walk).
    *  The caller sends seat:release here — deliberately AFTER `seated` has
@@ -35,17 +35,19 @@ export interface MovementControllerCallbacks {
 }
 
 /**
- * Imperative shell combining both input modes (WASD/arrows and
- * click-to-walk) over the shared speed-clamped pure core in movement.ts, so
- * neither mode can move faster than the other or outrun the server's speed
- * validator. Holds only the tiny bit of mutable state (current position,
- * held keys, an optional walk target, last-sent bookkeeping) that a pure
- * function can't own between ticks.
+ * Imperative shell over the shared speed-clamped pure core in movement.ts.
+ * Two distinct kinds of input: continuous WASD/arrows (integrated over time,
+ * speed-clamped, validated by the server's continuous-speed check) and a
+ * discrete relocation — click-to-move, walk-to-person, walk-to-zone — which
+ * is instant (moveTo) and validated by the server's separate bounds-only
+ * teleport path (RoomManager.teleportTo), never the speed check, since a
+ * single deliberate jump has no meaningful "speed" to measure. Holds only
+ * the tiny bit of mutable state (current position, held keys, last-sent
+ * bookkeeping) that a pure function can't own between ticks.
  */
 export class MovementController {
   private position: Point;
   private readonly heldKeys = new Set<string>();
-  private walkTarget: Point | null = null;
   private lastSentAtMs: number | null = null;
   private lastSentPosition: Point | null = null;
   /** True from an accepted seat claim (applyTeleport) until the user's own
@@ -81,7 +83,6 @@ export class MovementController {
       if (code in KEY_TO_DIRECTION) {
         this.standUp();
         this.heldKeys.add(code);
-        this.walkTarget = null; // keyboard input cancels an in-flight click-to-walk
       }
     };
     const onKeyUp = (e: Event) => {
@@ -96,12 +97,23 @@ export class MovementController {
     };
   }
 
-  /** Called by Viewport's onClickToWalk callback. Also a stand-up trigger —
-   *  clicking elsewhere while seated stands the user up (see the class's
-   *  `seated` docs) and then walks there as usual. */
-  setWalkTarget(target: Point): void {
+  /** Instantly relocates to `target` — click-to-move, walk-to-person, and
+   *  walk-to-zone all call this (via Viewport's onClickToWalk callback and
+   *  PixiStage's search-result handlers). Also a stand-up trigger — moving
+   *  anywhere while seated stands the user up first (see the class's
+   *  `seated` docs). No per-frame stepping: the position is set directly and
+   *  sent once via onTeleport, never the throttled per-tick onSendMove path
+   *  — see RoomManager.teleportTo, the server's matching discrete-move
+   *  validation (bounds only, no continuous-speed check, which has no
+   *  meaning for a single deliberate jump). */
+  moveTo(target: Point, nowMs: number): void {
     this.standUp();
-    this.walkTarget = target;
+    const clamped = clampToBounds(target, this.bounds);
+    this.position = clamped;
+    this.lastSentAtMs = nowMs;
+    this.lastSentPosition = clamped;
+    this.callbacks.onLocalPositionChanged(clamped);
+    this.callbacks.onTeleport(clamped);
   }
 
   /** True from an accepted seat claim until the user's own next movement
@@ -119,18 +131,18 @@ export class MovementController {
    *  must not immediately re-trigger standUp() on the very next frame. */
   applyTeleport(position: Point): void {
     this.position = position;
-    this.walkTarget = null;
     this.heldKeys.clear();
     this.seated = true;
     this.callbacks.onLocalPositionChanged(position);
   }
 
-  /** Whether the screen still has to keep drawing frames for this person: a movement key is held, a click-to-walk
-   *  is under way, or the newest position has not yet been sent to the server (so the last step of a walk is never
-   *  left unsent when the loop rests). Always false while seated. Lets the drawing loop rest when nothing is happening. */
+  /** Whether the screen still has to keep drawing frames for this person: a movement key is held, or the newest
+   *  position has not yet been sent to the server (so the last position is never left unsent when the loop rests).
+   *  A click-to-move/walk-to-X no longer needs frames of its own — moveTo relocates and sends in one step. Always
+   *  false while seated. Lets the drawing loop rest when nothing is happening. */
   needsFrames(): boolean {
     if (this.seated) return false;
-    if (this.heldKeys.size > 0 || this.walkTarget !== null) return true;
+    if (this.heldKeys.size > 0) return true;
     const sent = this.lastSentPosition;
     return sent !== null && (sent.x !== this.position.x || sent.y !== this.position.y);
   }
@@ -140,7 +152,9 @@ export class MovementController {
    *  which is also what makes many seated occupants nearly free on the
    *  server (see the plan's R2). Otherwise advances local position
    *  immediately (never waiting on the server), and separately decides
-   *  whether this tick's position should be sent. */
+   *  whether this tick's position should be sent. Only handles keyboard
+   *  input now — click-to-move/walk-to-X are instant, handled entirely by
+   *  moveTo, with nothing left to step per frame. */
   update(dtSeconds: number, nowMs: number): void {
     if (this.seated) return;
 
@@ -148,13 +162,7 @@ export class MovementController {
     let next = this.position;
 
     if (direction.x !== 0 || direction.y !== 0) {
-      this.walkTarget = null;
       next = integrateKeyboardMove(this.position, direction, dtSeconds, this.bounds);
-    } else if (this.walkTarget) {
-      next = stepTowardWalkTarget(this.position, this.walkTarget, dtSeconds, this.bounds);
-      if (next.x === this.walkTarget.x && next.y === this.walkTarget.y) {
-        this.walkTarget = null;
-      }
     }
 
     if (next.x !== this.position.x || next.y !== this.position.y) {
@@ -169,15 +177,14 @@ export class MovementController {
     }
   }
 
-  /** Server rejected our last move; snap to the authoritative position and
-   *  drop any in-flight walk target so we don't immediately fight it again.
-   *  Deliberately does NOT touch `seated` — an unrelated correction arriving
-   *  while seated (e.g. a stale in-flight move from just before the claim)
-   *  must never be mistaken for a stand-up input; only local intent
-   *  (standUp, via keyboard/click) or a fresh applyTeleport ever changes it. */
+  /** Server rejected our last move (or moveTo/teleport); snap to the
+   *  authoritative position. Deliberately does NOT touch `seated` — an
+   *  unrelated correction arriving while seated (e.g. a stale in-flight move
+   *  from just before the claim) must never be mistaken for a stand-up
+   *  input; only local intent (standUp, via keyboard/click) or a fresh
+   *  applyTeleport ever changes it. */
   applyCorrection(position: Point): void {
     this.position = position;
-    this.walkTarget = null;
     this.callbacks.onLocalPositionChanged(position);
   }
 
